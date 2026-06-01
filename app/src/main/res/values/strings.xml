@@ -492,7 +492,6 @@
     <string name="update_dialog_body_fallback">Доступна новая версия приложения.</string>
     <string name="update_dialog_positive">Обновить</string>
     <string name="update_dialog_negative">Позже</string>
-    <string name="update_dialog_negative">Позже</string>
 
     <!-- Partner profile screen -->
     <string name="profile_status_label">Статус</string>

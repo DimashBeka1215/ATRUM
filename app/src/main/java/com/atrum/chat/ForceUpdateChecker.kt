@@ -250,6 +250,21 @@ object ForceUpdateChecker {
         )
     }
 
+    /**
+     * Сравнивает две semver-строки (с префиксом 'v' или без).
+     * Возвращает >0 если a новее b, 0 если равны, <0 если a старее.
+     */
+    fun compareSemver(a: String, b: String): Int {
+        fun parts(v: String) = v.trimStart('v').split('.').map { it.toIntOrNull() ?: 0 }
+        val pa = parts(a); val pb = parts(b)
+        val len = maxOf(pa.size, pb.size)
+        for (i in 0 until len) {
+            val diff = (pa.getOrElse(i) { 0 }) - (pb.getOrElse(i) { 0 })
+            if (diff != 0) return diff
+        }
+        return 0
+    }
+
     // ── internal ─────────────────────────────────────────────────────────
 
     private fun fetchRelease(context: Context): ReleaseInfo? {

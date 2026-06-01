@@ -328,8 +328,29 @@
                     android:focusable="true">
                     <ImageView android:layout_width="22dp" android:layout_height="22dp"
                         android:src="@drawable/ic_heart" android:tint="@color/accent" android:layout_marginEnd="14dp" />
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/credits_title"
+                        android:textColor="@color/text_primary"
+                        android:textSize="15sp" />
 </LinearLayout>
 </LinearLayout>
+
+        <!-- Logout button -->
+        <Button
+            android:id="@+id/btnLogout"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="24dp"
+            android:background="@drawable/bg_settings_danger"
+            android:text="@string/settings_logout"
+            android:textColor="@color/error"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
 </LinearLayout>
 </ScrollView>
 </LinearLayout>
