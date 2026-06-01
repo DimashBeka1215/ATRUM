@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Фон экрана: глубокий OLED black + очень subtle purple
+    atmospheric glow сверху (cinematic dark feeling).
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Базовый OLED black -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#040404" />
+        </shape>
+    </item>
+    <!-- Тонкая дополнительная глубина на нижней половине -->
+    <item android:top="320dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:endColor="#080510"
+                android:startColor="#00040404"
+                android:type="linear" />
+        </shape>
+    </item>
+    <!-- Очень faint purple atmospheric glow сверху по центру -->
+    <item
+        android:bottom="200dp"
+        android:left="-160dp"
+        android:right="-160dp"
+        android:top="-180dp">
+        <shape android:shape="oval">
+            <gradient
+                android:endColor="#00040404"
+                android:gradientRadius="420"
+                android:startColor="#229D4EDD"
+                android:type="radial" />
+        </shape>
+    </item>
+</layer-list>

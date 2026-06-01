@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Тонкая иконка clock -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="22dp"
+    android:height="22dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Outer circle -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M12,12 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0"
+        android:strokeColor="@color/warning"
+        android:strokeWidth="1.5" />
+    <!-- Hour hand (вверх) -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M12,12 L12,7"
+        android:strokeColor="@color/warning"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.5" />
+    <!-- Minute hand (вправо) -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M12,12 L16,13"
+        android:strokeColor="@color/warning"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.5" />
+</vector>

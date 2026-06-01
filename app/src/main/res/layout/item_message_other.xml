@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:gravity="start"
+    android:paddingVertical="2dp">
+
+    <!-- Чипы реакций: появляются под пузырьком, выровнены по левому краю -->
+    <LinearLayout
+        android:id="@+id/reaction_row"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_gravity="start"
+        android:layout_marginTop="2dp"
+        android:layout_marginBottom="1dp"
+        android:visibility="gone"/>
+
+    <LinearLayout
+        android:id="@+id/bubble_container"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/bg_message_other"
+        android:paddingHorizontal="14dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="6dp"
+        android:maxWidth="280dp">
+
+        <TextView
+            android:id="@+id/tv_sender"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/accent_light"
+            android:textSize="13sp"
+            android:fontFamily="sans-serif-medium"
+            android:layout_marginBottom="3dp"
+            android:paddingHorizontal="2dp"
+            android:visibility="gone"/>
+
+        <!-- Блок цитаты -->
+        <LinearLayout
+            android:id="@+id/quote_block"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@drawable/bg_quote_other"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="7dp"
+            android:layout_marginBottom="6dp"
+            android:visibility="gone">
+
+            <View
+                android:layout_width="3dp"
+                android:layout_height="match_parent"
+                android:background="@color/accent_light"
+                android:layout_marginEnd="8dp"
+                android:minHeight="28dp"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tv_quote_sender"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/accent_light"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:singleLine="true"
+                    android:ellipsize="end"/>
+
+                <TextView
+                    android:id="@+id/tv_quote_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp"
+                    android:maxLines="2"
+                    android:ellipsize="end"/>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Одиночная картинка -->
+        <com.google.android.material.imageview.ShapeableImageView
+            android:id="@+id/iv_image"
+            android:layout_width="260dp"
+            android:layout_height="wrap_content"
+            android:adjustViewBounds="true"
+            android:scaleType="centerCrop"
+            android:maxHeight="320dp"
+            android:contentDescription="@null"
+            android:visibility="gone"
+            android:layout_marginBottom="4dp"
+            app:shapeAppearanceOverlay="@style/ShapeAppearance.GithubChat.RoundedImage"/>
+
+        <!-- Коллаж из нескольких изображений -->
+        <com.atrum.chat.CollageLayout
+            android:id="@+id/collage_layout"
+            android:layout_width="260dp"
+            android:layout_height="wrap_content"
+            android:visibility="gone"
+            android:layout_marginBottom="4dp"/>
+
+        <TextView
+            android:id="@+id/tv_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_primary"
+            android:textSize="15sp"
+            android:fontFamily="sans-serif"
+            android:lineSpacingExtra="2dp"
+            android:paddingHorizontal="2dp"
+            android:maxWidth="260dp"
+            android:breakStrategy="simple"
+            android:hyphenationFrequency="normal"/>
+
+        <TextView
+            android:id="@+id/tv_time"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:textColor="@color/text_tertiary"
+            android:textSize="10sp"
+            android:fontFamily="sans-serif"
+            android:layout_marginTop="2dp"
+            android:paddingHorizontal="2dp"/>
+    </LinearLayout>
+</LinearLayout>

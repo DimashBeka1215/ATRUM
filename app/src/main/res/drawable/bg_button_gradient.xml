@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Premium gradient кнопка: #7A35FF → #A855F7
+    Большой corner radius, без edge shadow (только premium gradient).
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="0"
+        android:endColor="#A855F7"
+        android:startColor="#7A35FF"
+        android:type="linear" />
+    <corners android:radius="26dp" />
+</shape>

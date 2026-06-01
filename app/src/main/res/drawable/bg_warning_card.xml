@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    ══════════════════════════════════════════════════════════════════
+    КОМПОНЕНТ: Жёлтая карточка-предупреждение (Warning Card)
+    ══════════════════════════════════════════════════════════════════
+
+    Назначение:
+      Полноценная карточка для разделов с предупреждениями/информацией.
+      Крупнее и весомее чем bg_warning — используется когда нужно
+      выделить целый смысловой блок, а не одну короткую заметку.
+      Внутри обычно: иконка в контейнере (bg_warning_icon_container)
+      + заголовок (textColor=@color/warning, 14–15sp, medium) + текст.
+
+    Стиль:
+      • Фон: @color/surface (тёмный, почти чёрный) — НЕ прозрачный
+      • Обводка: жёлтая 1dp (#52FFB454 = 32%)
+      • Скругление: 20dp
+      • Padding контейнера: paddingHorizontal=18dp, paddingVertical=16–18dp
+
+    Использование:
+      android:background="@drawable/bg_warning_card"
+
+    Примеры в проекте:
+      — activity_oauth_warning.xml → все три информационных блока
+        ("Что нужно знать", "После подтверждения", "Приложение получает")
+    ══════════════════════════════════════════════════════════════════
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/surface" />
+    <stroke
+        android:width="1dp"
+        android:color="#52FFB454" />
+    <corners android:radius="20dp" />
+</shape>

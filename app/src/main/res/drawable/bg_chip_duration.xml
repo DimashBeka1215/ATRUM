@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Selector для duration chip: selected vs default -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:drawable="@drawable/bg_chip_selected"
+        android:state_selected="true" />
+    <item android:drawable="@drawable/bg_chip_default" />
+</selector>

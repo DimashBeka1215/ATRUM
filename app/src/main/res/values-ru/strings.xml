@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Settings sections -->
+    <string name="settings_section_main">ОСНОВНОЕ</string>
+    <string name="settings_section_extra">ДОПОЛНИТЕЛЬНО</string>
+    <string name="settings_section_more">ЕЩЁ</string>
+    <string name="settings_item_main">Аккаунт</string>
+    <string name="settings_item_personalization">Персонализация</string>
+    <string name="settings_item_theme">Тема</string>
+    <string name="settings_item_notifications">Уведомления</string>
+    <string name="settings_item_about">О приложении</string>
+    <string name="settings_item_support">Поддержать</string>
+
+    <!-- Intro donate page -->
+    <string name="intro_donate_title">Поддержите проект</string>
+    <string name="intro_donate_subtitle">Atrum создаётся одним человеком, без финансирования и рекламы. Если приложение вам нравится — пожалуйста, поддержите его развитие. Любой донат, большой или маленький, помогает проекту жить.\n\nПоддержать можно в любой момент через Настройки → Поддержать.</string>
+
+    <!-- Wallpaper -->
+    <string name="settings_wallpaper_title">Обои чатов</string>
+    <string name="settings_wallpaper_desc">Изменить фон чата</string>
+    <string name="wallpaper_apply">Применить</string>
+    <string name="wallpaper_cancel">Отмена</string>
+    <string name="wallpaper_change">Выбрать обои</string>
+    <string name="wallpaper_clear">Удалить обои</string>
+    <string name="wallpaper_cleared">Обои удалены</string>
+
+    <!-- Logout -->
+    <string name="settings_logout">Выйти из аккаунта</string>
+
+    <!-- Personalization section headers -->
+    <string name="settings_section_appearance">ВНЕШНИЙ ВИД</string>
+    <string name="settings_section_display">ОФОРМЛЕНИЕ</string>
+
+    <!-- Chat UI style selector -->
+    <string name="settings_item_chat_ui_style">Интерфейс чата</string>
+    <string name="chat_ui_classic">Классический</string>
+    <string name="chat_ui_glass">Атмосферное стекло</string>
+    <string name="chat_ui_glass_needs_wallpaper">Для режима «Атмосферное стекло» нужны обои. Сначала выберите обои чата.</string>
+
+    <!-- Transparency settings -->
+    <string name="transparency_title">Прозрачность</string>
+    <string name="transparency_bubble_self">Мои сообщения</string>
+    <string name="transparency_bubble_other">Сообщения собеседника</string>
+    <string name="transparency_ui">Интерфейс (шапка, ввод)</string>
+    <string name="transparency_default">По умолчанию</string>
+    <string name="transparency_custom">Настроено</string>
+    <string name="btn_apply">Применить</string>
+
+    <!-- Wallpaper preview/adjust option -->
+    <string name="wallpaper_preview_adjust">Превью и настройки</string>
+
+    <!-- Mock chat preview strings -->
+    <string name="mock_chat_name">Алекс</string>
+    <string name="mock_chat_status">в сети</string>
+    <string name="mock_msg_other">Привет, как дела?</string>
+    <string name="mock_msg_self">Всё хорошо, спасибо! 👍</string>
+    <string name="mock_msg_time">14:32 ✓✓</string>
+</resources>

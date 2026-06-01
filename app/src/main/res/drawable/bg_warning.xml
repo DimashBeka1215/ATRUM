@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    ══════════════════════════════════════════════════════════════════
+    КОМПОНЕНТ: Жёлтая предупреждающая плашка (Warning Inline Box)
+    ══════════════════════════════════════════════════════════════════
+
+    Назначение:
+      Встроенная предупреждающая плашка — используется внутри форм
+      и экранов для ненавязчивых информационных предупреждений.
+      Не агрессивная, мягкая. Всегда идёт с иконкой ic_warning слева
+      и двумя TextView: заголовок (textColor=@color/warning,
+      fontFamily=sans-serif-medium, 13sp) + тело (textColor=text_secondary, 12sp).
+
+    Стиль:
+      • Фон: полупрозрачный жёлтый (#1AFFB454 = 10% от #FFB454)
+      • Обводка: жёлтая 1dp (#3DFFB454 = 24%)
+      • Скругление: 12dp
+      • Padding контейнера: 14dp
+      • Иконка: @drawable/ic_warning, 18×18dp, tint=@color/warning, marginEnd=12dp
+
+    Использование:
+      android:background="@drawable/bg_warning"
+
+    Примеры в проекте:
+      — activity_create_chat.xml → github_form → блок "Как подключиться к чату"
+      — activity_create_chat.xml → manual_form → блок "Режим для опытных"
+      — activity_crash.xml → основной блок с логом краша
+    ══════════════════════════════════════════════════════════════════
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#1AFFB454" />
+    <stroke android:width="1dp" android:color="#3DFFB454" />
+    <corners android:radius="12dp" />
+</shape>

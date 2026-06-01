@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Покрытие под аватар — концентрические circular glow + тёмная серединка.
+    Используется как background у круглого FrameLayout 140dp.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Самый внешний тонкий glow ореол -->
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="#1A9D4EDD" />
+        </shape>
+    </item>
+    <!-- Средний glow ореол -->
+    <item
+        android:bottom="6dp"
+        android:left="6dp"
+        android:right="6dp"
+        android:top="6dp">
+        <shape android:shape="oval">
+            <solid android:color="#2EC77DFF" />
+        </shape>
+    </item>
+    <!-- Жирная purple обводка -->
+    <item
+        android:bottom="14dp"
+        android:left="14dp"
+        android:right="14dp"
+        android:top="14dp">
+        <shape android:shape="oval">
+            <solid android:color="@color/accent_light" />
+        </shape>
+    </item>
+    <!-- Внутренний тёмный кружок (фон аватара) -->
+    <item
+        android:bottom="17dp"
+        android:left="17dp"
+        android:right="17dp"
+        android:top="17dp">
+        <shape android:shape="oval">
+            <solid android:color="#0A0414" />
+        </shape>
+    </item>
+</layer-list>

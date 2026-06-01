@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+    <!-- Back heart (outline) -->
+    <path
+        android:strokeColor="#A855F7"
+        android:strokeWidth="1.8"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M20,10.5C20,10.5 17.5,8.5 15,10.5C12.5,8.5 10,10.5 10,13C10,16 15,20 15,20C15,20 20,16 20,13C20,11.5 20,10.5 20,10.5z"/>
+    <!-- Front heart (filled) -->
+    <path
+        android:fillColor="#A855F7"
+        android:pathData="M25,14C25,14 22,11.5 19.2,13.8C16.4,11.5 13.5,14 13.5,16.8C13.5,20.2 19.2,24.5 19.2,24.5C19.2,24.5 25,20.2 25,16.8C25,15.2 25,14 25,14z"/>
+</vector>

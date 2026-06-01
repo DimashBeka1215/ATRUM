@@ -1,0 +1,22 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="240dp"
+    android:height="240dp"
+    android:viewportWidth="240"
+    android:viewportHeight="240">
+
+    <!-- Звёздочки/искры внутри glow вокруг двери, разные размер и яркость -->
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.9" android:pathData="M 50 60 m -1.5,0 a 1.5,1.5 0 1,0 3,0 a 1.5,1.5 0 1,0 -3,0"/>
+    <path android:fillColor="#C77DFF" android:fillAlpha="0.7" android:pathData="M 70 95 m -1,0 a 1,1 0 1,0 2,0 a 1,1 0 1,0 -2,0"/>
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.6" android:pathData="M 38 130 m -1.2,0 a 1.2,1.2 0 1,0 2.4,0 a 1.2,1.2 0 1,0 -2.4,0"/>
+    <path android:fillColor="#C77DFF" android:fillAlpha="0.5" android:pathData="M 55 170 m -0.8,0 a 0.8,0.8 0 1,0 1.6,0 a 0.8,0.8 0 1,0 -1.6,0"/>
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.8" android:pathData="M 88 195 m -1,0 a 1,1 0 1,0 2,0 a 1,1 0 1,0 -2,0"/>
+
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.9" android:pathData="M 195 65 m -1.5,0 a 1.5,1.5 0 1,0 3,0 a 1.5,1.5 0 1,0 -3,0"/>
+    <path android:fillColor="#C77DFF" android:fillAlpha="0.6" android:pathData="M 178 105 m -1,0 a 1,1 0 1,0 2,0 a 1,1 0 1,0 -2,0"/>
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.7" android:pathData="M 205 140 m -1.2,0 a 1.2,1.2 0 1,0 2.4,0 a 1.2,1.2 0 1,0 -2.4,0"/>
+    <path android:fillColor="#C77DFF" android:fillAlpha="0.5" android:pathData="M 188 175 m -0.8,0 a 0.8,0.8 0 1,0 1.6,0 a 0.8,0.8 0 1,0 -1.6,0"/>
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.8" android:pathData="M 162 200 m -1,0 a 1,1 0 1,0 2,0 a 1,1 0 1,0 -2,0"/>
+
+    <path android:fillColor="#C77DFF" android:fillAlpha="0.4" android:pathData="M 120 32 m -1,0 a 1,1 0 1,0 2,0 a 1,1 0 1,0 -2,0"/>
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.7" android:pathData="M 115 215 m -1.2,0 a 1.2,1.2 0 1,0 2.4,0 a 1.2,1.2 0 1,0 -2.4,0"/>
+</vector>

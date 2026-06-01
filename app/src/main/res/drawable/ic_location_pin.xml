@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Тонкая иконка location pin -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="22dp"
+    android:height="22dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Outline pin shape (drop) -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M12,2 C7.6,2 4,5.6 4,10 C4,15 12,22 12,22 C12,22 20,15 20,10 C20,5.6 16.4,2 12,2 Z"
+        android:strokeColor="@color/warning"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.5" />
+    <!-- Inner circle (dot) -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M12,10 m-2.5,0 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0"
+        android:strokeColor="@color/warning"
+        android:strokeWidth="1.5" />
+</vector>

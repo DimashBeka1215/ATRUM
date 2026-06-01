@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        ═══════════════════════════════════════════════════════════════
+        ТЁМНАЯ тема (night / MODE_NIGHT_YES / AMOLED).
+        Светлая тема — в values/colors.xml.
+        ═══════════════════════════════════════════════════════════════
+    -->
+
+    <!-- Фоны: чем поверхностнее, тем светлее -->
+    <color name="bg">#000000</color>
+    <color name="container_bg">#000000</color>
+    <color name="surface">#0A0A0A</color>
+    <color name="surface_elevated">#141414</color>
+
+    <!-- Тонкие разделители -->
+    <color name="border">#1F1F1F</color>
+    <color name="border_subtle">#10FFFFFF</color>
+
+    <!-- Фиолетовая гамма -->
+    <color name="accent">#9D4EDD</color>
+    <color name="accent_dark">#7B2CBF</color>
+    <color name="accent_light">#C77DFF</color>
+    <color name="accent_glow">#1F9D4EDD</color>
+    <color name="accent_glow_soft">#0F9D4EDD</color>
+
+    <!-- Текст — 4 уровня -->
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#A0A0A8</color>
+    <color name="text_tertiary">#6A6A75</color>
+    <color name="text_quaternary">#3D3D45</color>
+
+    <!-- Сообщения -->
+    <color name="msg_self">#6B26B6</color>
+    <color name="msg_other">#141414</color>
+
+    <!-- Статусы -->
+    <color name="online">#34C759</color>
+    <color name="read_tick">#C77DFF</color>
+    <color name="sent_tick">#9D9DA5</color>
+
+    <!-- Chat overlay (полупрозрачный фон тулбара/инпута при наличии обоев) -->
+    <color name="chat_overlay">#CC000000</color>          <!-- 80% чёрный — тёмная тема -->
+    <color name="chat_input_pill">#CC000000</color>       <!-- пилюля поля ввода -->
+    <color name="chat_msg_other_wp">#CC141414</color>     <!-- чужой пузырёк с обоями -->
+
+    <!-- Стандартные -->
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+    <color name="error">#FF5252</color>
+    <color name="warning">#FFB454</color>
+</resources>

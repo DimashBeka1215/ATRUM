@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 4-pointed sparkle для кнопки "Создать чат ✨" -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="20dp"
+    android:height="20dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Основная звезда (4 луча) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,3 L13.3,10.7 L21,12 L13.3,13.3 L12,21 L10.7,13.3 L3,12 L10.7,10.7 Z" />
+    <!-- Маленькая звёздочка справа -->
+    <path
+        android:fillAlpha="0.85"
+        android:fillColor="#FFFFFF"
+        android:pathData="M20,5 L20.5,7 L22.5,7.5 L20.5,8 L20,10 L19.5,8 L17.5,7.5 L19.5,7 Z" />
+</vector>

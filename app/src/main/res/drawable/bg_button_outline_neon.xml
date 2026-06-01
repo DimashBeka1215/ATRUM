@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Outline only button: light theme — white surface with purple border -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/surface" />
+    <stroke
+        android:width="1dp"
+        android:color="#40C77DFF" />
+    <corners android:radius="26dp" />
+</shape>

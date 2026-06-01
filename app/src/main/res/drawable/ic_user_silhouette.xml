@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Default user силуэт для аватара когда нет картинки -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+    <!-- Голова -->
+    <path
+        android:fillColor="#C77DFF"
+        android:pathData="M32,18 m-10,0 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0" />
+    <!-- Плечи (полукруг снизу) -->
+    <path
+        android:fillColor="#C77DFF"
+        android:pathData="M14,52 C14,40 22,33 32,33 C42,33 50,40 50,52 Z" />
+</vector>

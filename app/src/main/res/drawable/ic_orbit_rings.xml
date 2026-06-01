@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Saturn-style orbit rings вокруг аватара.
+    Композиция: 2 наклонённых эллипса (один больше, второй меньше)
+    + faint particles по орбитам. ViewBox 240x240, центр (120, 120).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="240dp"
+    android:height="240dp"
+    android:viewportWidth="240"
+    android:viewportHeight="240">
+
+    <!-- Большое орбитальное кольцо, наклон ~22° -->
+    <group
+        android:pivotX="120"
+        android:pivotY="120"
+        android:rotation="-22">
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M120,120 m-110,0 a110,32 0 1,0 220,0 a110,32 0 1,0 -220,0"
+            android:strokeAlpha="0.55"
+            android:strokeColor="#C77DFF"
+            android:strokeWidth="0.9" />
+        <!-- Particles на большой орбите -->
+        <path
+            android:fillAlpha="0.85"
+            android:fillColor="#FFFFFF"
+            android:pathData="M10,120 m-1.3,0 a1.3,1.3 0 1,0 2.6,0 a1.3,1.3 0 1,0 -2.6,0" />
+        <path
+            android:fillAlpha="0.7"
+            android:fillColor="#C77DFF"
+            android:pathData="M230,120 m-1.2,0 a1.2,1.2 0 1,0 2.4,0 a1.2,1.2 0 1,0 -2.4,0" />
+        <path
+            android:fillAlpha="0.55"
+            android:fillColor="#FFFFFF"
+            android:pathData="M60,100 m-0.8,0 a0.8,0.8 0 1,0 1.6,0 a0.8,0.8 0 1,0 -1.6,0" />
+        <path
+            android:fillAlpha="0.55"
+            android:fillColor="#FFFFFF"
+            android:pathData="M185,140 m-0.9,0 a0.9,0.9 0 1,0 1.8,0 a0.9,0.9 0 1,0 -1.8,0" />
+        <path
+            android:fillAlpha="0.5"
+            android:fillColor="#C77DFF"
+            android:pathData="M50,140 m-0.8,0 a0.8,0.8 0 1,0 1.6,0 a0.8,0.8 0 1,0 -1.6,0" />
+    </group>
+
+    <!-- Малое орбитальное кольцо, наклон 18° в другую сторону -->
+    <group
+        android:pivotX="120"
+        android:pivotY="120"
+        android:rotation="18">
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M120,120 m-92,0 a92,26 0 1,0 184,0 a92,26 0 1,0 -184,0"
+            android:strokeAlpha="0.40"
+            android:strokeColor="#9D4EDD"
+            android:strokeWidth="0.8" />
+        <!-- Particles на малой орбите -->
+        <path
+            android:fillAlpha="0.75"
+            android:fillColor="#FFFFFF"
+            android:pathData="M28,120 m-1.1,0 a1.1,1.1 0 1,0 2.2,0 a1.1,1.1 0 1,0 -2.2,0" />
+        <path
+            android:fillAlpha="0.65"
+            android:fillColor="#C77DFF"
+            android:pathData="M212,120 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" />
+        <path
+            android:fillAlpha="0.4"
+            android:fillColor="#FFFFFF"
+            android:pathData="M80,108 m-0.7,0 a0.7,0.7 0 1,0 1.4,0 a0.7,0.7 0 1,0 -1.4,0" />
+        <path
+            android:fillAlpha="0.45"
+            android:fillColor="#C77DFF"
+            android:pathData="M170,132 m-0.8,0 a0.8,0.8 0 1,0 1.6,0 a0.8,0.8 0 1,0 -1.6,0" />
+    </group>
+
+    <!-- Background sparkles (вне орбит) -->
+    <path
+        android:fillAlpha="0.45"
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,40 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" />
+    <path
+        android:fillAlpha="0.50"
+        android:fillColor="#C77DFF"
+        android:pathData="M205,55 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" />
+    <path
+        android:fillAlpha="0.40"
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,190 m-0.9,0 a0.9,0.9 0 1,0 1.8,0 a0.9,0.9 0 1,0 -1.8,0" />
+    <path
+        android:fillAlpha="0.45"
+        android:fillColor="#C77DFF"
+        android:pathData="M210,200 m-1.1,0 a1.1,1.1 0 1,0 2.2,0 a1.1,1.1 0 1,0 -2.2,0" />
+</vector>

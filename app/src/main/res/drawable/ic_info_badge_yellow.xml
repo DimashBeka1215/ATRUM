@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Жёлтый filled кружок с "i" внутри — badge на нижнем углу shield -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+    <!-- Yellow filled circle -->
+    <path
+        android:fillColor="@color/warning"
+        android:pathData="M16,16 m-13,0 a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0" />
+    <!-- Тонкий внешний glow ring -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M16,16 m-15,0 a15,15 0 1,0 30,0 a15,15 0 1,0 -30,0"
+        android:strokeAlpha="0.3"
+        android:strokeColor="@color/warning"
+        android:strokeWidth="1" />
+    <!-- White "i" — точка сверху -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M16,9.5 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0" />
+    <!-- White "i" — нижняя вертикаль -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M16,13.5 L16,22"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.2" />
+</vector>

@@ -1,0 +1,22 @@
+# Android Studio / Gradle
+.gradle/
+build/
+captures/
+.idea/
+*.iml
+local.properties
+
+# Подпись релиза — НИКОГДА не коммитить в git
+keystore.properties
+*.keystore
+*.jks
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Output APK копии (если решишь хранить)
+/release_apks/

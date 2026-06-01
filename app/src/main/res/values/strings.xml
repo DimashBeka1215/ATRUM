@@ -1,0 +1,501 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Atrum Chat</string>
+
+    <!-- Welcome -->
+    <string name="welcome_title">Добро пожаловать в\nAtrum Chat</string>
+    <string name="welcome_subtitle">Зашифрованный мессенджер\nчерез GitHub Gist</string>
+    <string name="welcome_start">Начать</string>
+    <string name="welcome_hint">end-to-end шифрование AES-256</string>
+
+    <!-- Intro pager (4 экрана) -->
+    <string name="intro_donate_title">Support the Project</string>
+    <string name="intro_donate_subtitle">Atrum is built by one person, with no funding or ads. If you enjoy the app, please consider supporting its development — every donation, big or small, keeps this project alive.\n\nYou can donate anytime via Settings → Support.</string>
+    <string name="intro_skip">Пропустить</string>
+    <string name="intro_next">Далее</string>
+    <string name="intro_get_started">Начать</string>
+
+    <string name="intro_1_title">Добро пожаловать</string>
+    <string name="intro_1_subtitle">Приватный мессенджер для двух людей.\nБез серверов. Без рекламы. Без логов.</string>
+
+    <string name="intro_2_title">End-to-end шифрование</string>
+    <string name="intro_2_subtitle">Сообщения шифруются прямо на твоём устройстве.\nПароль комнаты не покидает телефон. Никто кроме собеседника не сможет прочитать твою переписку.</string>
+
+    <string name="intro_3_title">Что такое GitHub Gist?</string>
+    <string name="intro_3_subtitle">Gist — это маленькая заметка на GitHub. Мы используем её как зашифрованный почтовый ящик: туда летят только зашифрованные строки. GitHub видит шифр, не текст.</string>
+
+    <string name="intro_4_title">Experimental Beta</string>
+    <string name="intro_4_subtitle">Это закрытая бета. Некоторые функции работают нестабильно.\nИспользуй осторожно и не для критичных переписок.</string>
+
+    <string name="badge_beta">EXPERIMENTAL BETA</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_name_title">Как вас зовут?</string>
+    <string name="onboarding_name_hint">Это имя увидят ваши собеседники</string>
+    <string name="onboarding_pwd_title">Придумайте пароль</string>
+    <string name="onboarding_pwd_hint">Пароль для разблокировки приложения.\nХранится только на вашем устройстве.</string>
+    <string name="onboarding_pwd_field">Пароль</string>
+    <string name="onboarding_pwd_repeat">Повторите пароль</string>
+    <string name="onboarding_pwd_skip">Пропустить (без пароля)</string>
+    <string name="btn_next">Далее</string>
+    <string name="btn_finish">Готово</string>
+    <string name="error_empty_name">Введите имя</string>
+    <string name="error_empty_tag">Введите тег</string>
+    <string name="hint_tag">Ваш тег (@username)</string>
+    <string name="error_pwd_short">Пароль слишком короткий (минимум 4 символа)</string>
+    <string name="error_pwd_mismatch">Пароли не совпадают</string>
+
+    <!-- Lock -->
+    <string name="lock_title">Введите пароль</string>
+    <string name="lock_hint">Чтобы открыть Atrum Chat</string>
+    <string name="lock_field">Пароль</string>
+    <string name="lock_unlock">Открыть</string>
+    <string name="lock_wrong">Неверный пароль</string>
+
+    <!-- Chat -->
+    <string name="chat_empty">Здесь пока ничего нет</string>
+
+    <!-- Список чатов -->
+    <string name="chats_title">Чаты</string>
+    <string name="chats_empty_title">Пока нет чатов</string>
+    <string name="chats_empty_hint">Нажмите + чтобы создать новый чат</string>
+    <string name="cd_create_chat">Создать чат</string>
+
+    <!-- Создание чата -->
+    <string name="create_chat_title">Новый чат</string>
+    <string name="create_chat_partner_name">Имя собеседника</string>
+    <string name="create_chat_token">GitHub Token</string>
+    <string name="create_chat_gist">Gist ID</string>
+    <string name="create_chat_password">Пароль шифрования</string>
+    <string name="create_chat_password_hint">Этот же пароль введёт собеседник, чтобы расшифровать сообщения</string>
+    <string name="btn_create_chat">Создать чат</string>
+    <string name="btn_connect_chat">Подключиться</string>
+    <string name="btn_create_room">Создать комнату</string>
+    <string name="error_create_chat">Заполните все поля</string>
+
+    <!-- Режимы создания чата -->
+    <string name="create_mode_auto">Авто</string>
+    <string name="create_mode_manual">Вручную</string>
+
+    <!-- Auto режим -->
+    <string name="auto_token_title">Разовая настройка</string>
+    <string name="auto_token_hint">Чтобы создавать комнаты автоматически, нужен GitHub Token (scope: gist). Он используется только для создания gist\'а и записи сообщений — в шифровании не участвует.</string>
+    <string name="create_room_name_label">Название комнаты</string>
+    <string name="create_room_name_hint">Например: Алекс</string>
+    <string name="create_room_password_label">Пароль комнаты</string>
+    <string name="create_room_password_hint">секрет</string>
+    <string name="create_room_password_explainer">Тот же пароль нужно ввести собеседнику чтобы видеть сообщения. Этот пароль шифрует сообщения end-to-end.</string>
+    <string name="creating_room">Создаём комнату…</string>
+    <string name="error_create_gist">Не удалось создать gist. Проверь токен.</string>
+    <string name="error_no_token">Сначала введи GitHub Token</string>
+
+    <!-- OAuth -->
+    <string name="oauth_processing">Авторизация…</string>
+    <string name="oauth_exchanging">Получаем токен…</string>
+    <string name="oauth_failed">Не удалось авторизоваться</string>
+    <string name="oauth_error_user">Авторизация отменена: %1$s</string>
+    <string name="oauth_error_invalid">Некорректный ответ от GitHub</string>
+    <string name="oauth_error_state">Сессия авторизации устарела, попробуйте ещё раз</string>
+    <string name="oauth_error_exchange">Ошибка: %1$s</string>
+    <string name="oauth_not_configured">GitHub OAuth не настроен. Открой OAuthConfig.kt и впиши client_id/client_secret. См. инструкцию в файле.</string>
+
+    <!-- Карточки в Create -->
+    <string name="create_card_manual_title">Создать вручную</string>
+    <string name="create_card_manual_subtitle">Подключиться к существующему gist\'у с готовым токеном</string>
+    <string name="create_card_github_title">Создать через GitHub</string>
+    <string name="create_card_github_subtitle">Автоматически — нужна только авторизация в браузере. Gist и шифрование настроятся сами.</string>
+    <string name="create_card_github_cta">Начать</string>
+    <string name="create_card_or">или</string>
+    <string name="create_card_advanced">Продвинутый режим</string>
+    <string name="manual_warning_title">Режим для опытных пользователей</string>
+    <string name="manual_warning_text">Нужны GitHub токен и Gist ID. Если ты не уверен что это — лучше используй автоматический режим.</string>
+    <string name="manual_help_token_title">Где взять токен?</string>
+    <string name="manual_help_token_desc">Создай Personal Access Token (classic). В разделе Select scopes обязательно выбери пункт «gist».</string>
+    <string name="manual_help_token_button">Создать токен</string>
+    <string name="manual_help_gist_title">Где взять Gist ID?</string>
+    <string name="manual_help_gist_desc">Создай любой Gist на сайте. ID — это длинный код в конце ссылки.</string>
+    <string name="manual_help_gist_button">Открыть Gist</string>
+
+
+    <!-- Create chat — subtitle и футер -->
+    <string name="create_chat_subtitle">Приватно. Локально. Только у вас.</string>
+    <string name="create_chat_footer">Ваши данные доступны только\nу вас на устройстве.</string>
+
+    <!-- Карточка "Присоединиться к существующему чату" -->
+    <string name="create_card_join_title">Присоединиться к существующему чату</string>
+    <string name="create_card_join_subtitle">Вам нужен пароль от друга.</string>
+
+    <!-- Экран Join -->
+    <string name="join_chat_title">Присоединиться к чату</string>
+    <string name="join_chat_subtitle">Введите код приглашения, чтобы подключиться к существующему чату.</string>
+    <string name="join_chat_password_label">Код приглашения</string>
+    <string name="join_chat_password_hint">Вставьте код (ATRM…)</string>
+    <string name="join_chat_info">Код приглашения (ATRM...) должен быть получен от участника чата. Он не хранится на серверах.</string>
+    <string name="join_chat_connect">Подключиться</string>
+    <string name="join_chat_back">Назад</string>
+    <string name="cd_toggle_password">Показать / скрыть пароль</string>
+
+    <!-- Device Flow -->
+    <string name="device_flow_title">Подтверждение в GitHub</string>
+    <string name="device_flow_subtitle">Откройте GitHub в браузере и введите этот код</string>
+    <string name="device_flow_code_label">КОД ПОДТВЕРЖДЕНИЯ</string>
+    <string name="device_flow_open_github">Открыть GitHub</string>
+    <string name="device_flow_waiting">Ждём подтверждения в браузере…</string>
+    <string name="device_flow_tap_copy">Нажмите чтобы скопировать</string>
+    <string name="device_flow_code_copied">Код скопирован</string>
+    <string name="device_flow_expired">Код истёк, попробуйте ещё раз</string>
+    <string name="device_flow_denied">Авторизация отклонена</string>
+    <string name="notif_auth_success_title">Авторизация успешна</string>
+    <string name="notif_auth_success_text">Открыть чат: %1$s</string>
+
+    <!-- DeviceFlowService notifications + loading flow -->
+    <string name="df_notif_title">Atrum Chat</string>
+    <string name="df_status_authorizing">Ожидаем подтверждения в браузере…</string>
+    <string name="df_status_creating_gist">Создаём комнату…</string>
+    <string name="df_status_saving">Сохраняем конфигурацию…</string>
+    <string name="df_status_profile">Настраиваем профиль…</string>
+    <string name="df_status_expired">Код истёк, попробуйте ещё раз</string>
+    <string name="df_status_denied">Авторизация отклонена</string>
+    <string name="df_status_error">Ошибка: %1$s</string>
+    <string name="df_done_title">Комната готова</string>
+    <string name="df_done_text">Открыть чат: %1$s</string>
+
+    <!-- Action: удалить чат -->
+    <string name="action_delete_chat">Удалить чат</string>
+    <string name="confirm_delete_chat">Удалить этот чат? Сообщения в GitHub Gist останутся, но чат пропадёт из списка.</string>
+
+    <!-- Старые строки (login) — оставлены для совместимости -->
+    <string name="title_login">Вход</string>
+    <string name="hint_token">GitHub Token (ghp_…)</string>
+    <string name="hint_gist">Gist ID</string>
+    <string name="hint_name">Ваш ник</string>
+    <string name="hint_password">Пароль (сид-фраза)</string>
+    <string name="btn_enter">Войти в чат</string>
+
+    <!-- Chat -->
+    <string name="hint_message">Сообщение…</string>
+    <string name="cd_send">Отправить</string>
+    <string name="cd_refresh">Обновить</string>
+    <string name="cd_logout">Выйти</string>
+    <string name="cd_settings">Настройки</string>
+    <string name="cd_back">Назад</string>
+    <string name="chat_subtitle_encrypted">Зашифрованный чат</string>
+    <string name="typing_indicator">печатает…</string>
+    <string name="cd_cancel_reply">Отменить ответ</string>
+    <string name="action_reply">Ответить</string>
+
+    <!-- Картинки -->
+    <string name="cd_attach">Прикрепить</string>
+    <string name="image_compressing">Сжимаем картинку…</string>
+    <string name="image_reading">Читаем картинку…</string>
+    <string name="image_uploading">Загружаем картинку…</string>
+    <string name="image_uploading_chunk">Загрузка: %1$d / %2$d…</string>
+    <string name="image_uploading_multi">Загрузка %1$d / %2$d…</string>
+    <string name="image_upload_wait">Подождите, изображения отправляются…</string>
+    <string name="error_too_many_images">Максимум %1$d изображений в одном сообщении</string>
+    <string name="image_too_big">Картинка слишком большая</string>
+    <string name="error_image_load">Не удалось загрузить картинку</string>
+
+    <!-- Настройки -->
+    <string name="settings_title">Настройки</string>
+    <string name="settings_name_label">Ваш ник</string>
+    <string name="settings_status_hint">Статус…</string>
+    <string name="settings_tag_label">Ваш тег</string>
+    <string name="settings_tag_no_at">Тег должен начинаться с @</string>
+    <string name="settings_tag_hint">@tag</string>
+    <string name="settings_display_name_label">Ваше имя</string>
+    <string name="settings_edit_name_title">Изменить имя</string>
+    <string name="settings_edit_tag_title">Изменить тег</string>
+    <string name="settings_edit_status_title">Изменить статус</string>
+    <string name="settings_saved">Сохранено</string>
+    <string name="settings_reset">Сбросить аккаунт</string>
+    <string name="settings_reset_hint">Удалит все локальные данные: ник, аватарку, список чатов. Сообщения в GitHub Gist останутся.</string>
+    <string name="settings_reset_confirm">Удалить все локальные данные? Это действие нельзя отменить.</string>
+    <string name="cd_change_avatar">Сменить аватарку</string>
+    <string name="error_avatar_load">Не удалось загрузить изображение</string>
+    <string name="crop_avatar_title">Обрезать фото</string>
+
+    <!-- Ошибки -->
+    <string name="error_empty_fields">Заполни все поля</string>
+    <string name="error_network">Ошибка сети</string>
+    <string name="error_load">Не удалось загрузить чат</string>
+    <string name="error_send">Не удалось отправить</string>
+    <string name="confirm_logout">Выйти из чата?</string>
+    <string name="yes">Да</string>
+    <string name="no">Нет</string>
+
+    <!-- Warning banner в чате — мягкие предупреждения, не критические ошибки -->
+    <string name="warn_token_title">Токен недействителен</string>
+    <string name="warn_token_message">GitHub не принимает токен — возможно, он истёк или был отозван. Нажми «Обновить токен» и введи новый — пересоздавать чат не нужно.</string>
+    <string name="btn_update_token">Обновить токен</string>
+    <string name="dialog_update_token_title">Новый GitHub-токен</string>
+
+
+    <string name="warn_rate_limit_title">GitHub просит немного подождать</string>
+    <string name="warn_rate_limit_message">Слишком много запросов за короткое время. Это временно — приложение само восстановит синхронизацию через минуту. Сообщения никуда не пропадут.</string>
+
+    <string name="warn_network_title">Нет соединения с GitHub</string>
+    <string name="warn_network_message">Не удаётся связаться с сервером. Проверь интернет — приложение продолжит попытки автоматически. Уже отправленные сообщения сохранены.</string>
+
+    <string name="warn_fs_title">Сообщения предыдущей сессии скрыты</string>
+    <string name="warn_fs_message">Часть сообщений зашифрована ключом прошлой сессии, который уже уничтожен. Это нормально — именно так работает защита forward secrecy: прошлое нечитаемо даже при утечке пароля.</string>
+
+    <string name="chat_loading">Загрузка сообщений…</string>
+
+    <!-- Меню действий над сообщением -->
+    <string name="action_edit">Редактировать</string>
+    <string name="action_delete">Удалить</string>
+    <string name="action_copy">Скопировать</string>
+    <string name="dialog_edit_title">Изменить сообщение</string>
+    <string name="dialog_delete_title">Удалить сообщение?</string>
+    <string name="dialog_delete_message">Сообщение будет удалено для всех. Это действие нельзя отменить.</string>
+    <string name="btn_save">Сохранить</string>
+    <string name="btn_cancel">Отмена</string>
+    <string name="msg_copied">Скопировано</string>
+    <string name="error_message_not_found">Сообщение уже изменено или удалено</string>
+    <string name="error_edit">Не удалось изменить</string>
+    <string name="error_delete">Не удалось удалить</string>
+
+    <!-- Create chat (new single-screen design) -->
+    <string name="cc_profile_title">Ваш профиль</string>
+    <string name="cc_profile_subtitle">Этот чат будет создан с использованием вашего текущего профиля.</string>
+    <string name="cc_feature_exchange_title">Профили обмениваются</string>
+    <string name="cc_feature_exchange_desc">В этом чате каждый участник увидит имя и аватарку другого.</string>
+    <string name="cc_feature_e2e_title">Сквозное шифрование</string>
+    <string name="cc_feature_e2e_desc">Все сообщения защищены end-to-end шифрованием.</string>
+    <string name="cc_password_label">Пароль для подключения</string>
+    <string name="cc_password_hint">Введите пароль</string>
+    <string name="cc_password_helper">Этот пароль нужно передать собеседнику для подключения. Он шифрует все сообщения end-to-end.</string>
+    <string name="cc_duration_label">Срок существования чата</string>
+    <string name="cc_duration_1d">1 день</string>
+    <string name="cc_duration_7d">7 дней</string>
+    <string name="cc_duration_30d">30 дней</string>
+    <string name="cc_duration_90d">90 дней</string>
+    <string name="cc_duration_unlim">Бессрочно</string>
+    <string name="cc_duration_helper">После окончания срока чат и все данные будут безвозвратно удалены с серверов GitHub.</string>
+    <string name="cc_create_button">Создать чат</string>
+
+    <!-- OAuth warning screen (перед запуском браузера) -->
+    <string name="ow_title">Авторизация GitHub</string>
+    <string name="ow_subtitle">Для создания защищённого чата мы используем ваш аккаунт GitHub.</string>
+    <string name="ow_need_know_title">Что нужно знать</string>
+    <string name="ow_need_know_desc">Для подтверждения входа откроется страница GitHub в вашем браузере. Это стандартная часть системы безопасности GitHub.</string>
+    <string name="ow_github_will_show">Во время подтверждения GitHub может показать:</string>
+    <string name="ow_row_location_title">Примерное местоположение</string>
+    <string name="ow_row_location_desc">Город и IP-адрес могут быть видны.</string>
+    <string name="ow_row_time_title">Время и устройство</string>
+    <string name="ow_row_time_desc">Дата, время и устройство входа.</string>
+    <string name="ow_row_security_title">Это стандартная проверка безопасности</string>
+    <string name="ow_row_security_desc">Эти данные отображаются GitHub для защиты вашего аккаунта и не связаны с нашим приложением.</string>
+    <string name="ow_after_auth">После успешного подтверждения вы можете закрыть браузер вручную и вернуться в приложение.</string>
+    <string name="ow_perms_title">Приложение получает только необходимые разрешения:</string>
+    <string name="ow_perm_gist_title">Доступ к вашим Gist</string>
+    <string name="ow_perm_gist_desc">Позволяет создавать, читать и удалять Gist для работы чатов.</string>
+    <string name="ow_perm_gist_note">Больше никаких данных не запрашивается и не используется.</string>
+    <string name="ow_continue">Продолжить</string>
+    <string name="ow_footer">Мы не получаем доступ к вашим данным. Приложение использует только необходимые разрешения и не хранит ваши сообщения.</string>
+
+    <!-- Join chat — статусы и ошибки -->
+    <string name="join_default_partner_name">Чат</string>
+    <string name="join_btn_connecting">Подключаемся…</string>
+    <string name="join_status_checking">Проверяем чат…</string>
+    <string name="join_status_connecting">Подключаемся к GitHub…</string>
+    <string name="join_status_verifying">Проверяем пароль…</string>
+    <string name="join_status_saving">Сохраняем чат…</string>
+    <string name="join_status_profile">Делимся профилем…</string>
+    <string name="join_status_already">Этот чат уже в вашем списке</string>
+    <string name="join_err_empty">Введите пароль приглашения, который дал друг.</string>
+    <string name="join_err_not_invite">Это не похоже на пароль приглашения. Попросите у друга длинный пароль, начинающийся с ATRM.</string>
+    <string name="join_err_corrupt">Пароль приглашения повреждён или скопирован не полностью. Попросите у друга свежий.</string>
+    <string name="join_err_password">Пароль не подходит к этому чату. Возможно у вас устаревший пароль.</string>
+    <string name="join_err_no_internet">Нет подключения к интернету. Проверьте сеть и попробуйте снова.</string>
+    <string name="join_err_timeout">Превышено время ожидания. Попробуйте ещё раз.</string>
+    <string name="join_err_not_found">Чат больше не существует. Возможно его удалили или истёк срок.</string>
+    <string name="join_err_access">Доступ к чату закрыт. Возможно токен в пароле приглашения был отозван.</string>
+    <string name="join_err_server">GitHub временно недоступен. Попробуйте через минуту.</string>
+    <string name="join_err_empty_response">GitHub вернул пустой ответ. Попробуйте ещё раз.</string>
+    <string name="join_err_generic_fmt">Не удалось подключиться. %1$s</string>
+
+    <!-- Share invite -->
+    <string name="invite_share_action">Поделиться приглашением</string>
+    <string name="invite_share_action_locked">Чат уже занят</string>
+    <string name="invite_share_title">Поделиться приглашением</string>
+    <string name="invite_share_text_fmt">Приглашаю тебя в зашифрованный чат Atrum. Открой приложение, нажми «Присоединиться к существующему чату» и вставь этот пароль:\n\n%1$s</string>
+    <string name="chat_locked_toast">Этот чат уже занят. Невозможно пригласить ещё одного человека.</string>
+
+    <!-- Invite security warning dialog -->
+    <string name="invite_warning_title">⚠️ Перед отправкой</string>
+    <string name="invite_warning_message">Код приглашения содержит GitHub-токен и пароль чата в одной строке.\n\nЕсли кто-то перехватит этот код — он получит полный доступ к переписке.\n\nПередавай приглашение только через доверенные личные каналы (например, при личной встрече или через зашифрованный мессенджер).</string>
+    <string name="invite_warning_confirm">Понятно, отправить</string>
+
+    <!-- Password mode toggle + warning -->
+    <string name="cc_pwd_mode_generate">Сгенерировать</string>
+    <string name="cc_pwd_mode_custom">Свой пароль</string>
+    <string name="cc_pwd_custom_hint">Введите свой пароль</string>
+    <string name="cc_pwd_warning_title">Как делиться паролем</string>
+    <string name="cc_pwd_warning_text">Свой пароль удобно сообщить вживую — голосом или с глазу на глаз. Для отправки в любые мессенджеры безопаснее использовать «Поделиться приглашением» из списка чатов: это длинная строка, в которую защищённо зашит весь набор для подключения.</string>
+    <string name="cc_pwd_copy_cd">Скопировать пароль</string>
+    <string name="cc_pwd_copied_toast">Пароль скопирован</string>
+    <string name="cc_invite_only_title">Как подключиться к чату</string>
+    <string name="cc_invite_only_text">Собеседник получит код-приглашение через раздел «Поделиться приглашением». Пароль задаётся автоматически. Если хотите указать свой пароль — используйте продвинутый режим.</string>
+
+    <!-- Chat full / join refusal -->
+    <string name="join_err_chat_full">Этот чат уже занят. К нему уже подключился другой собеседник.</string>
+
+    <!-- Expired chat cleanup -->
+    <string name="chat_expired_toast">Чат удалён — истёк срок жизни.</string>
+
+    <!-- Удаление чата (с gist) -->
+    <string name="confirm_delete_chat_gist">Удалить этот чат? Переписка будет безвозвратно удалена с GitHub.</string>
+    <string name="chat_deleted_toast">Чат удалён</string>
+
+    <!-- Удаление профиля -->
+    <string name="settings_delete_profile">Удалить профиль</string>
+    <string name="settings_delete_profile_hint">Уведомит всех собеседников об удалении и сотрёт данные навсегда.</string>
+    <string name="settings_delete_profile_confirm">Все ваши собеседники увидят заглушку «Профиль удалён» вместо вашей аватарки. Все локальные данные и история будут стёрты. Это действие нельзя отменить.</string>
+    <string name="settings_delete_profile_action">Удалить</string>
+    <string name="deleting_profile">Удаляем профиль…</string>
+
+    <!-- Удалённый профиль партнёра -->
+    <string name="profile_deleted_label">Профиль удалён</string>
+    <string name="partner_deleted_subtitle">Профиль удалён</string>
+    <!-- Язык приложения -->
+    <string name="lang_dialog_title">Язык приложения</string>
+    <string name="lang_russian">Русский</string>
+    <string name="lang_english">English</string>
+    <string name="lang_system">Системный</string>
+
+    <!-- Тема — лейблы для настроек -->
+    <string name="theme_dark">Тёмная</string>
+    <string name="theme_light">Светлая</string>
+    <string name="theme_system">Системная</string>
+
+    <!-- Тема — строки диалогов -->
+    <string name="theme_dialog_title">Тема оформления</string>
+    <string name="theme_light_warning_title">⚠️ Подождите!</string>
+    <string name="theme_light_warning_message">Вы выбираете белую тему.\n\nПриложение задумано работать на тёмной теме.\n\nВы теряете стиль и 1000 очков SWAG.</string>
+    <string name="theme_light_warning_confirm">Всё равно включить</string>
+    <string name="theme_light_warning_cancel">Оставить тёмную</string>
+
+    <!-- Настройки — диалоги -->
+    <string name="logout_title">Выйти из аккаунта?</string>
+    <string name="logout_message">Все локальные чаты и данные будут удалены. Это действие необратимо.</string>
+    <string name="logout_confirm">Выйти</string>
+    <string name="avatar_updated">Аватар обновлён</string>
+    <string name="no_name">Без имени</string>
+
+    <!-- Settings sections -->
+    <string name="settings_section_main">GENERAL</string>
+    <string name="settings_section_extra">PERSONALIZATION</string>
+    <string name="settings_section_more">MORE</string>
+    <string name="settings_item_main">Account</string>
+    <string name="settings_item_personalization">Personalization</string>
+    <string name="settings_item_theme">Theme</string>
+    <string name="settings_item_notifications">Notifications</string>
+    <string name="settings_item_about">About</string>
+    <string name="settings_item_support">Support</string>
+    <!-- Wallpaper (inside Personalization section) -->
+    <string name="settings_wallpaper_title">Chat Wallpaper</string>
+    <string name="settings_wallpaper_desc">Change chat background</string>
+    <string name="wallpaper_apply">Apply</string>
+    <string name="wallpaper_cancel">Cancel</string>
+    <string name="wallpaper_change">Choose Wallpaper</string>
+    <string name="wallpaper_clear">Remove Wallpaper</string>
+    <string name="wallpaper_cleared">Wallpaper removed</string>
+    <string name="settings_logout">Log Out</string>
+
+    <!-- Personalization section headers -->
+    <string name="settings_section_appearance">APPEARANCE</string>
+    <string name="settings_section_display">DISPLAY</string>
+
+    <!-- Chat UI style selector -->
+    <string name="settings_item_chat_ui_style">Chat Interface</string>
+    <string name="chat_ui_classic">Classic</string>
+    <string name="chat_ui_glass">Atmospheric Glass</string>
+    <string name="chat_ui_glass_needs_wallpaper">Atmospheric Glass requires a wallpaper. Set one in Chat Wallpaper first.</string>
+
+    <!-- Transparency settings -->
+    <string name="transparency_title">Transparency</string>
+    <string name="transparency_bubble_self">My messages</string>
+    <string name="transparency_bubble_other">Partner messages</string>
+    <string name="transparency_ui">Interface (header, input)</string>
+    <string name="transparency_default">Default</string>
+    <string name="transparency_custom">Custom</string>
+    <string name="btn_apply">Apply</string>
+
+    <!-- Wallpaper preview/adjust option -->
+    <string name="wallpaper_preview_adjust">Preview &amp; Adjust</string>
+
+    <!-- Mock chat preview strings -->
+    <string name="mock_chat_name">Alex</string>
+    <string name="mock_chat_status">online</string>
+    <string name="mock_msg_other">Hey, how\'s it going?</string>
+    <string name="mock_msg_self">All good, thanks! 👍</string>
+    <string name="mock_msg_time">14:32 ✓✓</string>
+
+    <!-- About screen -->
+    <string name="about_title">О приложении</string>
+    <string name="about_thanks">Спасибо, что используете Atrum</string>
+    <string name="about_links_desc">Ниже — все полезные ссылки. Обязательно следите за обновлениями и делитесь фидбеком!</string>
+    <string name="about_github_title">GitHub</string>
+    <string name="about_telegram_title">Telegram</string>
+    <string name="about_section_links">ССЫЛКИ</string>
+    <string name="about_github_desc">Исходный код и релизы</string>
+    <string name="about_telegram_desc">Новости и обновления</string>
+    <string name="about_support_desc">DonationAlerts, Boosty, Buy Me a Coffee</string>
+
+    <!-- Credits -->
+    <string name="credits_title">Благодарности</string>
+    <string name="credits_thanks_main">Спасибо всем, кто поддерживал проект на разных этапах — тестировал, предлагал идеи и помогал финансово.</string>
+    <string name="credits_section_supporters">ПОДДЕРЖАЛИ ПРОЕКТ</string>
+    <string name="credits_join_title">Хочешь попасть сюда?</string>
+    <string name="credits_join_desc">Поддержи проект или помоги с тестированием</string>
+
+    <!-- Selection bar -->
+    <string name="selection_count_fmt">%1$d выбрано</string>
+
+    <!-- Pinned chats & Favorites -->
+    <string name="action_pin">Закрепить</string>
+    <string name="action_unpin">Открепить</string>
+    <string name="favorites_name">Избранное</string>
+    <string name="favorites_description">Мои заметки</string>
+
+    <!-- Donate dialog -->
+    <string name="donate_title">Поддержать проект</string>
+    <string name="donate_subtitle">Выберите удобный способ</string>
+    <string name="donate_donationalerts">DonationAlerts</string>
+    <string name="donate_boosty">Boosty</string>
+    <string name="donate_buymeacoffee">Buy Me a Coffee</string>
+
+    <!-- Crash screen -->
+    <string name="crash_title">Что-то пошло не так</string>
+    <string name="crash_subtitle">Приложение столкнулось с неожиданной ошибкой. Лог уже скопирован в буфер обмена — просто отправьте его разработчику.</string>
+    <string name="crash_log_label">Отчёт об ошибке</string>
+    <string name="crash_copy">Скопировать</string>
+    <string name="crash_close">Закрыть</string>
+    <string name="crash_log_unavailable">Лог недоступен.</string>
+    <string name="crash_copied_toast">Лог скопирован в буфер обмена</string>
+
+    <!-- EULA -->
+    <string name="eula_title">Пользовательское соглашение</string>
+    <string name="eula_subtitle">Прочитайте перед использованием</string>
+    <string name="eula_accept">Принять и продолжить</string>
+    <string name="eula_decline">Отказаться</string>
+    <string name="eula_warning">Отказ от соглашения закрывает приложение.</string>
+
+    <!-- Update checker -->
+    <string name="settings_version_label">Версия</string>
+    <string name="settings_version_checking">Проверяется…</string>
+    <string name="settings_version_up_to_date">Актуальная</string>
+    <string name="settings_version_update_badge">Обновить</string>
+    <string name="update_dialog_title" formatted="false">Доступно обновление %s</string>
+    <string name="update_dialog_body_fallback">Доступна новая версия приложения.</string>
+    <string name="update_dialog_positive">Обновить</string>
+    <string name="update_dialog_negative">Позже</string>
+    <string name="update_dialog_negative">Позже</string>
+
+    <!-- Partner profile screen -->
+    <string name="profile_status_label">Статус</string>
+    <string name="profile_photos_label">Фото</string>
+
+</resources>

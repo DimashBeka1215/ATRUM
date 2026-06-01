@@ -1,0 +1,76 @@
+TERMS OF SERVICE
+
+1. General
+The Application is a technical system for exchanging encrypted messages between users. The Application is not a telecommunications provider and does not control message content.
+
+2. Unified Privacy & Architecture Model
+This document defines: terms of use, data handling model, system architecture constraints.
+
+3. Zero-Knowledge Architecture
+The system is designed as a zero-knowledge transport layer. Developers do not have access to encryption keys, cannot decrypt messages, do not access message content, cannot recover user data.
+
+4. End-to-End Encryption
+Messages are encrypted on the sender's device, decrypted only on the recipient's device, transmitted only in encrypted form.
+
+5. Data Lifecycle Model
+The system operates as follows: data is generated on user devices, data exists only in encrypted form during transport, the system is not a data storage service, decrypted data is not retained after delivery.
+
+6. No Retention Policy
+The system does not store user messages. No indexing, profiling, or long-term storage of content.
+
+7. Metadata Limitations
+Even in a zero-knowledge system: network metadata may exist, third-party services (including GitHub) may log technical data, developers do not control such processing.
+
+8. Untrusted Transport Layer
+The system uses GitHub, APIs, and user-operated nodes. These are untrusted transport mechanisms for encrypted data only.
+
+9. Threat Model
+The system does NOT protect against: compromised user devices, malware on endpoints, network-level traffic analysis, user key mismanagement. It protects only message content under correct E2EE usage.
+
+10. Key Management
+Users are solely responsible for encryption keys. Loss of keys results in irreversible data loss.
+
+11. No Accounts
+No registration or identity system is used.
+
+12. Data Minimization
+The system does not intentionally process personal data, device identifiers, or profiling data.
+
+13. User Infrastructure
+User-operated nodes are independent systems under full user responsibility.
+
+14. AI-Assisted Development
+The application is developed using artificial intelligence tools for code generation and maintenance. This does not affect system security or legal structure.
+
+15. Legal Requests
+Developers cannot decrypt messages, cannot access keys, do not store user data. Only technically existing information may be disclosed under legally binding requests. No message content can be provided due to system architecture.
+
+16. Access Control
+Developers may restrict access, mitigate abuse, and protect system integrity.
+
+17. Source-Available License
+Code is available for viewing and security auditing only. Modification, forking, redistribution, and reuse in other projects are prohibited.
+
+18. Disclaimer
+The service is provided "as is".
+
+19. Limitation of Liability
+Developers are not liable for user actions, data loss, infrastructure failures, or third-party systems.
+
+20. Force Majeure
+Service may be affected by external events beyond control.
+
+21. No Fiduciary Duty
+No fiduciary or special legal relationship is created.
+
+22. Changes
+Terms may be updated at any time.
+
+23. Governing Law
+Determined by the operator's jurisdiction.
+
+24. Severability
+Invalid provisions do not affect the rest.
+
+25. Entire Agreement
+This document includes terms of use, privacy model, and system architecture description.

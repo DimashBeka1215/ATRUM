@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Тонкая lock иконка, minimal contrast -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Shackle (дуга над замком) -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M8,11 L8,7.5 A4,4 0 0 1 16,7.5 L16,11"
+        android:strokeColor="#C77DFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.3" />
+    <!-- Корпус -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M5.5,11.5 L18.5,11.5 L18.5,20 L5.5,20 Z"
+        android:strokeColor="#C77DFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.3" />
+    <!-- Замочная скважина (точка) -->
+    <path
+        android:fillAlpha="0.9"
+        android:fillColor="#C77DFF"
+        android:pathData="M12,15.5 m-0.8,0 a0.8,0.8 0 1,0 1.6,0 a0.8,0.8 0 1,0 -1.6,0" />
+</vector>

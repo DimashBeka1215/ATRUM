@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Иллюстрация для feature row "Профили обмениваются":
+    два мини-аватара с двумя стрелками между ними + sparkles.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="80dp"
+    android:height="44dp"
+    android:viewportWidth="80"
+    android:viewportHeight="44">
+
+    <!-- Левый avatar circle -->
+    <path
+        android:fillColor="#1A9D4EDD"
+        android:pathData="M14,22 m-13,0 a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M14,22 m-13,0 a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0"
+        android:strokeColor="@color/accent_light"
+        android:strokeWidth="1.1" />
+    <!-- Левый user silhouette -->
+    <path
+        android:fillColor="@color/accent_light"
+        android:pathData="M14,19 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+    <path
+        android:fillColor="@color/accent_light"
+        android:pathData="M8,30 C8,26.5 10.5,24.5 14,24.5 C17.5,24.5 20,26.5 20,30 Z" />
+
+    <!-- Правый avatar circle -->
+    <path
+        android:fillColor="#1A9D4EDD"
+        android:pathData="M66,22 m-13,0 a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M66,22 m-13,0 a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0"
+        android:strokeColor="@color/accent_light"
+        android:strokeWidth="1.1" />
+    <!-- Правый user silhouette -->
+    <path
+        android:fillColor="@color/accent_light"
+        android:pathData="M66,19 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+    <path
+        android:fillColor="@color/accent_light"
+        android:pathData="M60,30 C60,26.5 62.5,24.5 66,24.5 C69.5,24.5 72,26.5 72,30 Z" />
+
+    <!-- Верхняя стрелка ← (от правого к левому, сверху) -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M48,16 L33,16"
+        android:strokeColor="@color/accent_light"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.3" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M36,13 L33,16 L36,19"
+        android:strokeColor="@color/accent_light"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.3" />
+
+    <!-- Нижняя стрелка → (от левого к правому, снизу) -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M32,28 L47,28"
+        android:strokeColor="@color/accent_light"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.3" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M44,25 L47,28 L44,31"
+        android:strokeColor="@color/accent_light"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.3" />
+
+    <!-- Sparkles между аватарами -->
+    <path
+        android:fillAlpha="0.85"
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,8 m-0.9,0 a0.9,0.9 0 1,0 1.8,0 a0.9,0.9 0 1,0 -1.8,0" />
+    <path
+        android:fillAlpha="0.75"
+        android:fillColor="#C77DFF"
+        android:pathData="M40,38 m-0.8,0 a0.8,0.8 0 1,0 1.6,0 a0.8,0.8 0 1,0 -1.6,0" />
+</vector>

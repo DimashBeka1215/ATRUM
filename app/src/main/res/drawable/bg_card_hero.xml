@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Большая premium карточка с легким purple glow и тонкой обводкой -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Внешний soft glow — заметная, но мягкая фиолетовая аура -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/accent_glow_soft" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
+    <!-- Сама карточка -->
+    <item
+        android:left="2dp" android:top="2dp"
+        android:right="2dp" android:bottom="2dp">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/surface" />
+            <stroke android:width="1dp" android:color="#3D9D4EDD" />
+            <corners android:radius="20dp" />
+        </shape>
+    </item>
+</layer-list>

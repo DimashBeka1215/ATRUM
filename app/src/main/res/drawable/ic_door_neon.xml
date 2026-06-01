@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Neon door portal — арочная дверь, форма которой повторяет форму frame.
+    Раньше door была прямоугольной → не подходила к арочному проёму.
+    Теперь top edge двери — арка (elliptical), как у frame'а.
+    Door хинж слева, приоткрыта внутрь, занимает ~72% ширины проёма.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="300dp"
+    android:height="300dp"
+    android:viewportWidth="300"
+    android:viewportHeight="300">
+
+    <!-- Концентрические atmospheric rings -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M150,150 m-142,0 a142,142 0 1,0 284,0 a142,142 0 1,0 -284,0"
+        android:strokeAlpha="0.04"
+        android:strokeColor="#9D4EDD"
+        android:strokeWidth="1" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M150,150 m-120,0 a120,120 0 1,0 240,0 a120,120 0 1,0 -240,0"
+        android:strokeAlpha="0.06"
+        android:strokeColor="#9D4EDD"
+        android:strokeWidth="1" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M150,150 m-98,0 a98,98 0 1,0 196,0 a98,98 0 1,0 -196,0"
+        android:strokeAlpha="0.09"
+        android:strokeColor="#C77DFF"
+        android:strokeWidth="1" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M150,150 m-78,0 a78,78 0 1,0 156,0 a78,78 0 1,0 -156,0"
+        android:strokeAlpha="0.14"
+        android:strokeColor="#C77DFF"
+        android:strokeWidth="1" />
+
+    <!-- Soft glow fog -->
+    <path
+        android:fillColor="#149D4EDD"
+        android:pathData="M150,168 m-68,0 a68,68 0 1,0 136,0 a68,68 0 1,0 -136,0" />
+    <path
+        android:fillColor="#22C77DFF"
+        android:pathData="M150,168 m-50,0 a50,50 0 1,0 100,0 a50,50 0 1,0 -100,0" />
+
+    <!-- Floating particles -->
+    <path
+        android:fillAlpha="0.55"
+        android:fillColor="#FFFFFF"
+        android:pathData="M50,60 m-1.3,0 a1.3,1.3 0 1,0 2.6,0 a1.3,1.3 0 1,0 -2.6,0" />
+    <path
+        android:fillAlpha="0.55"
+        android:fillColor="#C77DFF"
+        android:pathData="M256,72 m-1.1,0 a1.1,1.1 0 1,0 2.2,0 a1.1,1.1 0 1,0 -2.2,0" />
+    <path
+        android:fillAlpha="0.40"
+        android:fillColor="#FFFFFF"
+        android:pathData="M272,168 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" />
+    <path
+        android:fillAlpha="0.45"
+        android:fillColor="#C77DFF"
+        android:pathData="M34,180 m-1.1,0 a1.1,1.1 0 1,0 2.2,0 a1.1,1.1 0 1,0 -2.2,0" />
+    <path
+        android:fillAlpha="0.35"
+        android:fillColor="#FFFFFF"
+        android:pathData="M68,255 m-0.9,0 a0.9,0.9 0 1,0 1.8,0 a0.9,0.9 0 1,0 -1.8,0" />
+    <path
+        android:fillAlpha="0.55"
+        android:fillColor="#C77DFF"
+        android:pathData="M236,258 m-1.2,0 a1.2,1.2 0 1,0 2.4,0 a1.2,1.2 0 1,0 -2.4,0" />
+    <path
+        android:fillAlpha="0.32"
+        android:fillColor="#FFFFFF"
+        android:pathData="M150,28 m-0.8,0 a0.8,0.8 0 1,0 1.6,0 a0.8,0.8 0 1,0 -1.6,0" />
+    <path
+        android:fillAlpha="0.45"
+        android:fillColor="#FFFFFF"
+        android:pathData="M40,118 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" />
+    <path
+        android:fillAlpha="0.40"
+        android:fillColor="#C77DFF"
+        android:pathData="M264,138 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" />
+    <path
+        android:fillAlpha="0.35"
+        android:fillColor="#FFFFFF"
+        android:pathData="M214,282 m-0.8,0 a0.8,0.8 0 1,0 1.6,0 a0.8,0.8 0 1,0 -1.6,0" />
+    <path
+        android:fillAlpha="0.35"
+        android:fillColor="#C77DFF"
+        android:pathData="M90,40 m-0.7,0 a0.7,0.7 0 1,0 1.4,0 a0.7,0.7 0 1,0 -1.4,0" />
+    <path
+        android:fillAlpha="0.30"
+        android:fillColor="#FFFFFF"
+        android:pathData="M215,42 m-0.8,0 a0.8,0.8 0 1,0 1.6,0 a0.8,0.8 0 1,0 -1.6,0" />
+
+    <!-- Bright beam (3 слоя) — заполняет весь арочный проём -->
+    <path
+        android:fillColor="#80C77DFF"
+        android:pathData="M114,240 L114,120 A36,36 0 0 1 186,120 L186,240 Z" />
+    <path
+        android:fillColor="#B3FFFFFF"
+        android:pathData="M124,240 L124,126 A26,26 0 0 1 176,126 L176,240 Z" />
+    <path
+        android:fillColor="#F0FFFFFF"
+        android:pathData="M138,240 L138,132 A12,12 0 0 1 162,132 L162,240 Z" />
+
+    <!-- Door panel — АРОЧНАЯ форма повторяет форму frame:
+         хинж слева вертикальный, арочный top (elliptical),
+         free edge справа вертикальный со slight tilt.
+         Радиусы арки (28×22) подобраны под compressed arch (дверь под углом).
+         Door arch peak ниже frame arch peak → видна тонкая halo полоска bright beam'а. -->
+    <path
+        android:fillColor="#0A0414"
+        android:pathData="M114,240 L114,120 A28,22 0 0 1 170,124 L170,237 Z"
+        android:strokeAlpha="0.95"
+        android:strokeColor="#C77DFF"
+        android:strokeWidth="1.5" />
+
+    <!-- Inner accent line на двери — намёк на panel-style -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M119,178 L166,180"
+        android:strokeAlpha="0.45"
+        android:strokeColor="#C77DFF"
+        android:strokeWidth="0.6" />
+
+    <!-- Highlight на свободной кромке двери (свет цепляется за edge) -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M170,124 L170,237"
+        android:strokeAlpha="0.65"
+        android:strokeColor="#E6BFFF"
+        android:strokeWidth="0.8" />
+
+    <!-- Highlight на верхней арке двери — мягкий top edge glow -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M114,120 A28,22 0 0 1 170,124"
+        android:strokeAlpha="0.50"
+        android:strokeColor="#E6BFFF"
+        android:strokeWidth="0.7" />
+
+    <!-- Door handle на свободной кромке -->
+    <path
+        android:fillAlpha="0.95"
+        android:fillColor="#C77DFF"
+        android:pathData="M161,180 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0" />
+
+    <!-- Frame outline — арочный portal, поверх двери -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M110,240 L110,115 A40,40 0 0 1 190,115 L190,240"
+        android:strokeAlpha="0.95"
+        android:strokeColor="#C77DFF"
+        android:strokeWidth="1.7" />
+
+    <!-- Inner accent line frame -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M114,239 L114,118 A36,36 0 0 1 186,118 L186,239"
+        android:strokeAlpha="0.30"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="0.6" />
+
+    <!-- Floor reflection — под правым зазором -->
+    <path
+        android:fillColor="#22C77DFF"
+        android:pathData="M170,240 L196,240 L214,260 L162,260 Z" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M78,240 L222,240"
+        android:strokeAlpha="0.35"
+        android:strokeColor="#C77DFF"
+        android:strokeWidth="0.8" />
+</vector>

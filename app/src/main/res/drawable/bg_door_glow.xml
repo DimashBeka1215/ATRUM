@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Сильное концентрическое неоновое свечение вокруг двери — 5 колец -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Самый дальний ореол -->
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="#089D4EDD" />
+        </shape>
+    </item>
+    <item
+        android:left="10dp" android:top="10dp"
+        android:right="10dp" android:bottom="10dp">
+        <shape android:shape="oval">
+            <solid android:color="#129D4EDD" />
+        </shape>
+    </item>
+    <item
+        android:left="24dp" android:top="24dp"
+        android:right="24dp" android:bottom="24dp">
+        <shape android:shape="oval">
+            <solid android:color="#1F9D4EDD" />
+        </shape>
+    </item>
+    <item
+        android:left="40dp" android:top="40dp"
+        android:right="40dp" android:bottom="40dp">
+        <shape android:shape="oval">
+            <solid android:color="#2EC77DFF" />
+        </shape>
+    </item>
+    <!-- Самое яркое центральное кольцо -->
+    <item
+        android:left="58dp" android:top="58dp"
+        android:right="58dp" android:bottom="58dp">
+        <shape android:shape="oval">
+            <solid android:color="#3DC77DFF" />
+        </shape>
+    </item>
+</layer-list>

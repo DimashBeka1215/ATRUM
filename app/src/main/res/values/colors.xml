@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        ═══════════════════════════════════════════════════════════════
+        СВЕТЛАЯ тема (day / MODE_NIGHT_NO).
+        Тёмная тема — в values-night/colors.xml.
+        ═══════════════════════════════════════════════════════════════
+    -->
+
+    <!-- Фоны -->
+    <color name="bg">#F2F2F7</color>              <!-- iOS-style light gray -->
+    <color name="container_bg">#F2F2F7</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="surface_elevated">#EAEAEF</color>
+
+    <!-- Разделители -->
+    <color name="border">#C6C6C8</color>
+    <color name="border_subtle">#1A000000</color>  <!-- 10% чёрный -->
+
+    <!-- Фиолетовая гамма — одинакова в обеих темах -->
+    <color name="accent">#9D4EDD</color>
+    <color name="accent_dark">#7B2CBF</color>
+    <color name="accent_light">#C77DFF</color>
+    <color name="accent_glow">#1F9D4EDD</color>
+    <color name="accent_glow_soft">#0F9D4EDD</color>
+
+    <!-- Текст -->
+    <color name="text_primary">#1C1C1E</color>
+    <color name="text_secondary">#636366</color>
+    <color name="text_tertiary">#6C6C70</color>
+    <color name="text_quaternary">#8E8E93</color>
+
+    <!-- Сообщения -->
+    <color name="msg_self">#6B26B6</color>         <!-- фиолетовый bubble — одинаково -->
+    <color name="msg_other">#E5E5EA</color>         <!-- светло-серый bubble -->
+
+    <!-- Статусы -->
+    <color name="online">#34C759</color>
+    <color name="read_tick">#C77DFF</color>
+    <color name="sent_tick">#9D9DA5</color>
+
+    <!-- Chat overlay (полупрозрачный фон тулбара/инпута при наличии обоев) -->
+    <color name="chat_overlay">#D9FFFFFF</color>          <!-- 85% белый — светлая тема -->
+    <color name="chat_input_pill">#D9FFFFFF</color>       <!-- пилюля поля ввода -->
+    <color name="chat_msg_other_wp">#D9E5E5EA</color>     <!-- чужой пузырёк с обоями -->
+
+    <!-- Стандартные -->
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+    <color name="error">#FF5252</color>
+    <color name="warning">#FFB454</color>
+</resources>

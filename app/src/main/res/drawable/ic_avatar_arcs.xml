@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Две наклонённые эллиптические орбиты вокруг аватарки (68×68dp, центр 34,34).
+    При вращении ImageView создаётся эффект 3D-орбит как у планеты.
+    Орбиты намеренно неполные — разрывы делают движение читаемым.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="68dp"
+    android:height="68dp"
+    android:viewportWidth="68"
+    android:viewportHeight="68">
+
+    <!-- Орбита 1: наклон ~25°, широкий эллипс, яркая -->
+    <group
+        android:pivotX="34"
+        android:pivotY="34"
+        android:rotation="25">
+        <!-- Верхняя дуга (видимая часть орбиты) -->
+        <path
+            android:pathData="M34,3 A31,9 0 0,1 65,34"
+            android:strokeColor="#C77DFF"
+            android:strokeWidth="1.8"
+            android:strokeAlpha="0.95"
+            android:fillColor="#00000000"
+            android:strokeLineCap="round"/>
+        <!-- Нижняя дуга (уходит "за" аватар, полупрозрачная) -->
+        <path
+            android:pathData="M65,34 A31,9 0 0,1 34,65"
+            android:strokeColor="#9D4EDD"
+            android:strokeWidth="1.2"
+            android:strokeAlpha="0.40"
+            android:fillColor="#00000000"
+            android:strokeLineCap="round"/>
+        <!-- Частица на орбите -->
+        <path
+            android:pathData="M34,3 m-1.6,0 a1.6,1.6 0 1,0 3.2,0 a1.6,1.6 0 1,0 -3.2,0"
+            android:fillColor="#FFFFFF"
+            android:fillAlpha="0.95"/>
+        <path
+            android:pathData="M65,34 m-1.2,0 a1.2,1.2 0 1,0 2.4,0 a1.2,1.2 0 1,0 -2.4,0"
+            android:fillColor="#C77DFF"
+            android:fillAlpha="0.80"/>
+    </group>
+
+    <!-- Орбита 2: наклон -20°, чуть меньше, другой цвет -->
+    <group
+        android:pivotX="34"
+        android:pivotY="34"
+        android:rotation="-20">
+        <!-- Видимая дуга -->
+        <path
+            android:pathData="M3,34 A31,8 0 0,0 34,65"
+            android:strokeColor="#E0AAFF"
+            android:strokeWidth="1.4"
+            android:strokeAlpha="0.75"
+            android:fillColor="#00000000"
+            android:strokeLineCap="round"/>
+        <!-- Скрытая дуга -->
+        <path
+            android:pathData="M34,65 A31,8 0 0,0 65,34"
+            android:strokeColor="#7B2FBE"
+            android:strokeWidth="1.0"
+            android:strokeAlpha="0.30"
+            android:fillColor="#00000000"
+            android:strokeLineCap="round"/>
+        <!-- Частица -->
+        <path
+            android:pathData="M3,34 m-1.1,0 a1.1,1.1 0 1,0 2.2,0 a1.1,1.1 0 1,0 -2.2,0"
+            android:fillColor="#E0AAFF"
+            android:fillAlpha="0.85"/>
+    </group>
+
+</vector>

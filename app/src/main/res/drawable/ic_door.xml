@@ -1,0 +1,36 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="100"
+    android:viewportHeight="120">
+
+    <!-- Косяк двери (тёмная боковая грань — намёк на 3D глубину) -->
+    <path
+        android:fillColor="#1F9D4EDD"
+        android:pathData="M58,20 L58,108 L84,98 L84,12 Z"/>
+
+    <!-- Силуэт двери — приоткрытое полотно -->
+    <path
+        android:fillColor="#0F9D4EDD"
+        android:strokeColor="#C77DFF"
+        android:strokeWidth="2"
+        android:pathData="M18,18 L58,20 L58,108 L18,110 Z"/>
+
+    <!-- Внешняя рамка проёма (тонкая неоновая обводка) -->
+    <path
+        android:strokeColor="#C77DFF"
+        android:strokeWidth="1.2"
+        android:fillColor="#00000000"
+        android:strokeAlpha="0.6"
+        android:pathData="M14,16 L88,12 L88,108 L14,112 Z"/>
+
+    <!-- Ручка -->
+    <path
+        android:fillColor="#C77DFF"
+        android:pathData="M52,65 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0"/>
+
+    <!-- "Свет из дверного проёма" — узкая полоса между полотном и рамкой -->
+    <path
+        android:fillColor="#3DC77DFF"
+        android:pathData="M58,20 L62,18 L62,106 L58,108 Z"/>
+</vector>

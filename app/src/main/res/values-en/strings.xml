@@ -1,0 +1,458 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Atrum Chat</string>
+
+    <!-- Welcome -->
+    <string name="welcome_title">Welcome to\nAtrum Chat</string>
+    <string name="welcome_subtitle">Encrypted messenger\nvia GitHub Gist</string>
+    <string name="welcome_start">Get started</string>
+    <string name="welcome_hint">end-to-end AES-256 encryption</string>
+
+    <!-- Intro pager -->
+    <string name="intro_skip">Skip</string>
+    <string name="intro_next">Next</string>
+    <string name="intro_get_started">Get started</string>
+
+    <string name="intro_1_title">Welcome</string>
+    <string name="intro_1_subtitle">A private messenger for two people.\nNo servers. No ads. No logs.</string>
+
+    <string name="intro_2_title">End-to-end encryption</string>
+    <string name="intro_2_subtitle">Messages are encrypted right on your device.\nThe room password never leaves your phone. Nobody but your contact can read your messages.</string>
+
+    <string name="intro_3_title">What is GitHub Gist?</string>
+    <string name="intro_3_subtitle">A Gist is a small note on GitHub. We use it as an encrypted mailbox — only encrypted strings are stored there. GitHub sees ciphertext, not your messages.</string>
+
+    <string name="intro_4_title">Experimental Beta</string>
+    <string name="intro_4_subtitle">This is a closed beta. Some features may be unstable.\nUse with care and not for critical conversations.</string>
+
+    <string name="badge_beta">EXPERIMENTAL BETA</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_name_title">What\'s your name?</string>
+    <string name="onboarding_name_hint">This name will be visible to your contacts</string>
+    <string name="onboarding_pwd_title">Set a password</string>
+    <string name="onboarding_pwd_hint">Password to unlock the app.\nStored only on your device.</string>
+    <string name="onboarding_pwd_field">Password</string>
+    <string name="onboarding_pwd_repeat">Repeat password</string>
+    <string name="onboarding_pwd_skip">Skip (no password)</string>
+    <string name="btn_next">Next</string>
+    <string name="btn_finish">Done</string>
+    <string name="error_empty_name">Enter your name</string>
+    <string name="error_empty_tag">Enter your tag</string>
+    <string name="hint_tag">Your tag (@username)</string>
+    <string name="error_pwd_short">Password is too short (minimum 4 characters)</string>
+    <string name="error_pwd_mismatch">Passwords do not match</string>
+
+    <!-- Lock -->
+    <string name="lock_title">Enter password</string>
+    <string name="lock_hint">To open Atrum Chat</string>
+    <string name="lock_field">Password</string>
+    <string name="lock_unlock">Unlock</string>
+    <string name="lock_wrong">Wrong password</string>
+
+    <!-- Chat -->
+    <string name="chat_empty">Nothing here yet</string>
+
+    <!-- Chat list -->
+    <string name="chats_title">Chats</string>
+    <string name="chats_empty_title">No chats yet</string>
+    <string name="chats_empty_hint">Tap + to create a new chat</string>
+    <string name="cd_create_chat">Create chat</string>
+
+    <!-- Create chat -->
+    <string name="create_chat_title">New chat</string>
+    <string name="create_chat_partner_name">Contact name</string>
+    <string name="create_chat_token">GitHub Token</string>
+    <string name="create_chat_gist">Gist ID</string>
+    <string name="create_chat_password">Encryption password</string>
+    <string name="create_chat_password_hint">Your contact must enter this same password to decrypt messages</string>
+    <string name="btn_create_chat">Create chat</string>
+    <string name="btn_connect_chat">Connect</string>
+    <string name="btn_create_room">Create room</string>
+    <string name="error_create_chat">Fill in all fields</string>
+
+    <!-- Create mode -->
+    <string name="create_mode_auto">Auto</string>
+    <string name="create_mode_manual">Manual</string>
+
+    <!-- Auto mode -->
+    <string name="auto_token_title">One-time setup</string>
+    <string name="auto_token_hint">To create rooms automatically, a GitHub Token (scope: gist) is required. It is only used to create the gist and write messages — it is not part of encryption.</string>
+    <string name="create_room_name_label">Room name</string>
+    <string name="create_room_name_hint">e.g. Alex</string>
+    <string name="create_room_password_label">Room password</string>
+    <string name="create_room_password_hint">secret</string>
+    <string name="create_room_password_explainer">Your contact must enter this same password to read messages. This password encrypts messages end-to-end.</string>
+    <string name="creating_room">Creating room…</string>
+    <string name="error_create_gist">Failed to create gist. Check your token.</string>
+    <string name="error_no_token">Enter a GitHub Token first</string>
+
+    <!-- OAuth -->
+    <string name="oauth_processing">Authorising…</string>
+    <string name="oauth_exchanging">Getting token…</string>
+    <string name="oauth_failed">Authorisation failed</string>
+    <string name="oauth_error_user">Authorisation cancelled: %1$s</string>
+    <string name="oauth_error_invalid">Invalid response from GitHub</string>
+    <string name="oauth_error_state">Authorisation session expired, please try again</string>
+    <string name="oauth_error_exchange">Error: %1$s</string>
+    <string name="oauth_not_configured">GitHub OAuth is not configured. Open OAuthConfig.kt and add client_id/client_secret. See the instructions in that file.</string>
+
+    <!-- Create cards -->
+    <string name="create_card_manual_title">Create manually</string>
+    <string name="create_card_manual_subtitle">Connect to an existing gist with a ready-made token</string>
+    <string name="create_card_github_title">Create via GitHub</string>
+    <string name="create_card_github_subtitle">Automatic — just authorise in your browser. The gist and encryption will be set up automatically.</string>
+    <string name="create_card_github_cta">Start</string>
+    <string name="create_card_or">or</string>
+    <string name="create_card_advanced">Advanced mode</string>
+    <string name="manual_warning_title">For advanced users</string>
+    <string name="manual_warning_text">You need a GitHub token and Gist ID. If you\'re not sure what that is — use the automatic mode.</string>
+    <string name="manual_help_token_title">Where to get a token?</string>
+    <string name="manual_help_token_desc">Create a Personal Access Token (classic). In the "Select scopes" section, make sure to select the "gist" checkbox.</string>
+    <string name="manual_help_token_button">Create Token</string>
+    <string name="manual_help_gist_title">Where to get Gist ID?</string>
+    <string name="manual_help_gist_desc">Create any Gist on the website. The ID is the long code at the end of the URL.</string>
+    <string name="manual_help_gist_button">Open Gist</string>
+
+
+    <!-- Create chat subtitle and footer -->
+    <string name="create_chat_subtitle">Private. Local. Only yours.</string>
+    <string name="create_chat_footer">Your data is accessible only\non your device.</string>
+
+    <!-- Join existing chat card -->
+    <string name="create_card_join_title">Join an existing chat</string>
+    <string name="create_card_join_subtitle">You need a password from your friend.</string>
+
+    <!-- Join screen -->
+    <string name="join_chat_title">Join chat</string>
+    <string name="join_chat_subtitle">Enter the invite code to connect to an existing chat.</string>
+    <string name="join_chat_password_label">Invite code</string>
+    <string name="join_chat_password_hint">Paste code (ATRM…)</string>
+    <string name="join_chat_info">The invite code (ATRM…) must be received from a chat participant. It is not stored on any server.</string>
+    <string name="join_chat_connect">Connect</string>
+    <string name="join_chat_back">Back</string>
+    <string name="cd_toggle_password">Show / hide password</string>
+
+    <!-- Device Flow -->
+    <string name="device_flow_title">GitHub confirmation</string>
+    <string name="device_flow_subtitle">Open GitHub in your browser and enter this code</string>
+    <string name="device_flow_code_label">CONFIRMATION CODE</string>
+    <string name="device_flow_open_github">Open GitHub</string>
+    <string name="device_flow_waiting">Waiting for browser confirmation…</string>
+    <string name="device_flow_tap_copy">Tap to copy</string>
+    <string name="device_flow_code_copied">Code copied</string>
+    <string name="device_flow_expired">Code expired, please try again</string>
+    <string name="device_flow_denied">Authorisation denied</string>
+    <string name="notif_auth_success_title">Authorisation successful</string>
+    <string name="notif_auth_success_text">Open chat: %1$s</string>
+
+    <!-- DeviceFlowService -->
+    <string name="df_notif_title">Atrum Chat</string>
+    <string name="df_status_authorizing">Waiting for browser confirmation…</string>
+    <string name="df_status_creating_gist">Creating room…</string>
+    <string name="df_status_saving">Saving configuration…</string>
+    <string name="df_status_profile">Setting up profile…</string>
+    <string name="df_status_expired">Code expired, please try again</string>
+    <string name="df_status_denied">Authorisation denied</string>
+    <string name="df_status_error">Error: %1$s</string>
+    <string name="df_done_title">Room ready</string>
+    <string name="df_done_text">Open chat: %1$s</string>
+
+    <!-- Delete chat -->
+    <string name="action_delete_chat">Delete chat</string>
+    <string name="confirm_delete_chat">Delete this chat? Messages in GitHub Gist will remain, but the chat will be removed from the list.</string>
+
+    <!-- Legacy login strings -->
+    <string name="title_login">Sign in</string>
+    <string name="hint_token">GitHub Token (ghp_…)</string>
+    <string name="hint_gist">Gist ID</string>
+    <string name="hint_name">Your nickname</string>
+    <string name="hint_password">Password (seed phrase)</string>
+    <string name="btn_enter">Enter chat</string>
+
+    <!-- Chat -->
+    <string name="hint_message">Message…</string>
+    <string name="cd_send">Send</string>
+    <string name="cd_refresh">Refresh</string>
+    <string name="cd_logout">Sign out</string>
+    <string name="cd_settings">Settings</string>
+    <string name="cd_back">Back</string>
+    <string name="chat_subtitle_encrypted">Encrypted chat</string>
+    <string name="typing_indicator">typing…</string>
+    <string name="cd_cancel_reply">Cancel reply</string>
+    <string name="action_reply">Reply</string>
+
+    <!-- Images -->
+    <string name="cd_attach">Attach</string>
+    <string name="image_compressing">Compressing image…</string>
+    <string name="image_reading">Reading image…</string>
+    <string name="image_uploading">Uploading image…</string>
+    <string name="image_uploading_chunk">Uploading: %1$d / %2$d…</string>
+    <string name="image_uploading_multi">Uploading %1$d / %2$d…</string>
+    <string name="image_upload_wait">Please wait, images are being sent…</string>
+    <string name="error_too_many_images">Maximum %1$d images per message</string>
+    <string name="image_too_big">Image is too large</string>
+    <string name="error_image_load">Failed to load image</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_name_label">Your nickname</string>
+    <string name="settings_status_hint">Status…</string>
+    <string name="settings_tag_label">Your tag</string>
+    <string name="settings_tag_no_at">Tag must start with @</string>
+    <string name="settings_edit_name_title">Change name</string>
+    <string name="settings_edit_tag_title">Change tag</string>
+    <string name="settings_edit_status_title">Change status</string>
+    <string name="settings_saved">Saved</string>
+    <string name="settings_reset">Reset account</string>
+    <string name="settings_reset_hint">Deletes all local data: nickname, avatar, chat list. Messages in GitHub Gist will remain.</string>
+    <string name="settings_reset_confirm">Delete all local data? This action cannot be undone.</string>
+    <string name="cd_change_avatar">Change avatar</string>
+    <string name="error_avatar_load">Failed to load image</string>
+    <string name="crop_avatar_title">Crop photo</string>
+
+    <!-- Errors -->
+    <string name="error_empty_fields">Fill in all fields</string>
+    <string name="error_network">Network error</string>
+    <string name="error_load">Failed to load chat</string>
+    <string name="error_send">Failed to send</string>
+    <string name="confirm_logout">Sign out of chat?</string>
+    <string name="yes">Yes</string>
+    <string name="no">No</string>
+
+    <!-- Warning banners -->
+    <string name="warn_token_title">Token is invalid</string>
+    <string name="warn_token_message">GitHub is rejecting your token — it may have expired or been revoked. Tap "Update token" and enter a new one — no need to recreate the chat.</string>
+    <string name="btn_update_token">Update token</string>
+    <string name="dialog_update_token_title">New GitHub token</string>
+
+    <string name="warn_rate_limit_title">GitHub asks to wait a moment</string>
+    <string name="warn_rate_limit_message">Too many requests in a short time. This is temporary — the app will automatically resume syncing in a minute. Your messages are safe.</string>
+
+    <string name="warn_network_title">No connection to GitHub</string>
+    <string name="warn_network_message">Cannot reach the server. Check your internet — the app will keep retrying automatically. Messages already sent are saved.</string>
+
+    <string name="warn_fs_title">Messages from previous session are hidden</string>
+    <string name="warn_fs_message">Some messages are encrypted with a previous session key that has already been destroyed. This is expected — it\'s how forward secrecy works: the past is unreadable even if the password leaks.</string>
+
+    <string name="chat_loading">Loading messages…</string>
+
+    <!-- Message actions -->
+    <string name="action_edit">Edit</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_copy">Copy</string>
+    <string name="dialog_edit_title">Edit message</string>
+    <string name="dialog_delete_title">Delete message?</string>
+    <string name="dialog_delete_message">The message will be deleted for everyone. This action cannot be undone.</string>
+    <string name="btn_save">Save</string>
+    <string name="btn_cancel">Cancel</string>
+    <string name="msg_copied">Copied</string>
+    <string name="error_message_not_found">Message has already been changed or deleted</string>
+    <string name="error_edit">Failed to edit</string>
+    <string name="error_delete">Failed to delete</string>
+
+    <!-- Create chat new design -->
+    <string name="cc_profile_title">Your profile</string>
+    <string name="cc_profile_subtitle">This chat will be created using your current profile.</string>
+    <string name="cc_feature_exchange_title">Profiles are exchanged</string>
+    <string name="cc_feature_exchange_desc">Each participant in this chat will see the other\'s name and avatar.</string>
+    <string name="cc_feature_e2e_title">End-to-end encryption</string>
+    <string name="cc_feature_e2e_desc">All messages are protected with end-to-end encryption.</string>
+    <string name="cc_password_label">Connection password</string>
+    <string name="cc_password_hint">Enter password</string>
+    <string name="cc_password_helper">Share this password with your contact to connect. It encrypts all messages end-to-end.</string>
+    <string name="cc_duration_label">Chat lifetime</string>
+    <string name="cc_duration_1d">1 day</string>
+    <string name="cc_duration_7d">7 days</string>
+    <string name="cc_duration_30d">30 days</string>
+    <string name="cc_duration_90d">90 days</string>
+    <string name="cc_duration_unlim">Unlimited</string>
+    <string name="cc_duration_helper">After the period expires, the chat and all data will be permanently deleted from GitHub servers.</string>
+    <string name="cc_create_button">Create chat</string>
+
+    <!-- OAuth warning screen -->
+    <string name="ow_title">GitHub authorisation</string>
+    <string name="ow_subtitle">To create a secure chat we use your GitHub account.</string>
+    <string name="ow_need_know_title">What you need to know</string>
+    <string name="ow_need_know_desc">A GitHub page will open in your browser to confirm the sign-in. This is a standard part of GitHub\'s security system.</string>
+    <string name="ow_github_will_show">During confirmation GitHub may show:</string>
+    <string name="ow_row_location_title">Approximate location</string>
+    <string name="ow_row_location_desc">City and IP address may be visible.</string>
+    <string name="ow_row_time_title">Time and device</string>
+    <string name="ow_row_time_desc">Date, time and device of sign-in.</string>
+    <string name="ow_row_security_title">This is a standard security check</string>
+    <string name="ow_row_security_desc">This data is shown by GitHub to protect your account and is not related to our app.</string>
+    <string name="ow_after_auth">After successful confirmation you can close the browser manually and return to the app.</string>
+    <string name="ow_perms_title">The app receives only the necessary permissions:</string>
+    <string name="ow_perm_gist_title">Access to your Gists</string>
+    <string name="ow_perm_gist_desc">Allows creating, reading and deleting Gists for chats to work.</string>
+    <string name="ow_perm_gist_note">No other data is requested or used.</string>
+    <string name="ow_continue">Continue</string>
+    <string name="ow_footer">We do not access your data. The app uses only the necessary permissions and does not store your messages.</string>
+
+    <!-- Join chat statuses and errors -->
+    <string name="join_default_partner_name">Chat</string>
+    <string name="join_btn_connecting">Connecting…</string>
+    <string name="join_status_checking">Checking chat…</string>
+    <string name="join_status_connecting">Connecting to GitHub…</string>
+    <string name="join_status_verifying">Verifying password…</string>
+    <string name="join_status_saving">Saving chat…</string>
+    <string name="join_status_profile">Sharing profile…</string>
+    <string name="join_status_already">This chat is already in your list</string>
+    <string name="join_err_empty">Enter the invite password your friend gave you.</string>
+    <string name="join_err_not_invite">This doesn\'t look like an invite password. Ask your friend for the long password starting with ATRM.</string>
+    <string name="join_err_corrupt">The invite password is damaged or was copied incompletely. Ask your friend for a fresh one.</string>
+    <string name="join_err_password">The password doesn\'t match this chat. You may have an outdated password.</string>
+    <string name="join_err_no_internet">No internet connection. Check your network and try again.</string>
+    <string name="join_err_timeout">Request timed out. Please try again.</string>
+    <string name="join_err_not_found">This chat no longer exists. It may have been deleted or expired.</string>
+    <string name="join_err_access">Access to this chat is closed. The token in the invite password may have been revoked.</string>
+    <string name="join_err_server">GitHub is temporarily unavailable. Try again in a minute.</string>
+    <string name="join_err_empty_response">GitHub returned an empty response. Please try again.</string>
+    <string name="join_err_generic_fmt">Failed to connect. %1$s</string>
+
+    <!-- Share invite -->
+    <string name="invite_share_action">Share invite</string>
+    <string name="invite_share_action_locked">Chat is already taken</string>
+    <string name="invite_share_title">Share invite</string>
+    <string name="invite_share_text_fmt">I\'m inviting you to an encrypted Atrum chat. Open the app, tap "Join an existing chat" and paste this password:\n\n%1$s</string>
+    <string name="chat_locked_toast">This chat is already taken. Cannot invite another person.</string>
+
+    <!-- Invite security warning -->
+    <string name="invite_warning_title">⚠️ Before sharing</string>
+    <string name="invite_warning_message">The invite code contains a GitHub token and chat password in one string.\n\nIf someone intercepts this code — they get full access to the conversation.\n\nShare the invite only through trusted private channels (e.g. in person or via an encrypted messenger).</string>
+    <string name="invite_warning_confirm">Got it, share</string>
+
+    <!-- Password mode -->
+    <string name="cc_pwd_mode_generate">Generate</string>
+    <string name="cc_pwd_mode_custom">Custom password</string>
+    <string name="cc_pwd_custom_hint">Enter your password</string>
+    <string name="cc_pwd_warning_title">How to share the password</string>
+    <string name="cc_pwd_warning_text">A custom password is easy to share in person — by voice or face to face. To send via any messenger, it\'s safer to use "Share invite" from the chat list: it\'s a long string that securely bundles everything needed to connect.</string>
+    <string name="cc_pwd_copy_cd">Copy password</string>
+    <string name="cc_pwd_copied_toast">Password copied</string>
+
+    <!-- Chat full -->
+    <string name="join_err_chat_full">This chat is already taken. Another contact has already connected.</string>
+
+    <!-- Expired chat -->
+    <string name="chat_expired_toast">Chat deleted — it has expired.</string>
+
+    <!-- Delete chat with gist -->
+    <string name="confirm_delete_chat_gist">Delete this chat? The conversation will be permanently deleted from GitHub.</string>
+    <string name="chat_deleted_toast">Chat deleted</string>
+
+    <!-- Delete profile -->
+    <string name="settings_delete_profile">Delete profile</string>
+    <string name="settings_delete_profile_hint">Notifies all contacts about deletion and erases data permanently.</string>
+    <string name="settings_delete_profile_confirm">All your contacts will see a "Profile deleted" placeholder instead of your avatar. All local data and history will be erased. This action cannot be undone.</string>
+    <string name="settings_delete_profile_action">Delete</string>
+    <string name="deleting_profile">Deleting profile…</string>
+
+    <!-- Deleted partner profile -->
+    <string name="profile_deleted_label">Profile deleted</string>
+    <string name="partner_deleted_subtitle">Profile deleted</string>
+
+    <!-- App language -->
+    <string name="lang_dialog_title">App language</string>
+    <string name="lang_russian">Русский</string>
+    <string name="lang_english">English</string>
+    <string name="lang_system">System default</string>
+
+    <!-- Theme labels -->
+    <string name="theme_dark">Dark</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_system">System default</string>
+
+    <!-- Theme dialog -->
+    <string name="theme_dialog_title">Appearance</string>
+    <string name="theme_light_warning_title">⚠️ Hold on!</string>
+    <string name="theme_light_warning_message">You are selecting the light theme.\n\nThe app was designed for the dark theme.\n\nYou lose the style and 1000 SWAG points.</string>
+    <string name="theme_light_warning_confirm">Enable anyway</string>
+    <string name="theme_light_warning_cancel">Keep dark</string>
+
+    <!-- Settings dialogs -->
+    <string name="logout_title">Sign out?</string>
+    <string name="logout_message">All local chats and data will be deleted. This action cannot be undone.</string>
+    <string name="logout_confirm">Sign out</string>
+    <string name="avatar_updated">Avatar updated</string>
+    <string name="no_name">No name</string>
+
+    <!-- Settings sections -->
+    <string name="settings_section_main">MAIN</string>
+    <string name="settings_section_extra">EXTRA</string>
+    <string name="settings_item_main">General</string>
+    <string name="settings_item_personalization">Personalization</string>
+    <string name="settings_item_notifications">Notifications</string>
+    <string name="settings_item_about">About</string>
+    <string name="settings_item_support">Support</string>
+    <!-- Settings - personalization -->
+    <string name="settings_wallpaper_title">Chat Wallpapers</string>
+    <string name="settings_wallpaper_desc">Change background in conversations</string>
+    <string name="wallpaper_apply">Apply</string>
+    <string name="wallpaper_cancel">Cancel</string>
+    <string name="wallpaper_change">Change Wallpaper</string>
+    <string name="wallpaper_clear">Clear Wallpaper</string>
+    <string name="wallpaper_cleared">Wallpaper cleared</string>
+    <string name="settings_logout">Sign out</string>
+
+    <!-- About screen -->
+    <string name="about_title">About</string>
+    <string name="about_thanks">Thanks for using Atrum</string>
+    <string name="about_links_desc">Below are all the useful links. Be sure to follow updates and share your feedback!</string>
+    <string name="about_section_links">LINKS</string>
+    <string name="about_github_desc">Source code and releases</string>
+    <string name="about_telegram_desc">News and updates</string>
+    <string name="about_support_desc">DonationAlerts, Boosty, Buy Me a Coffee</string>
+
+    <!-- Credits -->
+    <string name="credits_title">Credits</string>
+    <string name="credits_thanks_main">Thanks to everyone who supported the project at different stages — tested, suggested ideas, and helped financially.</string>
+    <string name="credits_section_supporters">SUPPORTED THE PROJECT</string>
+    <string name="credits_join_title">Want to be here?</string>
+    <string name="credits_join_desc">Support the project or help with testing</string>
+
+    <!-- Selection bar -->
+    <string name="selection_count_fmt">%1$d selected</string>
+
+    <!-- Pinned chats & Favorites -->
+    <string name="action_pin">Pin</string>
+    <string name="action_unpin">Unpin</string>
+    <string name="favorites_name">Favorites</string>
+    <string name="favorites_description">My notes</string>
+
+    <!-- Donate dialog -->
+    <string name="donate_title">Support the project</string>
+    <string name="donate_subtitle">Choose a convenient way</string>
+
+    <!-- Crash screen -->
+    <string name="crash_title">Something went wrong</string>
+    <string name="crash_subtitle">The app encountered an unexpected error. The log has already been copied to clipboard — just send it to the developer.</string>
+    <string name="crash_log_label">Error report</string>
+    <string name="crash_copy">Copy</string>
+    <string name="crash_close">Close</string>
+    <string name="crash_log_unavailable">Log unavailable.</string>
+    <string name="crash_copied_toast">Log copied to clipboard</string>
+
+    <!-- EULA -->
+    <string name="eula_title">Terms of Service</string>
+    <string name="eula_subtitle">Please read before using the app</string>
+    <string name="eula_accept">Accept and continue</string>
+    <string name="eula_decline">Decline</string>
+    <string name="eula_warning">Declining will close the application.</string>
+
+    <!-- Update checker -->
+    <string name="settings_version_label">Version</string>
+    <string name="settings_version_checking">Checking…</string>
+    <string name="settings_version_up_to_date">Up to date</string>
+    <string name="settings_version_update_badge">Update</string>
+    <string name="update_dialog_title" formatted="false">Update available %s</string>
+    <string name="update_dialog_body_fallback">A new version is available.</string>
+    <string name="update_dialog_positive">Update</string>
+    <string name="update_dialog_negative">Later</string>
+
+    <!-- Partner profile screen -->
+    <string name="profile_status_label">Status</string>
+    <string name="profile_photos_label">Photos</string>
+
+</resources>

@@ -1,0 +1,453 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg">
+
+    <!-- ═══ Full-screen wallpaper ═══ -->
+    <ImageView
+        android:id="@+id/iv_chat_wallpaper"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
+        android:adjustViewBounds="false"
+        android:contentDescription="@null"
+        android:visibility="gone" />
+
+    <!-- ═══ Cinematic top scrim (glass mode only) ═══ -->
+    <View
+        android:id="@+id/view_scrim_top"
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:layout_gravity="top"
+        android:background="@drawable/bg_scrim_top"
+        android:visibility="gone"/>
+
+    <!-- ═══ Cinematic bottom scrim (glass mode only) ═══ -->
+    <View
+        android:id="@+id/view_scrim_bottom"
+        android:layout_width="match_parent"
+        android:layout_height="140dp"
+        android:layout_gravity="bottom"
+        android:background="@drawable/bg_scrim_bottom"
+        android:visibility="gone"/>
+
+    <LinearLayout
+        android:id="@+id/chat_root_layout"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <!-- ═══ Header / Toolbar ═══ -->
+        <LinearLayout
+            android:id="@+id/chat_header"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@color/bg"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="6dp"
+            android:paddingVertical="10dp">
+
+            <ImageButton
+                android:id="@+id/btn_back"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:src="@drawable/ic_arrow_back"
+                android:background="@drawable/bg_icon_button"
+                android:contentDescription="@string/cd_back"
+                android:padding="9dp"
+                app:tint="@color/text_primary"/>
+
+            <FrameLayout
+                android:id="@+id/v_avatar_container"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:layout_marginStart="2dp"
+                android:layout_marginEnd="12dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:focusable="true">
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/bg_avatar_placeholder"/>
+
+                <TextView
+                    android:id="@+id/tv_partner_avatar"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:textColor="@color/white"
+                    android:textSize="16sp"
+                    android:fontFamily="sans-serif-medium"/>
+
+                <com.google.android.material.imageview.ShapeableImageView
+                    android:id="@+id/iv_partner_avatar"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:scaleType="centerCrop"
+                    android:contentDescription="@null"
+                    android:visibility="gone"
+                    app:shapeAppearanceOverlay="@style/ShapeAppearance.GithubChat.Circle"/>
+
+                <View
+                    android:id="@+id/v_online_indicator"
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:layout_gravity="bottom|end"
+                    android:background="@drawable/bg_online_indicator"
+                    android:visibility="gone"/>
+            </FrameLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tv_display_name"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_primary"
+                    android:textSize="17sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:singleLine="true"
+                    android:ellipsize="end"/>
+
+                <TextView
+                    android:id="@+id/tv_chat_subtitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/chat_subtitle_encrypted"
+                    android:textColor="@color/text_tertiary"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif"
+                    android:layout_marginTop="1dp"/>
+            </LinearLayout>
+
+            <ProgressBar
+                android:id="@+id/progress"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="6dp"
+                android:visibility="gone"
+                android:indeterminateTint="@color/accent"/>
+
+            <ImageButton
+                android:id="@+id/btn_more"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:layout_marginStart="4dp"
+                android:src="@drawable/ic_more_vert"
+                android:background="@drawable/bg_icon_button"
+                android:contentDescription="@string/cd_settings"
+                android:padding="9dp"
+                app:tint="@color/text_secondary"/>
+        </LinearLayout>
+
+        <!-- Тонкий разделитель — скрывается когда есть обои -->
+        <View
+            android:id="@+id/header_divider"
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/border"/>
+
+        <LinearLayout
+            android:id="@+id/warning_banner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_warning"
+            android:orientation="horizontal"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="12dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_marginEnd="12dp"
+                android:layout_marginTop="1dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_warning" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tv_warning_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:textColor="@color/warning"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/tv_warning_message"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:lineSpacingExtra="2dp"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/tv_warning_action"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="5dp"
+                    android:text="@string/btn_update_token"
+                    android:textColor="@color/accent"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:background="@drawable/bg_button_outline_neon"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rv_messages"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:paddingHorizontal="10dp"
+                android:paddingTop="10dp"
+                android:paddingBottom="6dp"
+                android:clipToPadding="false"
+                android:scrollbars="vertical"
+                android:alpha="0"/>
+
+            <LinearLayout
+                android:id="@+id/loading_overlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:gravity="center"
+                android:background="@color/bg">
+
+                <ProgressBar
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:indeterminateTint="@color/accent"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/chat_loading"
+                    android:textColor="@color/text_tertiary"
+                    android:textSize="14sp"
+                    android:fontFamily="sans-serif"/>
+
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tv_empty_placeholder"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:text="@string/chat_empty"
+                android:textColor="@color/text_tertiary"
+                android:textSize="15sp"
+                android:fontFamily="sans-serif-medium"
+                android:visibility="gone"/>
+
+        </FrameLayout>
+
+        <!-- Reply panel -->
+        <LinearLayout
+            android:id="@+id/reply_panel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@color/chat_overlay"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="10dp"
+            android:visibility="gone">
+
+            <View
+                android:layout_width="3dp"
+                android:layout_height="match_parent"
+                android:background="@color/accent"
+                android:layout_marginEnd="12dp"
+                android:minHeight="32dp"/>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:id="@+id/tv_reply_sender"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/accent"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:singleLine="true"
+                    android:ellipsize="end"/>
+
+                <TextView
+                    android:id="@+id/tv_reply_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp"
+                    android:maxLines="1"
+                    android:ellipsize="end"/>
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/btn_cancel_reply"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:src="@drawable/ic_close"
+                android:background="@drawable/bg_icon_button"
+                android:contentDescription="@string/cd_cancel_reply"
+                android:padding="7dp"
+                app:tint="@color/text_secondary"/>
+        </LinearLayout>
+
+        <!-- ═══ Input area — pill container ═══ -->
+        <LinearLayout
+            android:id="@+id/input_area"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@color/bg"
+            android:paddingHorizontal="12dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="14dp"
+            android:gravity="center_vertical">
+
+            <!-- Pill container: attach + EditText + send -->
+            <LinearLayout
+                android:id="@+id/input_pill"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/bg_chat_input_pill"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="4dp"
+                android:gravity="center_vertical">
+
+                <ImageButton
+                    android:id="@+id/btn_attach"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:src="@drawable/ic_attach"
+                    android:background="@drawable/bg_icon_button"
+                    android:contentDescription="@string/cd_attach"
+                    android:padding="11dp"
+                    app:tint="@color/text_secondary"/>
+
+                <EditText
+                    android:id="@+id/et_message"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginHorizontal="2dp"
+                    android:hint="@string/hint_message"
+                    android:textColorHint="@color/text_tertiary"
+                    android:textColor="@color/text_primary"
+                    android:background="@android:color/transparent"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="10dp"
+                    android:inputType="textMultiLine|textCapSentences"
+                    android:maxLines="4"
+                    android:imeOptions="actionSend"
+                    android:textSize="15sp"
+                    android:importantForAutofill="no"/>
+
+                <ImageButton
+                    android:id="@+id/btn_send"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:src="@drawable/ic_send"
+                    android:background="@drawable/bg_send_button"
+                    android:contentDescription="@string/cd_send"
+                    android:padding="11dp"
+                    app:tint="@color/white"/>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Selection bar -->
+        <LinearLayout
+            android:id="@+id/selection_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@color/bg"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="8dp"
+            android:gravity="center_vertical"
+            android:visibility="gone">
+
+            <ImageButton
+                android:id="@+id/btn_selection_close"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:src="@drawable/ic_close"
+                android:background="@drawable/bg_icon_button"
+                android:contentDescription="@string/btn_cancel"
+                android:padding="10dp"
+                app:tint="@color/text_secondary"/>
+
+            <TextView
+                android:id="@+id/tv_selection_count"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginHorizontal="10dp"
+                android:text="@string/selection_count_fmt"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:fontFamily="sans-serif-medium"/>
+
+            <ImageButton
+                android:id="@+id/btn_selection_copy"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:src="@drawable/ic_copy_menu"
+                android:background="@drawable/bg_icon_button"
+                android:contentDescription="@string/action_copy"
+                android:padding="10dp"
+                app:tint="@color/text_secondary"/>
+
+            <ImageButton
+                android:id="@+id/btn_selection_forward"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:src="@drawable/ic_forward_menu"
+                android:background="@drawable/bg_icon_button"
+                android:contentDescription="@string/action_reply"
+                android:padding="10dp"
+                android:layout_marginHorizontal="4dp"
+                app:tint="@color/text_secondary"/>
+
+            <ImageButton
+                android:id="@+id/btn_selection_delete"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:src="@drawable/ic_trash_menu"
+                android:background="@drawable/bg_icon_button"
+                android:contentDescription="@string/action_delete"
+                android:padding="10dp"
+                app:tint="@color/warning"/>
+
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

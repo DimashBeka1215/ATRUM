@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Join screen background — light theme.
+    Soft purple atmospheric glow on light grey base.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Base: iOS-style light grey -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/bg" />
+        </shape>
+    </item>
+    <!-- Very faint purple glow at the top -->
+    <item
+        android:bottom="300dp"
+        android:left="-160dp"
+        android:right="-160dp"
+        android:top="-200dp">
+        <shape android:shape="oval">
+            <gradient
+                android:endColor="#00F2F2F7"
+                android:gradientRadius="420"
+                android:startColor="#119D4EDD"
+                android:type="radial" />
+        </shape>
+    </item>
+</layer-list>

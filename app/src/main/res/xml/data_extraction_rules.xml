@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- Исключаем все SharedPreferences — содержат токены и хэши паролей -->
+        <exclude domain="sharedpref" path="." />
+        <!-- Исключаем Room DB — содержит chatPassword и gistToken всех чатов -->
+        <exclude domain="database" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <!-- Исключаем все SharedPreferences — содержат токены и хэши паролей -->
+        <exclude domain="sharedpref" path="." />
+        <!-- Исключаем Room DB — содержит chatPassword и gistToken всех чатов -->
+        <exclude domain="database" path="." />
+    </device-transfer>
+</data-extraction-rules>

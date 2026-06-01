@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Жёлтые sparkles вокруг shield. ViewBox 220x220, центр (110, 110).
+    8 sparkles разного размера по периметру.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="220dp"
+    android:height="220dp"
+    android:viewportWidth="220"
+    android:viewportHeight="220">
+
+    <!-- Большие 4-pointed звёздочки -->
+    <path
+        android:fillAlpha="0.85"
+        android:fillColor="@color/warning"
+        android:pathData="M30,40 L32,46 L38,48 L32,50 L30,56 L28,50 L22,48 L28,46 Z" />
+    <path
+        android:fillAlpha="0.85"
+        android:fillColor="@color/warning"
+        android:pathData="M190,52 L192,58 L198,60 L192,62 L190,68 L188,62 L182,60 L188,58 Z" />
+    <path
+        android:fillAlpha="0.75"
+        android:fillColor="@color/warning"
+        android:pathData="M186,165 L188,170 L193,172 L188,174 L186,179 L184,174 L179,172 L184,170 Z" />
+    <path
+        android:fillAlpha="0.75"
+        android:fillColor="@color/warning"
+        android:pathData="M34,170 L36,175 L41,177 L36,179 L34,184 L32,179 L27,177 L32,175 Z" />
+
+    <!-- Маленькие точки/sparkles -->
+    <path
+        android:fillAlpha="0.7"
+        android:fillColor="@color/warning"
+        android:pathData="M70,28 m-1.2,0 a1.2,1.2 0 1,0 2.4,0 a1.2,1.2 0 1,0 -2.4,0" />
+    <path
+        android:fillAlpha="0.6"
+        android:fillColor="@color/warning"
+        android:pathData="M150,30 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" />
+    <path
+        android:fillAlpha="0.65"
+        android:fillColor="@color/warning"
+        android:pathData="M14,108 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" />
+    <path
+        android:fillAlpha="0.65"
+        android:fillColor="@color/warning"
+        android:pathData="M206,108 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0" />
+    <path
+        android:fillAlpha="0.55"
+        android:fillColor="@color/warning"
+        android:pathData="M110,200 m-0.9,0 a0.9,0.9 0 1,0 1.8,0 a0.9,0.9 0 1,0 -1.8,0" />
+</vector>

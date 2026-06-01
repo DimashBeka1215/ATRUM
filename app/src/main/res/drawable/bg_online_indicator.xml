@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Индикатор «в сети»: фиолетовый круг с тёмной обводкой.
+    Обводка цвета @color/bg (чёрный) отделяет точку от аватара
+    и создаёт эффект «плавающей» точки как в Telegram/WhatsApp.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Внешняя обводка (тёмный фон) — 2dp с каждой стороны -->
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="@color/bg"/>
+        </shape>
+    </item>
+    <!-- Фиолетовая заливка, утоплена на 2dp -->
+    <item
+        android:bottom="2dp"
+        android:left="2dp"
+        android:right="2dp"
+        android:top="2dp">
+        <shape android:shape="oval">
+            <solid android:color="@color/accent"/>
+        </shape>
+    </item>
+</layer-list>

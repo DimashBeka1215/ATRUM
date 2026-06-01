@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="300dp"
+    android:height="300dp"
+    android:viewportWidth="300"
+    android:viewportHeight="300">
+
+    <!-- Внешнее свечение (Glow) -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M150,150 m-120,0 a120,120 0 1,0 240,0 a120,120 0 1,0 -240,0"
+        android:strokeAlpha="0.1"
+        android:strokeColor="#9D4EDD"
+        android:strokeWidth="15" />
+
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M150,150 m-110,0 a110,110 0 1,0 220,0 a110,110 0 1,0 -220,0"
+        android:strokeAlpha="0.2"
+        android:strokeColor="#C77DFF"
+        android:strokeWidth="8" />
+
+    <!-- Основные кольца портала -->
+    <group
+        android:pivotX="150"
+        android:pivotY="150">
+        <!-- Внешнее кольцо -->
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M150,150 m-100,0 a100,100 0 1,0 200,0 a100,100 0 1,0 -200,0"
+            android:strokeColor="#9D4EDD"
+            android:strokeWidth="2.5" />
+
+        <!-- Внутреннее прерывистое кольцо -->
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M150,150 m-85,0 a85,85 0 1,0 170,0 a85,85 0 1,0 -170,0"
+            android:strokeColor="#C77DFF"
+            android:strokeWidth="1.5"
+            android:strokeAlpha="0.6" />
+    </group>
+
+    <!-- Энергетические частицы и искры -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M150,55 l1,3 l3,1 l-3,1 l-1,3 l-1,-3 l-3,-1 l3,-1 z" />
+    <path
+        android:fillColor="#C77DFF"
+        android:pathData="M245,150 l1,2 l2,1 l-2,1 l-1,2 l-1,-2 l-2,-1 l2,-1 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M150,245 l1,2 l2,1 l-2,1 l-1,2 l-1,-2 l-2,-1 l2,-1 z" />
+    <path
+        android:fillColor="#C77DFF"
+        android:pathData="M55,150 l1,2 l2,1 l-2,1 l-1,2 l-1,-2 l-2,-1 l2,-1 z" />
+
+    <!-- Центральное ядро (туманность) -->
+    <path
+        android:fillColor="#1A9D4EDD"
+        android:pathData="M150,150 m-70,0 a70,70 0 1,0 140,0 a70,70 0 1,0 -140,0" />
+
+    <!-- Орбитальные линии (наклоненные) -->
+    <group
+        android:pivotX="150"
+        android:pivotY="150"
+        android:rotation="45">
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M150,150 m-105,0 a105,40 0 1,0 210,0 a105,40 0 1,0 -210,0"
+            android:strokeColor="#C77DFF"
+            android:strokeAlpha="0.3"
+            android:strokeWidth="1" />
+    </group>
+
+    <group
+        android:pivotX="150"
+        android:pivotY="150"
+        android:rotation="-45">
+        <path
+            android:fillColor="#00000000"
+            android:pathData="M150,150 m-105,0 a105,40 0 1,0 210,0 a105,40 0 1,0 -210,0"
+            android:strokeColor="#9D4EDD"
+            android:strokeAlpha="0.3"
+            android:strokeWidth="1" />
+    </group>
+</vector>
