@@ -199,10 +199,10 @@ object ForceUpdateChecker {
     // ══════════════════════════════════════════════════════════════════════
 
     /** Флаг включения. Выключен до указания репозитория. */
-    const val RELEASES_ENABLED = false
+    const val RELEASES_ENABLED = true
 
     /** Репозиторий в формате "username/reponame". Заменить перед включением. */
-    private const val REPO = "owner/repo"
+    private const val REPO = "DimashBeka1215/ATRUM"
 
     private const val RELEASES_API        = "https://api.github.com/repos/$REPO/releases/latest"
     private const val KEY_RELEASE_JSON    = "cached_release_json"
