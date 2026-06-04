@@ -1,0 +1,237 @@
+# Atrum — Design Document
+
+Визуальный язык приложения для AI-агентов и разработчиков.
+Описывает **как выглядит** Atrum — токены, компоненты, правила.
+Для правил работы с кодом — см. `CLAUDE.md`.
+
+---
+
+## 0. Философия дизайна
+
+Atrum — приватный мессенджер для двух людей. Визуально он должен ощущаться как **тихое, защищённое пространство**: никакой агрессии, никакого шума. Фиолетовый акцент — единственный яркий элемент на почти монохромном фоне.
+
+Три принципа:
+
+1. **Минимализм с глубиной** — мало цветов, много воздуха, элементы не соревнуются за внимание.
+2. **Доверие через последовательность** — один и тот же компонент выглядит одинаково везде.
+3. **Три режима, один язык** — тёмная тема, светлая тема и glass mode (обои) — все три варианта одного стиля, не три разных дизайна.
+
+---
+
+## 1. Цвета
+
+### 1.1 Токены — использовать всегда, hex напрямую — запрещён
+
+| Токен | Светлая | Тёмная | Назначение |
+|-------|---------|--------|------------|
+| `@color/bg` | #F2F2F7 | #000000 | Основной фон экрана (AMOLED-чёрный) |
+| `@color/surface` | #FFFFFF | #0A0A0A | Карточки, диалоги, bottom sheet |
+| `@color/surface_elevated` | #EAEAEF | #141414 | Приподнятые элементы, пилюли |
+| `@color/border` | #C6C6C8 | #1F1F1F | Разделители, обводки |
+| `@color/border_subtle` | #1A000000 | #10FFFFFF | Лёгкие обводки (10% непрозрачности) |
+| `@color/text_primary` | #1C1C1E | #FFFFFF | Основной текст |
+| `@color/text_secondary` | #636366 | #A0A0A8 | Метаданные, подписи |
+| `@color/text_tertiary` | #6C6C70 | #6A6A75 | Третичный текст |
+| `@color/text_quaternary` | #8E8E93 | #3D3D45 | Placeholder, hint |
+| `@color/accent` | #9D4EDD | #9D4EDD | Кнопки, акценты, иконки настроек |
+| `@color/accent_dark` | #7B2CBF | #7B2CBF | Pressed state, аватар-заглушка |
+| `@color/accent_light` | #C77DFF | #C77DFF | Галочки "прочитано", мягкий акцент |
+| `@color/accent_glow` | #1F9D4EDD | #1F9D4EDD | Свечение (12% фиолетового) |
+| `@color/msg_self` | #6B26B6 | #6B26B6 | Пузырёк исходящего сообщения |
+| `@color/msg_other` | #E5E5EA | #141414 | Пузырёк входящего сообщения |
+| `@color/online` | #34C759 | #34C759 | Индикатор "в сети" |
+| `@color/error` | #FF5252 | #FF5252 | Ошибки |
+| `@color/warning` | #FFB454 | #FFB454 | Предупреждения |
+
+### 1.2 Glass mode — особые правила
+
+Когда пользователь установил обои (`glassMode = true`), фон — произвольное фото. Стандартные токены фона (`@color/bg`, `@color/surface`) становятся непрозрачными заглушками поверх обоев — **запрещены**.
+
+| Элемент | Glass mode |
+|---------|------------|
+| Тулбар / инпут | `#1A000000` (10% чёрный) или `#4D000000` (30%) в тёмной |
+| Пузырёк исходящий | `#806B26B6` (50% фиолетовый) + обводка `#40C77DFF` |
+| Пузырёк входящий | `#2BFFFFFF` (17% белый) + обводка `#30FFFFFF` |
+| Текст | `@color/white` — допустимо поверх тёмных оверлеев |
+
+---
+
+## 2. Типографика
+
+Системный шрифт Android (`sans-serif` / `sans-serif-medium`). Никаких кастомных шрифтов.
+
+| Стиль | Размер | Начертание | Применение |
+|-------|--------|-----------|-----------|
+| `Text.Display` | 28sp | medium | Заголовки экранов (Welcome, "Чаты") |
+| `Text.Title` | 18sp | medium | Подзаголовки секций |
+| `Text.Body` | 15sp | regular | Основной текст, сообщения |
+| `Text.Caption` | 13sp | regular | Метаданные, подписи |
+| — | 22sp | medium | Имя собеседника в тулбаре чата |
+| — | 20sp | medium | Имена в списке чатов |
+| — | 16sp | regular | Тело строки настроек |
+| — | 14sp | regular | Время, вторичные подписи |
+| — | 12sp | regular | Счётчик непрочитанных, мелкие метки |
+| — | 11sp | regular | Галочки, статусы |
+| — | 10sp | regular | Микро-лейблы |
+
+---
+
+## 3. Скругления
+
+| Радиус | Применение |
+|--------|-----------|
+| `999dp` / `50%` | Полный круг — аватары, FAB, кнопка отправки, пилюли |
+| `20dp` | Пузырьки сообщений (3 угла), карточки настроек, bottom sheet |
+| `14dp` | Кнопки (`bg_button`), поля ввода (`bg_input`) |
+| `12dp` | Плашки предупреждений (`bg_warning`, `bg_warning_card`) |
+| `10dp` | Бейджи непрочитанных |
+| `6dp` | Один угол пузырька (нижний у исходящего, нижний у входящего) — "хвост" |
+
+**Правило хвоста пузырька:**
+- Исходящий (self): `topLeft=20, topRight=20, bottomLeft=20, bottomRight=6`
+- Входящий (other): `topLeft=20, topRight=20, bottomLeft=6, bottomRight=20`
+
+---
+
+## 4. Компоненты
+
+### 4.1 Кнопки
+
+| Тип | Background | Текст | Когда |
+|-----|-----------|-------|-------|
+| Primary | `@drawable/bg_button` (accent fill + accent_light stroke) | `@color/white` | Главное действие экрана |
+| Outline | `@drawable/bg_button_outline` (прозрачный + border stroke) | `@color/text_primary` | Второстепенное действие |
+| Warning outline | `@drawable/bg_button_warning_outline` | `@color/warning` | Деструктивные действия |
+| FAB | `@drawable/bg_fab` (овал, accent) | — | Новый чат |
+
+Pressed state: `@color/accent_dark` (#7B2CBF) вместо `@color/accent`.
+Высота кнопки: 48–52dp. Горизонтальный padding: 24dp. Текст: 15–16sp, medium.
+
+### 4.2 Поля ввода
+
+`bg_input` — `@color/surface` fill + `border_subtle` stroke 1dp + 14dp radius.
+Placeholder: `@color/text_quaternary`.
+Focused stroke: `@color/accent` (менять через код, не через selector).
+
+Поле ввода сообщений (`bg_chat_input_pill`) — пилюля (999dp), адаптируется под glass mode.
+
+### 4.3 Аватары
+
+- Форма: круг (`ShapeAppearance.GithubChat.Circle`)
+- Заглушка: `bg_avatar_placeholder` — овал, fill `@color/accent_dark`, stroke `#3DC77DFF`
+- Инициалы на заглушке: `@color/white` — **допустимо**, фон всегда тёмный
+- Размер в списке чатов: 52dp
+- Размер в тулбаре чата: 40dp
+- Онлайн-индикатор: 12dp, `bg_online_indicator` (accent + bg-обводка 2dp)
+
+### 4.4 Пузырьки сообщений
+
+```
+Исходящий:  bg_message_self   → @color/msg_self (#6B26B6)
+Входящий:   bg_message_other  → @color/msg_other + border_subtle stroke 1dp
+```
+
+Максимальная ширина: ~80% экрана. Padding внутри: 10–12dp horizontal, 8dp vertical.
+Текст сообщения: 15sp, `@color/text_primary` (входящий) / `@color/white` (исходящий).
+Время: 11sp, `@color/text_tertiary`.
+
+### 4.5 Карточки настроек
+
+`bg_settings_card` — `@color/surface` fill + `border_subtle` 1dp + 20dp radius.
+Иконка слева: 24dp, `app:tint="@color/accent"`, `marginEnd=14dp`.
+Текст строки: 16sp `text_primary`. Подпись: 13sp `text_secondary`.
+Divider между строками: 1dp, `@color/border`, `marginStart=54dp` (выравнивание под иконку).
+
+### 4.6 Плашки-предупреждения
+
+**Жёлтая** (`bg_warning`):
+- Fill: `#1AFFB454` (10%), stroke: `#3DFFB454` (24%), 12dp radius
+- Иконка: `@drawable/ic_warning`, 18dp, tint `@color/warning`
+- Заголовок: 13sp, medium, `@color/warning`
+- Тело: 12sp, `@color/text_secondary`
+
+**Информационная** (`bg_info_banner`): аналогично с accent-цветами.
+
+### 4.7 Пилюли (chips)
+
+`bg_pill` — `@color/surface_elevated` fill, 999dp radius.
+`bg_chip_selected` — accent fill, 999dp radius.
+Padding: 6dp vertical, 12dp horizontal. Текст: 13sp.
+
+### 4.8 Bottom Sheet
+
+`Theme.GithubChat.BottomSheet`: `@color/surface` background, topLeft=20dp, topRight=20dp скругление.
+Drag handle: 4×32dp, `@color/border`, 2dp radius, centered, marginTop=8dp.
+
+---
+
+## 5. Иконки
+
+- Стиль: **outline** (контурные). Filled — запрещён.
+- Цвет: всегда через `app:tint="@color/..."`, никогда hardcode.
+- Размер в кнопках/тулбаре: 24dp.
+- Размер в строках настроек: 24dp, tint `@color/accent`.
+- Размер inline (в сообщениях, подписях): 14–18dp.
+- Emoji как иконки UI — **запрещены**. Только `<ImageView src="@drawable/ic_*">`.
+
+---
+
+## 6. Отступы и сетка
+
+| Константа | Значение | Применение |
+|-----------|---------|-----------|
+| Screen padding | 20dp | Горизонтальные поля экрана |
+| Card padding | 16dp | Внутренние отступы карточек |
+| Section gap | 20–24dp | Между секциями |
+| Row gap | 4–8dp | Между элементами списка |
+| Icon–text gap | 12–14dp | Отступ от иконки до текста |
+| Toolbar height | 56dp | Стандарт Material |
+
+---
+
+## 7. Статусы и индикаторы
+
+| Элемент | Цвет | Размер |
+|---------|------|--------|
+| Онлайн-точка | `@color/accent` (#9D4EDD) | 12dp |
+| Галочка "отправлено" | `@color/sent_tick` (#9D9DA5) | 14dp |
+| Галочка "прочитано" | `@color/read_tick` (#C77DFF) | 14dp |
+| Бейдж непрочитанных | `@color/accent` fill, white text | min 20dp, 10dp radius |
+| Индикатор печатает | три точки, `@color/accent` | анимированный |
+
+---
+
+## 8. Анимации
+
+- Переходы между экранами: `fade_in.xml` / `fade_out.xml` — fade 200–300ms.
+- Появление элементов: `alpha 0→1`, 150–200ms, без смещения.
+- Bottom sheet: стандартный Material slide-up.
+- Нет slide-left/right для Activity — только fade.
+- Lottie-стикеры: loop, autoPlay, без управления от пользователя.
+
+---
+
+## 9. Экраны — структурные паттерны
+
+### Список чатов
+Toolbar (56dp) + RecyclerView. Каждая строка: аватар (52dp) + имя (20sp medium) + превью (14sp secondary) + время (12sp tertiary) + бейдж. Нет карточек — плоский список с `bg` фоном.
+
+### Экран чата
+Toolbar (аватар 40dp + имя 22sp + статус) + RecyclerView (сообщения) + Input bar (пилюля). Фон: `@color/bg` или обои. Нет разделителей — только пузырьки с воздухом между ними.
+
+### Настройки
+Секции с заголовками (13sp, `text_secondary`, uppercase — опционально) + карточки (`bg_settings_card`) с иконками. Опасные действия — в отдельной карточке внизу, `@color/error` текст.
+
+### Онбординг / Welcome
+Полноэкранный, `@color/bg` фон, большой заголовок (28sp Display), иллюстрация или иконка по центру, кнопка внизу с отступом 24dp от края.
+
+---
+
+## 10. Чего нельзя
+
+- Elevation / тени — не используются. Глубина передаётся цветом (`surface` vs `surface_elevated`), а не тенями.
+- Градиенты в основном UI — только в специальных декоративных элементах (`bg_button_gradient`, hero-блоки).
+- Цветной статус-бар — он всегда `@color/bg`, сливается с экраном.
+- Анимации > 300ms для переходов — ощущается тяжело.
+- Разные радиусы скругления для одного типа компонента в разных местах — нарушает консистентность.
+- Белый текст без гарантированно тёмного фона (см. CLAUDE.md §5).
