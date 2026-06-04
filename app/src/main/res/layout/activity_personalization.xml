@@ -133,6 +133,31 @@
                         android:src="@drawable/ic_chevron_right" android:tint="@color/text_tertiary" />
                 </LinearLayout>
 
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:layout_marginStart="52dp" android:background="@color/border" />
+
+                <!-- Profile Banner -->
+                <LinearLayout
+                    android:id="@+id/itemBanner"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingHorizontal="16dp"
+                    android:background="?attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true">
+                    <ImageView android:layout_width="22dp" android:layout_height="22dp"
+                        android:src="@drawable/ic_image_outline" android:tint="@color/accent"
+                        android:layout_marginEnd="14dp" />
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/header_settings_title"
+                        android:textColor="@color/text_primary" android:textSize="15sp" />
+                    <ImageView android:layout_width="18dp" android:layout_height="18dp"
+                        android:src="@drawable/ic_chevron_right" android:tint="@color/text_tertiary" />
+                </LinearLayout>
+
 
             </LinearLayout>
 

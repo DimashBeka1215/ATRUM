@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Main glass body with subtle adaptive tint -->
+    <item>
+        <shape android:shape="rectangle">
+            <!-- Very light white/blue tint for glass feel -->
+            <solid android:color="#1AFFFFFF"/>
+            <corners android:radius="22dp"/>
+        </shape>
+    </item>
+
+    <!-- Internal specular highlight (top edge) -->
+    <item android:top="1dp" android:left="1dp" android:right="1dp" android:bottom="20dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:startColor="#26FFFFFF"
+                android:endColor="#00FFFFFF"
+                android:type="linear"/>
+            <corners android:radius="22dp"/>
+        </shape>
+    </item>
+
+    <!-- Bottom depth shadow (internal) -->
+    <item android:top="20dp" android:left="5dp" android:right="5dp" android:bottom="1dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="90"
+                android:startColor="#0D000000"
+                android:endColor="#00000000"
+                android:type="linear"/>
+            <corners android:radius="22dp"/>
+        </shape>
+    </item>
+
+    <!-- Outer thin border (Liquid Glass stroke) -->
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="22dp"/>
+            <stroke
+                android:width="0.8dp"
+                android:color="#33FFFFFF"/>
+        </shape>
+    </item>
+</layer-list>

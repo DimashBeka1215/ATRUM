@@ -3,6 +3,8 @@ package com.atrum.chat
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -14,6 +16,7 @@ import com.atrum.chat.databinding.ActivityCrashBinding
  * Дизайн: тёплое жёлтое предупреждение, без агрессии.
  * Автоматически копирует лог в буфер обмена при открытии.
  * Кнопка "Скопировать" — повторное копирование + Toast.
+ * Кнопка "Чат для приёма багов" — открывает Telegram-чат для репортов.
  * Кнопка "Закрыть" — завершает процесс чисто.
  */
 class CrashActivity : AppCompatActivity() {
@@ -38,6 +41,12 @@ class CrashActivity : AppCompatActivity() {
             copyToClipboard(log, silent = false)
         }
 
+        binding.btnOpenTelegram.setOnClickListener {
+            copyToClipboard(log, silent = true)
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(TELEGRAM_BUG_CHAT_URL))
+            startActivity(intent)
+        }
+
         binding.btnClose.setOnClickListener {
             finishAndRemoveTask()
         }
@@ -53,5 +62,6 @@ class CrashActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_LOG = "crash_log"
+        private const val TELEGRAM_BUG_CHAT_URL = "https://t.me/c/3579453241/321"
     }
 }

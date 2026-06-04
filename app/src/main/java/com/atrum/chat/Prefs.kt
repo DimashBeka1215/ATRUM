@@ -89,6 +89,21 @@ class Prefs(context: Context) {
         get() = prefs.getString(KEY_AVATAR, null)
         set(v) = prefs.edit().putString(KEY_AVATAR, v).apply()
 
+
+    /** Unix-мс последней смены баннера — для rate-limit (30 сек между сменами). */
+    var lastBannerChangeTime: Long
+        get() = prefs.getLong(KEY_BANNER_CHANGED_AT, 0L)
+        set(v) = prefs.edit().putLong(KEY_BANNER_CHANGED_AT, v).apply()
+
+    /** Base64 JPEG шапки профиля. Хранится только локально, не синхронизируется. */
+    var myBannerBase64: String?
+        get() = prefs.getString(KEY_BANNER, null)
+        set(v) {
+            if (v == null) prefs.edit().remove(KEY_BANNER).apply()
+            else prefs.edit().putString(KEY_BANNER, v).apply()
+        }
+
+
     var localPasswordHash: String?
         get() = prefs.getString(KEY_LOCAL_PWD_HASH, null)
         set(v) {
@@ -131,6 +146,15 @@ class Prefs(context: Context) {
     var introShown: Boolean
         get() = prefs.getBoolean(KEY_INTRO_SHOWN, false)
         set(v) = prefs.edit().putBoolean(KEY_INTRO_SHOWN, v).apply()
+
+    /** Показывался ли онбординг панели стикеров. После первого показа — true. */
+    var stickerOnboardingShown: Boolean
+        get() = prefs.getBoolean(KEY_STICKER_ONBOARDING, false)
+        set(v) = prefs.edit().putBoolean(KEY_STICKER_ONBOARDING, v).apply()
+
+    var stickerBotToken: String
+        get() = prefs.getString(KEY_STICKER_BOT_TOKEN, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_STICKER_BOT_TOKEN, v).apply()
 
     /**
      * История всех ников, которыми ты когда-либо подписывал сообщения.
@@ -307,12 +331,16 @@ class Prefs(context: Context) {
         private const val KEY_TAG = "tag"
         private const val KEY_STATUS = "status"
         private const val KEY_AVATAR = "avatar"
+        private const val KEY_BANNER = "banner"
+        private const val KEY_BANNER_CHANGED_AT = "banner_changed_at"
         private const val KEY_LOCAL_PWD_HASH = "local_pwd_hash"
         private const val KEY_ONBOARDED = "onboarded"
         private const val KEY_DEFAULT_TOKEN = "default_gist_token"
         private const val KEY_NAME_HISTORY = "name_history"
         private const val KEY_EULA_ACCEPTED = "eula_accepted"
         private const val KEY_INTRO_SHOWN = "intro_shown"
+        private const val KEY_STICKER_ONBOARDING = "sticker_onboarding_shown"
+        private const val KEY_STICKER_BOT_TOKEN   = "sticker_bot_token"
 
         private const val KEY_THEME = "app_theme"
         private const val KEY_LANGUAGE = "app_language"
@@ -354,15 +382,13 @@ class Prefs(context: Context) {
                 // Файл повреждён или KeyStore недоступен — чистим и пробуем ещё раз.
                 // Данные теряются, но это безопаснее, чем хранить секреты без шифрования.
                 try {
-                    context.deleteSharedPreferences(FILE_NAME)
-                    build()
-                } catch (second: Exception) {
-                    throw RuntimeException(
-                        "EncryptedSharedPreferences недоступны — шифрование данных невозможно.",
-                        second
-                    )
-                }
+                    context.deleteFile(FILE_NAME)
+                build()
+            } catch (_: Exception) {
+                // Последний шанс — незашифрованные SharedPreferences (никогда не должно доходить)
+                context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
             }
         }
     }
+}
 }

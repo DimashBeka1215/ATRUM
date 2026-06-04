@@ -35,19 +35,38 @@ class LocalTransport(
 
     override suspend fun loadContent(): String = localContent
 
+    override suspend fun loadAll(): AllGistData {
+        return AllGistData(
+            chatContent = localContent,
+            reactionsContent = loadFile("reactions.txt"),
+            profilesContent = loadFile("profiles.txt")
+        )
+    }
+
+    override suspend fun loadAllIfChanged(): AllGistData? = loadAll()
+
+    override fun touchChatContentHint() {}
+    override fun updateChatContentHint(content: String) {}
+
     override suspend fun appendLine(encryptedLine: String, extraFiles: Map<String, String>) {
         localContent = if (localContent.isEmpty()) encryptedLine
                        else "$localContent\n$encryptedLine"
         saveToDisk()
     }
 
+    override suspend fun loadFileOrNull(name: String): String? = try {
+        val f = File(context.filesDir, "local_chat_${chatIdLong}_$name")
+        if (f.exists()) f.readText(Charsets.UTF_8) else null
+    } catch (_: Exception) { null }
+
+    override suspend fun loadFile(name: String): String = loadFileOrNull(name) ?: ""
+
     override suspend fun saveFile(name: String, content: String) {
-        // Профили и реакции не нужны в локальном чате
+        try {
+            val f = File(context.filesDir, "local_chat_${chatIdLong}_$name")
+            f.writeText(content, Charsets.UTF_8)
+        } catch (_: Exception) { }
     }
-
-    override suspend fun loadFileOrNull(name: String): String? = null
-
-    override suspend fun loadFile(name: String): String = ""
 
     override suspend fun replaceLine(oldLine: String, newLine: String): Boolean {
         val lines = localContent.split("\n").toMutableList()
@@ -65,5 +84,21 @@ class LocalTransport(
         localContent = lines.joinToString("\n")
         if (ok) saveToDisk()
         return ok
+    }
+
+    override suspend fun uploadImage(
+        encryptedContent: String,
+        password: String,
+        onProgress: ((current: Int, total: Int) -> Unit)?
+    ): String {
+        // В локальном чате просто сохраняем файл на диск и возвращаем псевдо-ссылку
+        val id = System.currentTimeMillis().toString()
+        saveFile("img_$id.txt", encryptedContent)
+        return "img_$id.txt"
+    }
+
+    override suspend fun loadImageByRef(ref: String): String {
+        // Для локального чата ссылки вида img_xxx.txt
+        return loadFile(ref)
     }
 }

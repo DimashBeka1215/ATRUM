@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@color/surface">
+
+    <!-- Разделитель сверху -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/border"/>
+
+    <!-- Строка табов: иконки паков + кнопка добавить + кнопка помощи -->
+    <LinearLayout
+        android:id="@+id/sticker_tab_row_wrapper"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@color/surface">
+
+        <HorizontalScrollView
+            android:id="@+id/sticker_tabs_scroll"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/sticker_tabs_container"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="4dp"/>
+
+        </HorizontalScrollView>
+
+        <!-- Кнопка добавить пак -->
+        <ImageButton
+            android:id="@+id/btn_sticker_add_pack"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_add"
+            android:background="@drawable/bg_icon_button"
+            android:contentDescription="@string/sticker_add_pack_cd"
+            android:padding="10dp"
+            android:layout_marginEnd="2dp"
+            app:tint="@color/text_secondary"
+            xmlns:app="http://schemas.android.com/apk/res-auto"/>
+
+        <!-- Кнопка помощи -->
+        <ImageButton
+            android:id="@+id/btn_sticker_help"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@drawable/ic_help_circle"
+            android:background="@drawable/bg_icon_button"
+            android:contentDescription="@string/sticker_help_cd"
+            android:padding="10dp"
+            android:layout_marginEnd="4dp"
+            app:tint="@color/text_secondary"
+            xmlns:app="http://schemas.android.com/apk/res-auto"/>
+
+    </LinearLayout>
+
+    <!-- Разделитель под табами -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/border"/>
+
+    <!-- Метка текущего пака -->
+    <TextView
+        android:id="@+id/tv_sticker_pack_label"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="14dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="4dp"
+        android:text="@string/sticker_pack_label_default"
+        android:textColor="@color/text_tertiary"
+        android:textSize="11sp"
+        android:fontFamily="sans-serif-medium"
+        android:letterSpacing="0.05"/>
+
+    <!-- Грид стикеров -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rv_stickers"
+        android:layout_width="match_parent"
+        android:layout_height="200dp"
+        android:paddingHorizontal="8dp"
+        android:paddingBottom="8dp"
+        android:clipToPadding="false"
+        android:scrollbars="vertical"/>
+
+    <!-- Состояние: пустые паки -->
+    <LinearLayout
+        android:id="@+id/sticker_empty_state"
+        android:layout_width="match_parent"
+        android:layout_height="200dp"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/sticker_empty_title"
+            android:textColor="@color/text_secondary"
+            android:textSize="15sp"
+            android:fontFamily="sans-serif-medium"
+            android:gravity="center"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/sticker_empty_hint"
+            android:textColor="@color/text_tertiary"
+            android:textSize="13sp"
+            android:gravity="center"
+            android:paddingHorizontal="32dp"/>
+
+    </LinearLayout>
+
+    <!-- Состояние: загрузка пака -->
+    <LinearLayout
+        android:id="@+id/sticker_loading_state"
+        android:layout_width="match_parent"
+        android:layout_height="200dp"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:visibility="gone">
+
+        <ProgressBar
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:indeterminateTint="@color/accent"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="@string/sticker_loading"
+            android:textColor="@color/text_tertiary"
+            android:textSize="13sp"/>
+
+    </LinearLayout>
+
+</LinearLayout>

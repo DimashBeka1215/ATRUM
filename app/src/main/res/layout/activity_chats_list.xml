@@ -11,24 +11,23 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-        <!-- Шапка -->
-        <LinearLayout
+        <!-- Шапка: три состояния в одном ConstraintLayout -->
+        <androidx.constraintlayout.widget.ConstraintLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:paddingHorizontal="16dp"
-            android:paddingVertical="12dp">
+            android:layout_height="64dp"
+            android:paddingHorizontal="16dp">
 
-            <!-- Моя аватарка слева (кликабельна → Settings) -->
+            <!-- Аватарка (всегда видна) -->
             <FrameLayout
                 android:id="@+id/my_avatar_container"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
-                android:layout_marginEnd="12dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:clickable="true"
-                android:focusable="true">
+                android:focusable="true"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent">
 
                 <View
                     android:layout_width="match_parent"
@@ -54,30 +53,130 @@
                     app:shapeAppearanceOverlay="@style/ShapeAppearance.GithubChat.Circle"/>
             </FrameLayout>
 
+            <!-- Состояние 1: заголовок ATRUM (кликабелен → поиск) -->
             <TextView
+                android:id="@+id/tv_header_title"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
                 android:text="@string/chats_title"
                 android:textColor="@color/text_primary"
                 android:textSize="22sp"
-                android:textStyle="bold"/>
+                android:textStyle="bold"
+                android:gravity="center"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:focusable="true"
+                app:layout_constraintStart_toEndOf="@id/my_avatar_container"
+                app:layout_constraintEnd_toStartOf="@id/btn_search"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"/>
 
+            <!-- Кнопка лупы (состояние 1) -->
             <ImageButton
-                android:id="@+id/btn_settings"
+                android:id="@+id/btn_search"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
-                android:src="@drawable/ic_settings"
+                android:src="@drawable/ic_search"
                 android:background="@drawable/bg_icon_button"
-                android:contentDescription="@string/cd_settings"
+                android:contentDescription="@string/cd_search"
                 android:padding="8dp"
-                app:tint="@color/text_primary"/>
-        </LinearLayout>
+                app:tint="@color/text_primary"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"/>
 
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="@color/border"/>
+            <!-- Состояние 2: пилюля поиска -->
+            <LinearLayout
+                android:id="@+id/pill_search"
+                android:layout_width="0dp"
+                android:layout_height="44dp"
+                android:background="@drawable/bg_pill"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="14dp"
+                android:visibility="gone"
+                app:layout_constraintStart_toEndOf="@id/my_avatar_container"
+                app:layout_constraintEnd_toStartOf="@id/btn_search_cancel"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                android:layout_marginEnd="8dp">
+
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@drawable/ic_search"
+                    android:contentDescription="@null"
+                    android:layout_marginEnd="8dp"
+                    app:tint="@color/text_quaternary"/>
+
+                <EditText
+                    android:id="@+id/et_search"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@android:color/transparent"
+                    android:hint="@string/search_hint"
+                    android:textColorHint="@color/text_quaternary"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp"
+                    android:imeOptions="actionSearch"
+                    android:inputType="text"
+                    android:singleLine="true"
+                    android:importantForAutofill="no"/>
+            </LinearLayout>
+
+            <!-- Кнопка "Отмена" (состояние 2) -->
+            <TextView
+                android:id="@+id/btn_search_cancel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/btn_cancel"
+                android:textColor="@color/accent"
+                android:textSize="15sp"
+                android:paddingEnd="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:focusable="true"
+                android:visibility="gone"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"/>
+
+            <!-- Состояние 3: пилюля "Подключение..." -->
+            <LinearLayout
+                android:id="@+id/pill_network"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:background="@drawable/bg_pill"
+                android:gravity="center"
+                android:orientation="horizontal"
+                android:paddingHorizontal="16dp"
+                android:visibility="gone"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp"
+                app:layout_constraintStart_toEndOf="@id/my_avatar_container"
+                app:layout_constraintEnd_toStartOf="@id/btn_search"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintHorizontal_bias="0.5">
+
+                <View
+                    android:id="@+id/v_network_dot"
+                    android:layout_width="7dp"
+                    android:layout_height="7dp"
+                    android:background="@drawable/ic_network_dot"
+                    android:layout_marginEnd="8dp"/>
+
+                <TextView
+                    android:id="@+id/tv_network_status"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/network_connecting"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="15sp"/>
+            </LinearLayout>
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
 
         <LinearLayout
             android:id="@+id/empty_state"
@@ -113,6 +212,19 @@
                 android:textColor="@color/text_secondary"
                 android:textSize="14sp"/>
         </LinearLayout>
+
+        <!-- Пустое состояние поиска -->
+        <TextView
+            android:id="@+id/tv_search_empty"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="@string/search_empty"
+            android:textColor="@color/text_tertiary"
+            android:textSize="15sp"
+            android:fontFamily="sans-serif-medium"
+            android:visibility="gone"/>
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/rv_chats"

@@ -43,6 +43,9 @@ class PersonalizationActivity : SecureActivity() {
         binding.itemLanguage.setOnClickListener { showLanguageDialog() }
         binding.itemWallpapers.setOnClickListener { showWallpaperOptions() }
         binding.itemChatUiStyle.setOnClickListener { showChatUiStyleDialog() }
+        binding.itemBanner.setOnClickListener {
+            startActivity(Intent(this, HeaderSettingsActivity::class.java))
+        }
 
         updateThemeLabel()
         updateLanguageLabel()

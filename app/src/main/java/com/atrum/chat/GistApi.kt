@@ -614,35 +614,44 @@ class GistApi(
         loadFileOrNull(reactionsFileName) ?: ""
 
     /**
+     * Атомарный Read-Modify-Write для одного файла.
+     * Весь цикл (GET + local transform + PATCH) выполняется под writeMutex.
+     * Это минимизирует окно гонки при конкурентных правках с одного устройства
+     * и гарантирует что мы работаем с максимально свежими данными GitHub.
+     */
+    suspend fun updateFile(name: String, transform: (String) -> String) = writeMutex.withLock {
+        val current = loadFileOrNull(name) ?: ""
+        val updated = transform(current)
+        if (updated != current) {
+            patchFilesRaw(mapOf(name to updated))
+            delay(MIN_PATCH_INTERVAL_MS)
+        }
+    }
+
+    /**
      * Атомарно переключает реакцию (toggle add/remove).
      * [plainLine] = "msgId|emoji|userId"
      * Возвращает true если реакция добавлена, false если удалена.
      *
-     * GET выполняется ДО захвата writeMutex — это предотвращает блокировку
-     * отправки сообщений на время сетевого чтения (~500 мс).
-     * Аналогично паттерну appendLine: там тоже GET снаружи мьютекса.
-     *
-     * Небольшое окно гонки (партнёр мог нажать реакцию между нашим GET и PATCH)
-     * существует независимо от расположения GET — GitHub Gist не поддерживает
-     * атомарный CAS на уровне файла.
+     * Использует [updateFile] для обеспечения атомарности на стороне клиента.
      */
-    suspend fun toggleReaction(plainLine: String): Boolean = writeMutex.withLock {
-        val currentContent = loadFileOrNull(reactionsFileName) ?: ""
-        val lines = currentContent.split("\n")
-            .map { it.trim() }.filter { it.isNotEmpty() }.toMutableList()
-        val trimmed = plainLine.trim()
-        val idx = lines.indexOfFirst { it == trimmed }
-        if (idx != -1) {
-            lines.removeAt(idx)
-            patchFilesRaw(mapOf(reactionsFileName to lines.joinToString("\n").ifBlank { "\n" }))
-            delay(MIN_PATCH_INTERVAL_MS)
-            false
-        } else {
-            lines.add(trimmed)
-            patchFilesRaw(mapOf(reactionsFileName to lines.joinToString("\n")))
-            delay(MIN_PATCH_INTERVAL_MS)
-            true
+    suspend fun toggleReaction(plainLine: String): Boolean {
+        var added = false
+        updateFile(reactionsFileName) { currentContent ->
+            val lines = currentContent.split("\n")
+                .map { it.trim() }.filter { it.isNotEmpty() }.toMutableList()
+            val trimmed = plainLine.trim()
+            val idx = lines.indexOfFirst { it == trimmed }
+            if (idx != -1) {
+                lines.removeAt(idx)
+                added = false
+            } else {
+                lines.add(trimmed)
+                added = true
+            }
+            lines.joinToString("\n").ifBlank { "\n" }
         }
+        return added
     }
 
     suspend fun replaceLine(oldLine: String, newLine: String): Boolean =

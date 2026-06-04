@@ -39,8 +39,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 2
-        versionName = "1.0.2"
+        versionCode = 3
+        versionName = "2.0.3"
 
         // Включаем multidex чтобы не упереться в лимит 65k методов
         // когда много AndroidX/Material/Room/uCrop/browser библиотек
@@ -150,4 +150,8 @@ dependencies {
 
     // Bouncy Castle — Argon2id KDF для защищённой деривации ключа шифрования
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+
+    // Lottie — анимации и стикеры
+    implementation("com.airbnb.android:lottie:6.3.0")
+
 }

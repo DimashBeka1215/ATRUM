@@ -134,6 +134,25 @@ object ImageUtils {
         }
     }
 
+    /**
+     * Calculates the average relative luminance of a bitmap.
+     * Uses a scaled-down 1x1 sample for high performance.
+     * Returns a value between 0.0 (black) and 1.0 (white).
+     */
+    fun calculateLuminance(bitmap: Bitmap): Float {
+        return try {
+            val tiny = Bitmap.createScaledBitmap(bitmap, 1, 1, true)
+            val pixel = tiny.getPixel(0, 0)
+            if (tiny != bitmap) tiny.recycle()
+            val r = (pixel shr 16) and 0xFF
+            val g = (pixel shr 8) and 0xFF
+            val b = pixel and 0xFF
+            (0.2126f * r + 0.7152f * g + 0.0722f * b) / 255f
+        } catch (e: Exception) {
+            0.5f
+        }
+    }
+
     private fun calculateSampleSize(width: Int, height: Int, reqSize: Int): Int {
         var sample = 1
         var w = width

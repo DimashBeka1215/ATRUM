@@ -1,9 +1,14 @@
 package com.atrum.chat
 
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.core.content.ContextCompat
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import com.atrum.chat.data.Chat
 import com.google.android.material.imageview.ShapeableImageView
@@ -21,9 +26,30 @@ class ChatsAdapter(
     private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
     private val dateFmt = SimpleDateFormat("dd.MM", Locale.getDefault())
 
+    /** Текущий поисковый запрос — используется для подсветки совпадений в bindViewHolder */
+    var searchQuery: String = ""
+
     fun submit(list: List<Chat>) {
-        chats = list
-        notifyDataSetChanged()
+        submitFiltered(list, "")
+    }
+
+    /**
+     * Обновляет список с учётом поискового запроса.
+     * Несовпадающие чаты не передаются — они убираются из RecyclerView через DiffUtil
+     * (DefaultItemAnimator анимирует удаление/добавление).
+     */
+    fun submitFiltered(allChats: List<Chat>, query: String) {
+        searchQuery = query.trim()
+        val filtered = if (searchQuery.isBlank()) allChats
+        else allChats.filter { it.partnerName.contains(searchQuery, ignoreCase = true) }
+        val oldList = chats
+        chats = filtered
+        DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+            override fun getOldListSize() = oldList.size
+            override fun getNewListSize() = filtered.size
+            override fun areItemsTheSame(o: Int, n: Int) = oldList[o].id == filtered[n].id
+            override fun areContentsTheSame(o: Int, n: Int) = oldList[o] == filtered[n] && searchQuery.isBlank()
+        }).dispatchUpdatesTo(this)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
@@ -33,7 +59,7 @@ class ChatsAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val chat = chats[position]
-        holder.bind(chat, formatTime(chat.lastTimeMs))
+        holder.bind(chat, formatTime(chat.lastTimeMs), searchQuery)
         holder.itemView.setOnClickListener { onClick(chat) }
         holder.itemView.setOnLongClickListener {
             onLongClick(chat); true
@@ -62,7 +88,7 @@ class ChatsAdapter(
         private val unreadBadge: TextView = itemView.findViewById(R.id.tv_unread_badge)
         private val pinIcon: View = itemView.findViewById(R.id.iv_pin)
 
-        fun bind(chat: Chat, formattedTime: String) {
+        fun bind(chat: Chat, formattedTime: String, query: String = "") {
             time.text = formattedTime
             pinIcon.visibility = if (chat.isPinned) View.VISIBLE else View.GONE
 
@@ -108,7 +134,9 @@ class ChatsAdapter(
                 } else {
                     chat.partnerName
                 }
-                name.text = displayName.ifBlank { "?" }
+                val displayText = displayName.ifBlank { "?" }
+                name.text = highlightQuery(displayText, query,
+                    ContextCompat.getColor(itemView.context, R.color.accent_light))
                 lastMessage.text = chat.lastMessage.ifBlank { "—" }
                 lastMessage.setTextColor(
                     itemView.context.getColor(R.color.text_secondary)
@@ -132,6 +160,20 @@ class ChatsAdapter(
             } else {
                 unreadBadge.visibility = View.GONE
             }
+        }
+
+        /** Подсвечивает первое вхождение [query] в [text] цветом [color]. */
+        private fun highlightQuery(text: String, query: String, color: Int): CharSequence {
+            if (query.isBlank()) return text
+            val idx = text.indexOf(query, ignoreCase = true)
+            if (idx < 0) return text
+            val spannable = SpannableString(text)
+            spannable.setSpan(
+                ForegroundColorSpan(color),
+                idx, idx + query.length,
+                Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            return spannable
         }
     }
 }

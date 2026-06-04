@@ -27,6 +27,7 @@
         android:paddingHorizontal="14dp"
         android:paddingTop="8dp"
         android:paddingBottom="6dp"
+        android:minWidth="120dp"
         android:maxWidth="280dp">
 
         <TextView
@@ -60,13 +61,14 @@
                 android:minHeight="28dp"/>
 
             <LinearLayout
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_weight="1"
                 android:orientation="vertical">
 
                 <TextView
                     android:id="@+id/tv_quote_sender"
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:textColor="@color/accent_light"
                     android:textSize="12sp"
@@ -76,7 +78,7 @@
 
                 <TextView
                     android:id="@+id/tv_quote_text"
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:textColor="@color/text_secondary"
                     android:textSize="13sp"
@@ -85,7 +87,18 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Одиночная картинка -->
+        <!-- Анимированный стикер (.tgs / Lottie) -->
+        <com.airbnb.lottie.LottieAnimationView
+            android:id="@+id/lottie_sticker"
+            android:layout_width="160dp"
+            android:layout_height="160dp"
+            android:background="@null"
+            android:clickable="false"
+            android:focusable="false"
+            android:visibility="gone"
+            android:layout_marginBottom="4dp"/>
+
+                <!-- Одиночная картинка -->
         <com.google.android.material.imageview.ShapeableImageView
             android:id="@+id/iv_image"
             android:layout_width="260dp"

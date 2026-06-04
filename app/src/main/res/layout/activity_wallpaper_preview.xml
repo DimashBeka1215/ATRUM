@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@color/bg">
+    android:background="@color/surface">
 
     <!-- ══ ВЕРХНЯЯ ЧАСТЬ: превью чата ══════════════════════════════════════ -->
     <FrameLayout
@@ -23,7 +24,8 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:orientation="vertical">
+            android:orientation="vertical"
+            android:paddingBottom="80dp">
 
             <!-- Мок-шапка -->
             <LinearLayout
@@ -157,6 +159,14 @@
                     android:contentDescription="@null" />
             </LinearLayout>
         </LinearLayout>
+
+        <!-- Декоративный скрим-фейд: увеличен для плавного бесшовного перехода -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="100dp"
+            android:layout_gravity="bottom"
+            android:background="@drawable/bg_scrim_white_bottom" />
+
     </FrameLayout>
 
     <!-- ══ НИЖНЯЯ ЧАСТЬ: ползунки и кнопки ════════════════════════════════ -->
@@ -164,9 +174,10 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:background="@color/chat_overlay"
+        android:background="@drawable/bg_panel_rounded_top"
+        android:layout_marginTop="-30dp"
         android:paddingHorizontal="20dp"
-        android:paddingTop="16dp"
+        android:paddingTop="32dp"
         android:paddingBottom="20dp">
 
         <!-- ── Мои сообщения ─────────────────────────────────────────── -->
@@ -195,6 +206,7 @@
         </LinearLayout>
 
         <SeekBar
+            style="@style/Widget.Atrum.SeekBar"
             android:id="@+id/seekBubbleSelf"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -226,6 +238,7 @@
         </LinearLayout>
 
         <SeekBar
+            style="@style/Widget.Atrum.SeekBar"
             android:id="@+id/seekBubbleOther"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -257,6 +270,7 @@
         </LinearLayout>
 
         <SeekBar
+            style="@style/Widget.Atrum.SeekBar"
             android:id="@+id/seekUi"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -268,24 +282,29 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal">
 
-            <Button
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnCancel"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="48dp"
                 android:layout_weight="1"
                 android:text="@string/wallpaper_cancel"
-                android:backgroundTint="@color/border"
+                android:backgroundTint="@color/surface"
                 android:textColor="@color/text_primary"
-                android:layout_marginEnd="8dp" />
+                android:layout_marginEnd="8dp"
+                app:cornerRadius="24dp"
+                app:strokeColor="@color/border_subtle"
+                app:strokeWidth="1.5dp"
+                app:elevation="0dp" />
 
-            <Button
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnApply"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="48dp"
                 android:layout_weight="1"
                 android:text="@string/wallpaper_apply"
                 android:backgroundTint="@color/accent"
-                android:textColor="@color/white" />
+                android:textColor="@color/white"
+                app:cornerRadius="24dp" />
 </LinearLayout>
 </LinearLayout>
 </LinearLayout>

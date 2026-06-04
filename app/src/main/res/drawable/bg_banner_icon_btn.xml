@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Semi-transparent dark oval — used only as background for icon buttons
+     drawn over a user-provided banner photo (same exception as WallpaperPreviewActivity). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="#55000000" />
+</shape>

@@ -3,6 +3,7 @@ package com.atrum.chat
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.text.SimpleDateFormat
@@ -15,23 +16,46 @@ import java.util.Locale
  * Устанавливается в App.onCreate() через Thread.setDefaultUncaughtExceptionHandler.
  * При крашe:
  *   1. Формирует лог (версия, устройство, стектрейс).
- *   2. Сохраняет в SharedPreferences (доступен между запусками).
+ *   2. Сохраняет СИНХРОННО в SharedPreferences (.commit()) + дублирует в файл.
  *   3. Открывает CrashActivity вместо стандартного диалога "Приложение остановлено".
  *
- * Системный обработчик НЕ вызывается — пользователя не выбрасывает на рабочий стол.
+ * Каждый шаг обёрнут в отдельный try-catch — сбой одного не убивает остальные.
+ * Обработчик установлен на ВСЕ ThreadGroup через setDefaultUncaughtExceptionHandler.
  */
 class CrashHandler(private val appContext: Context) : Thread.UncaughtExceptionHandler {
 
     override fun uncaughtException(crashThread: Thread, throwable: Throwable) {
-        try {
-            val log = buildLog(crashThread, throwable)
-            saveLog(log)
-            launchCrashActivity(log)
-        } catch (_: Exception) {
-            // Если даже наш обработчик упал — хотя бы не зависнуть
+        // Шаг 1: строим лог. Если не получилось — минимальный fallback.
+        val log = try {
+            buildLog(crashThread, throwable)
+        } catch (e: Throwable) {
+            "CRASH (log build failed: ${e.message})\n${throwable}"
         }
-        // Небольшая пауза чтобы Intent успел доставиться до запуска Activity
-        Thread.sleep(300)
+
+        // Шаг 2: сохраняем в SharedPreferences СИНХРОННО (.commit() не .apply()).
+        // .apply() асинхронен — процесс может умереть раньше записи.
+        try {
+            appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_LAST_LOG, log)
+                .putLong(KEY_LAST_TIME, System.currentTimeMillis())
+                .commit()   // ← синхронно, гарантирована запись до killProcess
+        } catch (_: Throwable) {}
+
+        // Шаг 3: дублируем в файл на случай если SharedPreferences недоступны.
+        try {
+            val f = File(appContext.filesDir, "last_crash.txt")
+            f.writeText(log, Charsets.UTF_8)
+        } catch (_: Throwable) {}
+
+        // Шаг 4: запускаем CrashActivity.
+        try {
+            launchCrashActivity(log)
+        } catch (_: Throwable) {}
+
+        // Пауза чтобы Intent доставился до Activity (startActivity асинхронен).
+        try { Thread.sleep(500) } catch (_: Throwable) {}
+
         android.os.Process.killProcess(android.os.Process.myPid())
     }
 
@@ -68,20 +92,12 @@ class CrashHandler(private val appContext: Context) : Thread.UncaughtExceptionHa
             appendLine("Версия:       $versionName ($versionCode)")
             appendLine("Android:      ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
             appendLine("Устройство:   ${Build.MANUFACTURER} ${Build.MODEL}")
-            appendLine("Поток:        ${crashThread.name}")
+            appendLine("Поток:        ${crashThread.name} (id=${crashThread.id})")
             appendLine()
             appendLine("─── Стектрейс ───────────────────")
             appendLine()
             append(stackTrace)
         }
-    }
-
-    private fun saveLog(log: String) {
-        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_LAST_LOG, log)
-            .putLong(KEY_LAST_TIME, System.currentTimeMillis())
-            .apply()
     }
 
     private fun launchCrashActivity(log: String) {
@@ -101,14 +117,45 @@ class CrashHandler(private val appContext: Context) : Thread.UncaughtExceptionHa
         const val KEY_LAST_LOG = "last_crash_log"
         const val KEY_LAST_TIME = "last_crash_time"
 
-        /** Читает последний сохранённый лог (для повторного показа если нужно). */
-        fun getLastLog(context: Context): String? =
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getString(KEY_LAST_LOG, null)
+        /** Очищает сохранённый лог (вызывать после показа). */
+        fun clearLastLog(context: Context) {
+            try {
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().remove(KEY_LAST_LOG).remove(KEY_LAST_TIME).commit()
+            } catch (_: Throwable) {}
+            try {
+                java.io.File(context.filesDir, "last_crash.txt").delete()
+            } catch (_: Throwable) {}
+        }
 
-        /** Устанавливает обработчик. Вызывать из App.onCreate(). */
+        /** Читает последний сохранённый лог (из SharedPreferences или файла-дубликата). */
+        fun getLastLog(context: Context): String? {
+            // Пробуем SharedPreferences
+            val fromPrefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(KEY_LAST_LOG, null)
+            if (!fromPrefs.isNullOrBlank()) return fromPrefs
+
+            // Fallback: файловый дубликат
+            return try {
+                val f = File(context.filesDir, "last_crash.txt")
+                if (f.exists()) f.readText(Charsets.UTF_8).takeIf { it.isNotBlank() }
+                else null
+            } catch (_: Exception) { null }
+        }
+
+        /**
+         * Устанавливает обработчик на ВСЕ потоки через setDefaultUncaughtExceptionHandler.
+         * Дополнительно ставит обработчик на текущую ThreadGroup для подстраховки.
+         * Вызывать из App.onCreate() как можно раньше.
+         */
         fun install(context: Context) {
-            Thread.setDefaultUncaughtExceptionHandler(CrashHandler(context.applicationContext))
+            val handler = CrashHandler(context.applicationContext)
+            // Глобальный обработчик для всех потоков
+            Thread.setDefaultUncaughtExceptionHandler(handler)
+            // Подстраховка: явно ставим на главный поток
+            try {
+                Thread.currentThread().uncaughtExceptionHandler = handler
+            } catch (_: Throwable) {}
         }
 
         /**
@@ -142,11 +189,14 @@ class CrashHandler(private val appContext: Context) : Thread.UncaughtExceptionHa
                     append(sw.toString())
                 }
 
+                // Синхронная запись
                 context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit()
                     .putString(KEY_LAST_LOG, log)
                     .putLong(KEY_LAST_TIME, System.currentTimeMillis())
-                    .apply()
+                    .commit()
+
+                try { File(context.filesDir, "last_crash.txt").writeText(log, Charsets.UTF_8) } catch (_: Throwable) {}
 
                 context.startActivity(
                     Intent(context, CrashActivity::class.java).apply {
@@ -158,9 +208,7 @@ class CrashHandler(private val appContext: Context) : Thread.UncaughtExceptionHa
                         )
                     }
                 )
-            } catch (_: Exception) {
-                // последний рубеж — молча
-            }
+            } catch (_: Exception) {}
         }
     }
 }

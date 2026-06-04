@@ -1,6 +1,7 @@
 package com.atrum.chat
 
 import android.app.Application
+import android.content.Intent
 import android.graphics.Bitmap
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
@@ -13,7 +14,22 @@ class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        ImageCache.init(this)
         CrashHandler.install(this)
+
+        // Если при прошлом запуске был краш и лог сохранился — показать сразу.
+        // Это ловит случай когда процесс умер до того как CrashActivity успела запуститься.
+        val savedLog = CrashHandler.getLastLog(this)
+        if (savedLog != null) {
+            CrashHandler.clearLastLog(this)
+            try {
+                startActivity(Intent(this, CrashActivity::class.java).apply {
+                    putExtra(CrashActivity.EXTRA_LOG, savedLog)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                })
+            } catch (_: Throwable) {}
+        }
+
         val prefs = Prefs(this)
         // Migrate chat secrets from plaintext Room DB to EncryptedSharedPreferences
         // before the DB migration zeroes them out (MIGRATION_9_10).

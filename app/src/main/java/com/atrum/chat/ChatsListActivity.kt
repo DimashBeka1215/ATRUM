@@ -1,6 +1,12 @@
 package com.atrum.chat
 
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Bundle
 import android.view.View
 import androidx.appcompat.app.AlertDialog
@@ -28,6 +34,13 @@ class ChatsListActivity : SecureActivity() {
         onLongClick = { chat -> showChatMenu(chat) }
     )
 
+    /** Полный список чатов из базы — для фильтрации при поиске */
+    private var allChats: List<Chat> = emptyList()
+    private var isSearchActive = false
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var networkDotAnimator: ObjectAnimator? = null
+    private var isConnected = true
+
     /** Раз в N миллисекунд опрашиваем все чаты на новые сообщения. */
     private val unreadPollMs = 8_000L
     private var unreadPollJob: Job? = null
@@ -47,10 +60,10 @@ class ChatsListActivity : SecureActivity() {
                 ForceUpdateChecker.showBlockingDialog(this@ChatsListActivity, update)
                 return@launch  // не показываем опциональный диалог поверх блокирующего
             }
-            // Опциональное обновление с ченджлогом (только если RELEASES_ENABLED = true)
+            // Опциональное обновление — открываем полноэкранный экран
             val release = ForceUpdateChecker.checkLatestRelease(this@ChatsListActivity)
             if (release != null) {
-                ForceUpdateChecker.showOptionalUpdateDialog(this@ChatsListActivity, release)
+                UpdateActivity.startWithRelease(this@ChatsListActivity, release)
             }
         }
 
@@ -61,16 +74,31 @@ class ChatsListActivity : SecureActivity() {
             startActivity(Intent(this, CreateChatActivity::class.java))
         }
 
-        binding.btnSettings.setOnClickListener {
-            startActivity(Intent(this, SettingsActivity::class.java))
-        }
-
         binding.myAvatarContainer.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
 
+        binding.tvHeaderTitle.setOnClickListener { toggleSearch(true) }
+
+        binding.btnSearch.setOnClickListener {
+            toggleSearch(true)
+        }
+
+        binding.btnSearchCancel.setOnClickListener {
+            toggleSearch(false)
+        }
+
+        binding.etSearch.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                applySearchFilter(s?.toString() ?: "")
+            }
+        })
+
         ensureFavoritesChat()
         observeChats()
+        setupNetworkMonitoring()
 
     }
 
@@ -141,6 +169,16 @@ class ChatsListActivity : SecureActivity() {
         }
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        stopNetworkDotPulse()
+        networkCallback?.let {
+            try {
+                (getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager).unregisterNetworkCallback(it)
+            } catch (_: Exception) {}
+        }
+    }
+
     override fun onPause() {
         super.onPause()
         unreadPollJob?.cancel()
@@ -163,11 +201,103 @@ class ChatsListActivity : SecureActivity() {
     private fun observeChats() {
         lifecycleScope.launch {
             db.chatDao().observeAll().collectLatest { list ->
-                adapter.submit(list)
-                binding.emptyState.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
-                binding.rvChats.visibility = if (list.isEmpty()) View.GONE else View.VISIBLE
+                allChats = list
+                applySearchFilter(binding.etSearch.text?.toString() ?: "")
             }
         }
+    }
+
+    private fun applySearchFilter(query: String) {
+        adapter.submitFiltered(allChats, query)
+        val filtered = if (query.isBlank()) allChats
+                       else allChats.filter { it.partnerName.contains(query.trim(), ignoreCase = true) }
+        val noChats = allChats.isEmpty() && !isSearchActive
+        val noResults = isSearchActive && filtered.isEmpty()
+        binding.emptyState.visibility = if (noChats) View.VISIBLE else View.GONE
+        binding.tvSearchEmpty.visibility = if (noResults) View.VISIBLE else View.GONE
+        binding.rvChats.visibility = if (noChats || noResults) View.GONE else View.VISIBLE
+    }
+
+    private fun toggleSearch(active: Boolean) {
+        isSearchActive = active
+        // Показываем пилюлю поиска — прячем заголовок и кнопку лупы
+        binding.tvHeaderTitle.visibility = if (active) View.GONE else View.VISIBLE
+        binding.btnSearch.visibility = if (active) View.GONE else View.VISIBLE
+        binding.pillSearch.visibility = if (active) View.VISIBLE else View.GONE
+        binding.btnSearchCancel.visibility = if (active) View.VISIBLE else View.GONE
+        if (active) {
+            binding.etSearch.requestFocus()
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            imm.showSoftInput(binding.etSearch, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+        } else {
+            binding.etSearch.text?.clear()
+            binding.etSearch.clearFocus()
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            imm.hideSoftInputFromWindow(binding.etSearch.windowToken, 0)
+            applySearchFilter("")
+        }
+    }
+
+    // ── Сеть ────────────────────────────────────────────────────────────────
+
+    private fun setupNetworkMonitoring() {
+        val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        // Проверяем начальное состояние
+        val active = cm.activeNetwork
+        val caps = if (active != null) cm.getNetworkCapabilities(active) else null
+        isConnected = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        showNetworkState(isConnected)
+
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+
+        networkCallback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                isConnected = true
+                runOnUiThread { showNetworkState(true) }
+            }
+            override fun onLost(network: Network) {
+                isConnected = false
+                runOnUiThread { showNetworkState(false) }
+            }
+        }
+        cm.registerNetworkCallback(request, networkCallback!!)
+    }
+
+    private fun showNetworkState(connected: Boolean) {
+        if (connected) {
+            // Восстанавливаем нормальное состояние (если не в поиске)
+            stopNetworkDotPulse()
+            binding.pillNetwork.visibility = View.GONE
+            if (!isSearchActive) {
+                binding.tvHeaderTitle.visibility = View.VISIBLE
+                binding.btnSearch.visibility = View.VISIBLE
+            }
+        } else {
+            // Показываем пилюлю сети — прячем всё остальное в заголовке
+            toggleSearch(false)
+            binding.tvHeaderTitle.visibility = View.GONE
+            binding.btnSearch.visibility = View.GONE
+            binding.pillNetwork.visibility = View.VISIBLE
+            startNetworkDotPulse()
+        }
+    }
+
+    private fun startNetworkDotPulse() {
+        networkDotAnimator?.cancel()
+        networkDotAnimator = ObjectAnimator.ofFloat(binding.vNetworkDot, "alpha", 0.2f, 1f).apply {
+            duration = 900
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            start()
+        }
+    }
+
+    private fun stopNetworkDotPulse() {
+        networkDotAnimator?.cancel()
+        networkDotAnimator = null
+        binding.vNetworkDot.alpha = 1f
     }
 
     /**
@@ -372,6 +502,14 @@ class ChatsListActivity : SecureActivity() {
                 android.widget.Toast.LENGTH_SHORT
             ).show()
             e.printStackTrace()
+        }
+    }
+
+    override fun onBackPressed() {
+        if (isSearchActive) {
+            toggleSearch(false)
+        } else {
+            super.onBackPressed()
         }
     }
 

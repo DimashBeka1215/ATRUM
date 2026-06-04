@@ -219,13 +219,19 @@ object ForceUpdateChecker {
      * Возвращает [ReleaseInfo] если тег новее текущей версии, иначе null.
      * При выключенном [RELEASES_ENABLED] или нет сети — null.
      */
-    suspend fun checkLatestRelease(context: Context): ReleaseInfo? = withContext(Dispatchers.IO) {
+    suspend fun checkLatestRelease(context: Context, forceRefresh: Boolean = false): ReleaseInfo? = withContext(Dispatchers.IO) {
         if (!RELEASES_ENABLED) return@withContext null
         try {
+            if (forceRefresh) clearReleaseCache(context)
             val currentVersion = currentVersionName(context)
             val info = fetchRelease(context) ?: return@withContext null
             if (compareSemver(info.tagName, currentVersion) > 0) info else null
         } catch (_: Exception) { null }
+    }
+
+    fun clearReleaseCache(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().remove(KEY_RELEASE_JSON).remove(KEY_RELEASE_TS).apply()
     }
 
     /**
@@ -255,8 +261,14 @@ object ForceUpdateChecker {
      * Возвращает >0 если a новее b, 0 если равны, <0 если a старее.
      */
     fun compareSemver(a: String, b: String): Int {
-        fun parts(v: String) = v.trimStart('v').split('.').map { it.toIntOrNull() ?: 0 }
-        val pa = parts(a); val pb = parts(b)
+        val cleanA = a.trimStart('v')
+        val cleanB = b.trimStart('v')
+        fun isSemver(v: String) = v.split('.').all { it.toIntOrNull() != null }
+        // Если оба не semver — равны (не показываем обновление)
+        // Если только a не semver — не показываем (0)
+        if (!isSemver(cleanA)) return 0
+        fun parts(v: String) = v.split('.').map { it.toIntOrNull() ?: 0 }
+        val pa = parts(cleanA); val pb = parts(cleanB)
         val len = maxOf(pa.size, pb.size)
         for (i in 0 until len) {
             val diff = (pa.getOrElse(i) { 0 }) - (pb.getOrElse(i) { 0 })

@@ -13,7 +13,7 @@ class AboutActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityAboutBinding
 
-    private val urlGithub        = "https://github.com/atrum-chat/atrum-chat-android"
+    private val urlGithub        = "https://github.com/DimashBeka1215/ATRUM"
     private val urlTelegram      = "https://t.me/Atrum_Chat"
     private val urlDonationAlerts = "https://www.donationalerts.com/r/dimash_beka1215"
     private val urlBoosty        = "https://boosty.to/sky_pill"
@@ -34,11 +34,8 @@ class AboutActivity : AppCompatActivity() {
 
         binding.itemDonate.setOnClickListener { showDonateDialog() }
 
-        // Пока кнопка неактивна (ждем репозиторий)
-        binding.itemGithub.alpha = 0.5f
-        binding.itemGithub.setOnClickListener { 
-            // openUrl(urlGithub) 
-        }
+        binding.itemGithub.alpha = 1f
+        binding.itemGithub.setOnClickListener { openUrl(urlGithub) }
 
         binding.itemTelegram.setOnClickListener { openUrl(urlTelegram) }
     }

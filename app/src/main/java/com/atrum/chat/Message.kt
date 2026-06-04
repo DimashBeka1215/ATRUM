@@ -35,6 +35,7 @@ data class Message(
     /** Соотношения сторон (ширина/высота) для каждого изображения коллажа. */
     val aspectRatios: List<Float>? = null,
     val senderUserId: String? = null,
+    val forwardedSender: String? = null,
     /**
      * true = сообщение ещё не подтверждено сервером (отображается с иконкой часов).
      * Никогда не сохраняется в gist — только в памяти адаптера.
@@ -44,7 +45,9 @@ data class Message(
     val isReply: Boolean get() = quotedSender != null
     /** Стабильный уникальный ключ сообщения для режима выбора. */
     val msgId: String get() = if (rawEncrypted.isNotBlank()) rawEncrypted.take(40) else "${senderUserId}_$timestampMs"
-    val isImage: Boolean get() = imageBase64 != null || imageFileName != null || imageFileNames != null
+    /** true если это анимированный стикер (.tgs файл) */
+    val isSticker: Boolean get() = imageFileName?.startsWith(STK_FILENAME_PREFIX) == true
+    val isImage: Boolean get() = imageBase64 != null || (imageFileName != null && !isSticker) || imageFileNames != null
     val isMultiImage: Boolean get() = imageFileNames != null && imageFileNames.isNotEmpty()
 
     companion object {
@@ -52,10 +55,13 @@ data class Message(
         private val RS: Char = Char(0x1E)
         private val SOH: Char = Char(0x01)
         private val STX: Char = Char(0x02)
+        private val ETX: Char = Char(0x03)
         private val DC1: Char = Char(0x11)
 
         /** Префикс имени файла-картинки в основном gist. */
         private const val IMG_FILENAME_PREFIX = "img_"
+        /** Префикс анимированного стикера (.tgs) в основном gist. */
+        const val STK_FILENAME_PREFIX = "stk_"
         /** Префикс ссылки на отдельный image gist. */
         private const val GIST_REF_PREFIX = "gist:"
         /** Префикс коллажа из нескольких изображений. */
@@ -175,7 +181,7 @@ data class Message(
                         )
                     }
                     // ── Файл в gist или отдельный image gist ────────────────
-                    ref.startsWith(IMG_FILENAME_PREFIX) || ref.startsWith(GIST_REF_PREFIX) -> {
+                    ref.startsWith(IMG_FILENAME_PREFIX) || ref.startsWith(STK_FILENAME_PREFIX) || ref.startsWith(GIST_REF_PREFIX) -> {
                         Message(
                             sender = sender,
                             text = caption,
@@ -269,6 +275,13 @@ data class Message(
                 // ── Обычный текст ────────────────────────────────────────────
                 else -> "$tsPrefix$uidPrefix$cleanSender: $text"
             }
+        }
+
+        /** Генерация уникального имени для файла стикера (.tgs) в gist. */
+        fun newStickerFileName(): String {
+            val now = System.currentTimeMillis()
+            val rand = java.util.UUID.randomUUID().toString().replace("-", "").take(8)
+            return "${STK_FILENAME_PREFIX}${now}_${rand}.txt"
         }
 
         /** Генерация уникального имени для нового файла-картинки в gist. */

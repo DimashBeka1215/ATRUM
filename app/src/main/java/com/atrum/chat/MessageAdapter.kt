@@ -12,8 +12,14 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.imageview.ShapeableImageView
+import com.airbnb.lottie.LottieAnimationView
+import com.airbnb.lottie.LottieCompositionFactory
+import java.io.ByteArrayInputStream
+import java.util.zip.GZIPInputStream
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -23,6 +29,8 @@ class MessageAdapter(
     private var messages: List<Message> = emptyList(),
     private val onLongClick: (Message, View) -> Unit = { _, _ -> },
     private val onImageClick: (Message) -> Unit = { },
+    /** Клик по цитате: (исходное_сообщение). */
+    private val onQuoteClick: ((Message) -> Unit)? = null,
     /** Клик по ячейке коллажа — передаётся полный список refs и индекс нажатой ячейки. */
     private val onCollageImageClick: (refs: List<String>, startIndex: Int) -> Unit = { _, _ -> },
     private var imageLoader: ImageLoader? = null,
@@ -51,6 +59,15 @@ class MessageAdapter(
     private var reactions: Map<String, Map<String, Set<String>>> = emptyMap()
     /** userId текущего пользователя — для подсветки собственных реакций. */
     private var myUserId: String = ""
+
+    /** ID сообщения, которое нужно подсветить (акцент при переходе по цитате) */
+    var highlightedMsgId: String? = null
+        private set
+
+    fun highlightMessage(msgId: String?) {
+        highlightedMsgId = msgId
+        notifyDataSetChanged()
+    }
 
     /**
      * Обновляет карту реакций. Вызывается из ChatActivity после каждого poll
@@ -175,14 +192,17 @@ class MessageAdapter(
         val msg = effectiveList()[position]
         val isRead = msg.isSelf && position < partnerLastReadIndex
         val isSelected = isSelectionMode && selectedRawIds.contains(msg.msgId)
+        val isHighlighted = msg.msgId == highlightedMsgId
         holder.bind(
             msg             = msg,
             time            = formatTime(msg.timestampMs),
             isRead          = isRead,
             isSelected      = isSelected,
+            isHighlighted   = isHighlighted,
             inSelectionMode = isSelectionMode,
             onLongClick     = onLongClick,
             onImageClick    = onImageClick,
+            onQuoteClick    = { onQuoteClick?.invoke(it) },
             onToggleSelect  = { toggleSelection(it) },
             msgReactions      = reactions[msg.msgId] ?: emptyMap(),
             myUserId          = myUserId,
@@ -194,6 +214,18 @@ class MessageAdapter(
     }
 
     override fun getItemCount(): Int = effectiveList().size
+
+    fun getItem(position: Int): Message? = effectiveList().getOrNull(position)
+
+    override fun onViewAttachedToWindow(holder: VH) {
+        super.onViewAttachedToWindow(holder)
+        holder.resumeSticker()
+    }
+
+    override fun onViewDetachedFromWindow(holder: VH) {
+        super.onViewDetachedFromWindow(holder)
+        holder.pauseSticker()
+    }
 
     private fun formatTime(ms: Long): String {
         val now = Calendar.getInstance()
@@ -236,9 +268,13 @@ class MessageAdapter(
         private val quoteText: TextView? = itemView.findViewById(R.id.tv_quote_text)
         private val imageView: ShapeableImageView? = itemView.findViewById(R.id.iv_image)
         private val collageView: CollageLayout? = itemView.findViewById(R.id.collage_layout)
+        private val lottieView: LottieAnimationView? = itemView.findViewById(R.id.lottie_sticker)
         private val tickView: ImageView? = itemView.findViewById(R.id.iv_tick)
         /** The rounded bubble container — background changes between classic and glass modes. */
         private val bubbleContainer: View? = itemView.findViewById(R.id.bubble_container)
+
+        fun resumeSticker() { lottieView?.takeIf { it.visibility == View.VISIBLE }?.resumeAnimation() }
+        fun pauseSticker()  { lottieView?.pauseAnimation() }
 
         /** Радиус скруглений для ячеек коллажа (7dp). */
         private val cellCornerRadius = 7f * itemView.context.resources.displayMetrics.density
@@ -248,9 +284,11 @@ class MessageAdapter(
             time: String,
             isRead: Boolean,
             isSelected: Boolean,
+            isHighlighted: Boolean = false,
             inSelectionMode: Boolean,
             onLongClick: (Message, View) -> Unit,
             onImageClick: (Message) -> Unit,
+            onQuoteClick: (Message) -> Unit,
             onToggleSelect: (Message) -> Unit,
             msgReactions: Map<String, Set<String>> = emptyMap(),
             myUserId: String = "",
@@ -268,8 +306,17 @@ class MessageAdapter(
                 }
             }
 
-            // ── Картинка / коллаж ─────────────────────────────────────────────
+            // ── Картинка / коллаж / стикер ───────────────────────────────────
             when {
+                msg.isSticker && lottieView != null -> {
+                    imageView?.visibility = View.GONE
+                    imageView?.tag = null
+                    collageView?.let { it.visibility = View.GONE; it.removeAllViews() }
+                    bindSticker(msg, lottieView)
+                    // Стикеры не реагируют на тапы
+                    itemView.isClickable = false
+                    itemView.isLongClickable = false
+                }
                 msg.isMultiImage && collageView != null -> {
                     // Коллаж: скрываем одиночный ImageView, показываем CollageLayout
                     imageView?.visibility = View.GONE
@@ -280,6 +327,7 @@ class MessageAdapter(
                 msg.isImage && imageView != null -> {
                     // Одиночное изображение
                     collageView?.let { it.visibility = View.GONE; it.removeAllViews() }
+                    lottieView?.let { it.visibility = View.GONE; it.cancelAnimation() }
                     bindImage(msg, imageView)
                     imageView.setOnClickListener { onImageClick(msg) }
                 }
@@ -287,6 +335,7 @@ class MessageAdapter(
                     imageView?.visibility = View.GONE
                     imageView?.tag = null
                     collageView?.let { it.visibility = View.GONE; it.removeAllViews() }
+                    lottieView?.let { it.visibility = View.GONE; it.cancelAnimation() }
                 }
             }
 
@@ -303,8 +352,10 @@ class MessageAdapter(
                 quoteBlock.visibility = View.VISIBLE
                 quoteSender?.text = msg.quotedSender
                 quoteText?.text = msg.quotedText
+                quoteBlock.setOnClickListener { onQuoteClick(msg) }
             } else {
                 quoteBlock?.visibility = View.GONE
+                quoteBlock?.setOnClickListener(null)
             }
 
             tickView?.let { tick ->
@@ -335,12 +386,20 @@ class MessageAdapter(
             }
 
             val anchor: View = when {
+                msg.isSticker && lottieView != null -> lottieView
                 msg.isMultiImage && collageView != null -> collageView
                 msg.isImage && imageView != null -> imageView
                 else -> textView
             }
 
             // ── Glass mode: swap bubble background ────────────────────────────
+            // Стикеры отображаются без пузырька (как в Telegram)
+            if (msg.isSticker) {
+                bubbleContainer?.background = null
+                bubbleContainer?.setPadding(0, 0, 0, 0)
+                bubbleContainer?.elevation = 0f
+                bubbleContainer?.alpha = 1f
+            } else {
             bubbleContainer?.let { bubble ->
                 val ctx = itemView.context
                 if (glassMode) {
@@ -360,12 +419,13 @@ class MessageAdapter(
                 // Применяем пользовательскую непрозрачность пузырька
                 bubble.alpha = if (msg.isSelf) bubbleAlphaSelf else bubbleAlphaOther
             }
+            } // end sticker else
 
             // ── Selection highlight ───────────────────────────────────────────
-            if (isSelected) {
-                itemView.setBackgroundColor(0x28A855F7.toInt())  // semi-transparent purple
-            } else {
-                itemView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            when {
+                isSelected -> itemView.setBackgroundColor(0x28A855F7.toInt()) // полупрозрачный фиолетовый
+                isHighlighted -> itemView.setBackgroundColor(0x28FFFFFF.toInt()) // полупрозрачный белый (акцент)
+                else -> itemView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
             }
 
             // ── Click / LongClick handlers ────────────────────────────────────
@@ -449,7 +509,46 @@ class MessageAdapter(
          * Click-защита: тап по ячейке срабатывает только если [ImageCache.isKnown] = true
          * (данные готовы). Пока изображение загружается (спиннер виден), клик игнорируется.
          */
-        private fun bindCollage(msg: Message, collage: CollageLayout) {
+        /**
+         * Загружает TGS-стикер и проигрывает его через LottieAnimationView.
+         * TGS = gzip(Lottie JSON), хранится в gist как base64.
+         */
+        private fun bindSticker(msg: Message, lottie: LottieAnimationView) {
+            val fileName = msg.imageFileName ?: return
+            lottie.visibility = View.VISIBLE
+            lottie.isClickable = false
+            lottie.isFocusable = false
+            lottie.tag = fileName
+            lottie.cancelAnimation()
+            lottie.setImageDrawable(null)
+
+            val loader = getImageLoader() ?: return
+            val scope = loadScope ?: return
+            scope.launch {
+                // Берём base64 из кэша или скачиваем
+                val base64 = ImageCache.getBase64(fileName)
+                    ?: loader.loadBase64(fileName)
+                    ?: run { lottie.visibility = View.GONE; return@launch }
+
+                if (lottie.tag != fileName) return@launch
+
+                val comp = withContext(Dispatchers.IO) {
+                    try {
+                        val bytes = android.util.Base64.decode(base64, android.util.Base64.NO_WRAP)
+                        val json = GZIPInputStream(ByteArrayInputStream(bytes)).bufferedReader().readText()
+                        LottieCompositionFactory.fromJsonStringSync(json, fileName)?.value
+                    } catch (_: Exception) { null }
+                }
+
+                if (lottie.tag != fileName) return@launch
+                if (comp == null) { lottie.visibility = View.GONE; return@launch }
+                lottie.setComposition(comp)
+                lottie.repeatCount = com.airbnb.lottie.LottieDrawable.INFINITE
+                lottie.playAnimation()
+            }
+        }
+
+                private fun bindCollage(msg: Message, collage: CollageLayout) {
             val refs   = msg.imageFileNames ?: return
             val ratios = msg.aspectRatios ?: refs.map { 1f }
 

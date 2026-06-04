@@ -55,4 +55,29 @@
     <string name="mock_msg_other">Привет, как дела?</string>
     <string name="mock_msg_self">Всё хорошо, спасибо! 👍</string>
     <string name="mock_msg_time">14:32 ✓✓</string>
+
+    <!-- Change PIN -->
+    <string name="error_old_pin_wrong">Неверный текущий PIN-код</string>
+    <string name="settings_pin_changed">PIN-код успешно изменен</string>
+
+    <!-- Profile Banner / Header -->
+    <string name="header_settings_title">Настройка шапки</string>
+    <string name="header_settings_change">Сменить шапку</string>
+    <string name="header_settings_remove">Убрать шапку</string>
+    <string name="header_settings_remove_title">Убрать шапку?</string>
+    <string name="header_settings_remove_confirm">Шапка профиля будет удалена.</string>
+    <string name="header_settings_remove_action">Убрать</string>
+    <string name="header_settings_crop_title">Кадрировать шапку</string>
+    <string name="header_settings_tip_title">Рекомендуемый размер</string>
+    <string name="header_settings_tip_body">Соотношение сторон 3:1\nНапример 1500 × 500 px</string>
+    <string name="header_settings_no_banner">Шапка не установлена</string>
+    <!-- Banner validation errors -->
+    <string name="header_error_format">Поддерживаются только JPG, PNG и WebP. GIF и анимации не поддерживаются.</string>
+    <string name="header_error_size">Файл слишком большой. Максимум — 8 МБ.</string>
+    <string name="header_error_resolution">Изображение слишком маленькое. Минимум: 1200 × 400 пикселей.</string>
+    <string name="header_error_rate_limit">Слишком частая смена шапки. Попробуйте через %d сек.</string>
+    <string name="header_safe_zone_tip">Края изображения могут быть обрезаны на разных устройствах. Размещайте важные элементы ближе к центру.</string>
+    <string name="header_safe_zone_title">Совет по кадрированию</string>
+    <string name="header_safe_zone_continue">Продолжить</string>
+    <string name="header_content_rules">Шапка не должна содержать откровенный контент, насилие или запрещённые материалы.</string>
 </resources>

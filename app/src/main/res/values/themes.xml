@@ -100,4 +100,17 @@
         <item name="android:fontFamily">sans-serif</item>
     </style>
 
+
+    <!-- Акцентный ползунок — стиль C (пилюля с фиолетовой заливкой) -->
+    <style name="Widget.Atrum.SeekBar" parent="Widget.AppCompat.SeekBar">
+        <item name="android:minHeight">20dp</item>
+        <item name="android:maxHeight">20dp</item>
+        <item name="android:progressDrawable">@drawable/seekbar_progress</item>
+        <item name="android:thumb">@drawable/seekbar_thumb</item>
+        <item name="android:thumbOffset">10dp</item>
+        <item name="android:splitTrack">false</item>
+        <item name="android:paddingStart">10dp</item>
+        <item name="android:paddingEnd">10dp</item>
+    </style>
+
 </resources>

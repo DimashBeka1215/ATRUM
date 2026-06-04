@@ -20,3 +20,18 @@ Thumbs.db
 
 # Output APK копии (если решишь хранить)
 /release_apks/
+Microsoft 
+git 
+icon.png 
+*.keystore 
+*.jks 
+*.p12 
+*.pfx 
+keystore.properties 
+signing.properties 
+release.properties 
+google-services.json 
+GoogleService-Info.plist 
+secrets.properties 
+local.properties 
+*.env 

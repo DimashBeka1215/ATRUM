@@ -6,7 +6,9 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.text.InputType
 import android.text.TextUtils
+import android.text.method.PasswordTransformationMethod
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.WindowManager
@@ -270,6 +272,7 @@ object NeonDialog {
         positiveText: String,
         negativeText: String,
         subtitle: String? = null,
+        isPassword: Boolean = false,
         onPositive: (String) -> Unit
     ): Dialog {
         val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar)
@@ -311,8 +314,13 @@ object NeonDialog {
             setTextColor(ctx.textPrimary())
             setHintTextColor(ctx.textTertiary())
             textSize  = 15f
-            setSingleLine(false)
-            maxLines  = 6
+            if (isPassword) {
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                transformationMethod = PasswordTransformationMethod.getInstance()
+            } else {
+                setSingleLine(false)
+                maxLines = 6
+            }
             imeOptions = EditorInfo.IME_ACTION_DONE
             background = GradientDrawable().apply {
                 shape        = GradientDrawable.RECTANGLE

@@ -18,10 +18,9 @@
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:gravity="center"
-        android:paddingTop="40dp"
-        android:paddingBottom="28dp">
+        android:paddingTop="32dp"
+        android:paddingBottom="12dp">
 
-        <!-- Иконка предупреждения в стандартном контейнере -->
         <FrameLayout
             android:layout_width="56dp"
             android:layout_height="56dp"
@@ -39,7 +38,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
+            android:layout_marginTop="16dp"
             android:text="@string/crash_title"
             android:textColor="@color/text_primary"
             android:textSize="20sp"
@@ -49,15 +48,101 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
+            android:layout_marginTop="8dp"
             android:text="@string/crash_subtitle"
             android:textColor="@color/text_secondary"
             android:textSize="14sp"
             android:gravity="center"
             android:lineSpacingMultiplier="1.4" />
+
+        <!-- Пилюля "Лог скопирован" -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_copied_pill"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp">
+
+            <ImageView
+                android:layout_width="12dp"
+                android:layout_height="12dp"
+                android:src="@drawable/ic_check"
+                android:tint="@color/online"
+                android:contentDescription="@null"
+                android:layout_marginEnd="5dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/crash_copied_pill"
+                android:textColor="@color/online"
+                android:textSize="12sp" />
+
+        </LinearLayout>
     </LinearLayout>
 
-    <!-- Лог в стиле bg_warning -->
+    <!-- Плашка Telegram -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/bg_warning"
+        android:padding="14dp"
+        android:layout_marginBottom="12dp">
+
+        <!-- Заголовок с иконкой -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="6dp">
+
+            <ImageView
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:src="@drawable/ic_send"
+                android:tint="@color/warning"
+                android:contentDescription="@null"
+                android:layout_marginEnd="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/crash_tg_title"
+                android:textColor="@color/warning"
+                android:textSize="13sp"
+                android:fontFamily="sans-serif-medium" />
+
+        </LinearLayout>
+
+        <!-- Основной текст -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/crash_tg_text"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp"
+            android:lineSpacingMultiplier="1.4" />
+
+        <!-- Подсказка про скриншот -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/crash_tg_hint"
+            android:textColor="@color/text_tertiary"
+            android:textSize="12sp"
+            android:lineSpacingMultiplier="1.4" />
+
+    </LinearLayout>
+
+    <!-- Лог -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -109,12 +194,12 @@
         </ScrollView>
     </LinearLayout>
 
-    <!-- Кнопки -->
+    <!-- Кнопки: Скопировать + Чат для приёма багов -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:layout_marginTop="16dp"
+        android:layout_marginTop="14dp"
         android:weightSum="2">
 
         <Button
@@ -130,17 +215,29 @@
             app:cornerRadius="12dp" />
 
         <Button
-            android:id="@+id/btnClose"
+            android:id="@+id/btnOpenTelegram"
             style="@style/Widget.MaterialComponents.Button"
             android:layout_width="0dp"
             android:layout_height="52dp"
             android:layout_weight="1"
             android:layout_marginStart="8dp"
-            android:text="@string/crash_close"
+            android:text="@string/crash_open_tg"
             android:backgroundTint="@color/warning"
             android:textColor="@color/white"
             app:cornerRadius="12dp" />
 
     </LinearLayout>
+
+    <!-- Кнопка Закрыть -->
+    <Button
+        android:id="@+id/btnClose"
+        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginTop="8dp"
+        android:text="@string/crash_close"
+        android:textColor="@color/text_secondary"
+        android:strokeColor="@color/border"
+        app:cornerRadius="12dp" />
 
 </LinearLayout>

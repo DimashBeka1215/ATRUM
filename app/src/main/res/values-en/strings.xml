@@ -54,7 +54,7 @@
     <string name="chat_empty">Nothing here yet</string>
 
     <!-- Chat list -->
-    <string name="chats_title">Chats</string>
+    <string name="chats_title">ATRUM</string>
     <string name="chats_empty_title">No chats yet</string>
     <string name="chats_empty_hint">Tap + to create a new chat</string>
     <string name="cd_create_chat">Create chat</string>
@@ -246,6 +246,7 @@
     <string name="dialog_delete_message">The message will be deleted for everyone. This action cannot be undone.</string>
     <string name="btn_save">Save</string>
     <string name="btn_cancel">Cancel</string>
+    <string name="network_connecting">Connecting…</string>
     <string name="msg_copied">Copied</string>
     <string name="error_message_not_found">Message has already been changed or deleted</string>
     <string name="error_edit">Failed to edit</string>
@@ -427,9 +428,14 @@
 
     <!-- Crash screen -->
     <string name="crash_title">Something went wrong</string>
-    <string name="crash_subtitle">The app encountered an unexpected error. The log has already been copied to clipboard — just send it to the developer.</string>
+    <string name="crash_subtitle">Found a bug — help us fix it.</string>
+    <string name="crash_copied_pill">Log copied</string>
+    <string name="crash_tg_title">Bug report chat</string>
+    <string name="crash_tg_text">The log is copied — paste it in the chat.</string>
+    <string name="crash_tg_hint">Add a screenshot and describe what you were doing before the crash — it helps find the cause faster.</string>
     <string name="crash_log_label">Error report</string>
     <string name="crash_copy">Copy</string>
+    <string name="crash_open_tg">Bug report chat</string>
     <string name="crash_close">Close</string>
     <string name="crash_log_unavailable">Log unavailable.</string>
     <string name="crash_copied_toast">Log copied to clipboard</string>
@@ -455,4 +461,98 @@
     <string name="profile_status_label">Status</string>
     <string name="profile_photos_label">Photos</string>
 
+
+    <!-- Profile Banner / Header -->
+    <string name="header_settings_title">Header Settings</string>
+    <string name="header_settings_change">Change Header</string>
+    <string name="header_settings_remove">Remove Header</string>
+    <string name="header_settings_remove_title">Remove header?</string>
+    <string name="header_settings_remove_confirm">Your profile header will be removed.</string>
+    <string name="header_settings_remove_action">Remove</string>
+    <string name="header_settings_crop_title">Crop header</string>
+    <string name="header_settings_tip_title">Recommended size</string>
+    <string name="header_settings_tip_body">3:1 aspect ratio\nExample: 1500 × 500 px</string>
+    <string name="header_settings_no_banner">No header set</string>
+    <!-- Banner validation errors -->
+    <string name="header_error_format">Only JPG, PNG and WebP are supported. GIFs and animations are not allowed.</string>
+    <string name="header_error_size">File is too large. Maximum size is 8 MB.</string>
+    <string name="header_error_resolution">Image is too small. Minimum size: 1200 × 400 px.</string>
+    <string name="header_error_rate_limit">You\'re changing the header too frequently. Try again in %d sec.</string>
+    <string name="header_safe_zone_tip">Image edges may be cropped on different devices. Keep important content near the center.</string>
+    <string name="header_safe_zone_title">Cropping tip</string>
+    <string name="header_safe_zone_continue">Continue</string>
+    <string name="header_content_rules">Header must not contain explicit content, violence, or prohibited material.</string>
+
+    <string name="settings_item_stickers">Stickers</string>
+    <string name="settings_section_security">SECURITY</string>
+    <string name="settings_item_change_pin">Change PIN</string>
+    <string name="settings_item_change_pin_desc">App lock password</string>
+    <string name="settings_item_credits">Credits</string>
+
+    <!-- Change PIN screen -->
+    <string name="dialog_old_pin_title">Current PIN</string>
+    <string name="error_old_pin_wrong">Incorrect current PIN</string>
+    <string name="dialog_new_pin_title">New PIN</string>
+    <string name="settings_pin_changed">PIN changed successfully</string>
+
+    <!-- Sticker settings -->
+    <string name="sticker_settings_title">Stickers</string>
+    <string name="sticker_settings_token_section">TOKEN</string>
+    <string name="sticker_settings_token_label">GitHub token</string>
+    <string name="sticker_settings_token_hint">Enter token</string>
+    <string name="sticker_settings_token_hint_desc">Token is required to load sticker packs from Gist</string>
+    <string name="sticker_settings_token_save">Save</string>
+    <string name="sticker_settings_token_saved">Token saved</string>
+    <string name="sticker_settings_packs_section">MY PACKS</string>
+    <string name="sticker_add_pack_title">Add pack</string>
+    <string name="sticker_add_pack_btn">Add</string>
+    <string name="sticker_add_pack_cancel">Cancel</string>
+    <string name="sticker_add_pack_hint">Enter Gist URL</string>
+    <string name="sticker_settings_delete_pack">Remove</string>
+    <string name="sticker_settings_delete_title">Remove pack?</string>
+    <string name="sticker_settings_delete_msg">Remove sticker pack "%1$s"?</string>
+    <string name="sticker_settings_delete_confirm">Remove</string>
+    <string name="sticker_settings_deleted">Pack removed</string>
+    <string name="sticker_settings_no_token">Enter GitHub token in settings first</string>
+
+    <plurals name="sticker_count">
+        <item quantity="one">%1$d sticker</item>
+        <item quantity="other">%1$d stickers</item>
+    </plurals>
+
+    <!-- Sticker panel -->
+    <string name="sticker_empty_title">No stickers yet</string>
+    <string name="sticker_empty_hint">Add a sticker pack in settings</string>
+    <string name="sticker_loading">Loading…</string>
+    <string name="sticker_pack_label_default">Stickers</string>
+    <string name="sticker_add_pack_cd">Add pack</string>
+    <string name="sticker_help_cd">Help</string>
+    <string name="sticker_cd_button">Stickers</string>
+    <string name="sticker_anim_badge">GIF</string>
+    <string name="sticker_error_invalid_link">Invalid Gist URL</string>
+    <string name="sticker_error_not_found">Pack not found</string>
+    <string name="sticker_error_network">Network error while loading stickers</string>
+
+    <!-- Sticker onboarding -->
+    <string name="sticker_onboarding_title">How to add stickers</string>
+    <string name="sticker_onboarding_step_1">Create a Gist with a sticker file on GitHub</string>
+    <string name="sticker_onboarding_step_2">Copy the Gist link</string>
+    <string name="sticker_onboarding_step_3">Paste the link into the field above</string>
+    <string name="sticker_onboarding_step_4">Tap «Add pack»</string>
+    <string name="sticker_onboarding_btn">Got it</string>
+
+    <!-- Update screen -->
+    <string name="update_screen_checking">Checking for updates…</string>
+    <string name="update_screen_btn_close">Close</string>
+    <string name="update_screen_title_new">Update available %1$s</string>
+    <string name="update_screen_subtitle_new">Current version: %1$s</string>
+    <string name="update_screen_title_ok">You are up to date</string>
+    <string name="update_screen_subtitle_ok">Version %1$s</string>
+    <string name="update_screen_changelog_label">What\'s new</string>
+    <string name="update_screen_github_releases">View on GitHub</string>
+    <string name="update_screen_github_code">Source code</string>
+    <string name="reply_photo_label">Photo</string>
+    <string name="search_hint">Search</string>
+    <string name="search_empty">No chats found</string>
+    <string name="cd_search">Search chats</string>
 </resources>

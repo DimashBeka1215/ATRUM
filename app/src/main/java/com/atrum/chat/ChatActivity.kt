@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.atrum.chat.data.AppDatabase
 import com.atrum.chat.data.Chat
@@ -243,8 +244,14 @@ class ChatActivity : SecureActivity() {
         }
 
         lifecycleScope.launch {
+          try {
             val loaded = db.chatDao().getById(chatId)
             if (loaded == null) {
+                CrashHandler.report(
+                    context = this@ChatActivity,
+                    title = "ChatActivity: chat not found in DB (chatId=$chatId)",
+                    throwable = IllegalStateException("getById($chatId) returned null — DB may have been recreated or ID is stale")
+                )
                 Toast.makeText(this@ChatActivity, R.string.error_load, Toast.LENGTH_SHORT).show()
                 finish()
                 return@launch
@@ -290,6 +297,10 @@ class ChatActivity : SecureActivity() {
             startPresence()
             // В параллель синхронизируем профили (имя/аватарка собеседника)
             syncProfiles()
+          } catch (e: Exception) {
+            CrashHandler.report(this@ChatActivity, "ChatActivity: onCreate loop fail", e)
+            finish()
+          }
         }
     }
 
@@ -493,6 +504,7 @@ class ChatActivity : SecureActivity() {
         adapter = MessageAdapter(
             onLongClick = { msg, anchor -> showMessageMenu(msg, anchor) },
             onImageClick = { msg -> openImageFullscreen(msg) },
+            onQuoteClick = { msg -> scrollToOriginal(msg) },
             onCollageImageClick = { refs, startIndex -> openImageFullscreenByRef(refs, startIndex) },
             imageLoader = imageLoader,
             loadScope = lifecycleScope,
@@ -513,6 +525,13 @@ class ChatActivity : SecureActivity() {
         (binding.rvMessages.itemAnimator as? androidx.recyclerview.widget.SimpleItemAnimator)
             ?.supportsChangeAnimations = false
         binding.rvMessages.adapter = adapter
+
+        // ── Swipe-to-reply ────────────────────────────────────────────────────
+        val swipeCallback = SwipeToReplyCallback(this) { position ->
+            val msg = adapter.getItem(position)
+            if (msg != null) startReply(msg)
+        }
+        ItemTouchHelper(swipeCallback).attachToRecyclerView(binding.rvMessages)
 
         // ── Multi-select mode callbacks ───────────────────────────────────────
         adapter.onSelectionChanged = { selected ->
@@ -595,19 +614,27 @@ class ChatActivity : SecureActivity() {
                 // Через PatchQueue — строгий FIFO, один PATCH за раз
                 // (блокирующий вызов: suspendCoroutine ждёт onSuccess/onFailure)
                 withContext(Dispatchers.IO) { transport.appendLine(encrypted) }
+                if (chat.isFavorites) {
+                    // Для локального чата имитируем мгновенную загрузку из "сети"
+                    // сразу после appendLine, чтобы сообщение вышло из pending-статуса.
+                    val data = withContext(Dispatchers.IO) { transport.loadAll() }
+                    processGistData(data)
+                }
             },
             onMessageSent = {
-                // Сбрасываем ETag: следующий GET обойдёт CDN-кеш и вернёт свежий контент.
-                // Это аналог ?t=Date.now() из веб-версии — cache-bust после PATCH.
-                // Без этого CDN может отдавать 304 (старый контент) 1-3 сек после PATCH,
-                // и часики висят до следующего обычного тика (10 сек).
-                lifecycleScope.launch {
-                    (transport as? com.atrum.chat.transport.GistTransport)?.resetEtag()
-                    // Немедленный форс-синк: ETag сброшен → 200 гарантирован → часики гаснут.
-                    syncEngine.forceSync(delayMs = 0L)
-                    // Страховка: если sync пропустил single-flight guard (предыдущий GET в полёте)
-                    delay(1_500L)
-                    syncEngine.forceSync(delayMs = 0L)
+                if (!chat.isFavorites) {
+                    // Сбрасываем ETag: следующий GET обойдёт CDN-кеш и вернёт свежий контент.
+                    // Это аналог ?t=Date.now() из веб-версии — cache-bust после PATCH.
+                    // Без этого CDN может отдавать 304 (старый контент) 1-3 сек после PATCH,
+                    // и часики висят до следующего обычного тика (10 сек).
+                    lifecycleScope.launch {
+                        (transport as? com.atrum.chat.transport.GistTransport)?.resetEtag()
+                        // Немедленный форс-синк: ETag сброшен → 200 гарантирован → часики гаснут.
+                        syncEngine.forceSync(delayMs = 0L)
+                        // Страховка: если sync пропустил single-flight guard (предыдущий GET в полёте)
+                        delay(1_500L)
+                        syncEngine.forceSync(delayMs = 0L)
+                    }
                 }
             },
             onQueueChanged = { pendingList ->
@@ -740,6 +767,8 @@ class ChatActivity : SecureActivity() {
 
     /** Atmospheric Glass UI: ultra-transparent, cinematic, blurred. */
     private fun applyGlassStyle() {
+        binding.replyPanel.setGlassMode(true)
+        binding.replyPanel.setTarget(binding.rvMessages)
         val glassToolbarBg  = ContextCompat.getDrawable(this, R.drawable.bg_glass_toolbar)
         val glassPillBg     = ContextCompat.getDrawable(this, R.drawable.bg_glass_input_pill)
         val glowColor       = 0x40C77DFF.toInt()   // 25% purple
@@ -774,6 +803,7 @@ class ChatActivity : SecureActivity() {
 
     /** Classic mode with wallpaper: semi-transparent overlay on toolbar/input. */
     private fun applyClassicWallpaperStyle() {
+        binding.replyPanel.setGlassMode(false)
         val overlayColor = ContextCompat.getColor(this, R.color.chat_overlay)
         val pillBg       = ContextCompat.getDrawable(this, R.drawable.bg_chat_input_pill)
 
@@ -792,6 +822,7 @@ class ChatActivity : SecureActivity() {
 
     /** Classic mode without wallpaper: solid background everywhere. */
     private fun applyClassicSolidStyle() {
+        binding.replyPanel.setGlassMode(false)
         val solidColor = ContextCompat.getColor(this, R.color.bg)
         val pillBg     = ContextCompat.getDrawable(this, R.drawable.bg_chat_input_pill)
 
@@ -1901,6 +1932,35 @@ class ChatActivity : SecureActivity() {
 
     // ====== REPLY ======
 
+    private fun scrollToOriginal(msg: Message) {
+        val qText = msg.quotedText ?: return
+        val qSender = msg.quotedSender ?: return
+
+        // Ищем сообщение в текущем списке
+        val targetIndex = currentMessages.indexOfFirst {
+            it.sender == qSender && it.text.take(120) == qText
+        }
+
+        if (targetIndex != -1) {
+            val targetMsg = currentMessages[targetIndex]
+            // Нашли — скроллим
+            (binding.rvMessages.layoutManager as? LinearLayoutManager)?.scrollToPositionWithOffset(targetIndex, 100)
+            
+            // Подсвечиваем сообщение акцентом
+            adapter.highlightMessage(targetMsg.msgId)
+            
+            // Убираем подсветку через 1.5 секунды
+            lifecycleScope.launch {
+                delay(1500)
+                if (adapter.highlightedMsgId == targetMsg.msgId) {
+                    adapter.highlightMessage(null)
+                }
+            }
+        } else {
+            Toast.makeText(this, "Сообщение не найдено", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun startReply(msg: Message) {
         replyingTo = msg
         binding.tvReplySender.text = msg.sender.ifBlank { "?" }
@@ -1994,10 +2054,19 @@ class ChatActivity : SecureActivity() {
             name    = "reactions.txt",
             content = encryptedReactions,
             onDone  = {
-                // После успешного PATCH — быстро подтверждаем реальное состояние с сервера.
-                // Аналог forceSync после отправки сообщения: обнаруживает конкурентные реакции
-                // партнёра и ошибки записи быстрее обычного 5-секундного тика.
-                syncEngine.forceSync(delayMs = 1_500L)
+                if (chat.isFavorites) {
+                    // В локальном чате не используем SyncEngine, поэтому
+                    // после сохранения реакции нужно вручную дёрнуть обновление.
+                    lifecycleScope.launch {
+                        val data = withContext(Dispatchers.IO) { transport.loadAll() }
+                        processGistData(data)
+                    }
+                } else {
+                    // После успешного PATCH — быстро подтверждаем реальное состояние с сервера.
+                    // Аналог forceSync после отправки сообщения: обнаруживает конкурентные реакции
+                    // партнёра и ошибки записи быстрее обычного 5-секундного тика.
+                    syncEngine.forceSync(delayMs = 1_500L)
+                }
             }
         ))
     }

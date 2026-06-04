@@ -9,6 +9,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- Чтобы Service мог открыть Activity поверх Custom Tabs после успеха OAuth -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:name=".App"
@@ -136,6 +137,22 @@
             android:excludeFromRecents="true"
             android:taskAffinity=""
             android:theme="@style/Theme.GithubChat" />
+
+
+        <!-- HeaderSettingsActivity — настройка баннера профиля -->
+        <activity
+            android:name=".HeaderSettingsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".UpdateActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".ChangePinActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
 
         <!-- uCrop activity для кропа аватарок -->
         <activity

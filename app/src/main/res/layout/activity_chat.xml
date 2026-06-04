@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/chat_main_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/bg">
@@ -45,10 +46,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:background="@color/bg"
+            android:background="@android:color/transparent"
             android:gravity="center_vertical"
             android:paddingHorizontal="6dp"
-            android:paddingVertical="10dp">
+            android:paddingVertical="10dp"
+            android:elevation="0dp">
 
             <ImageButton
                 android:id="@+id/btn_back"
@@ -154,7 +156,8 @@
             android:id="@+id/header_divider"
             android:layout_width="match_parent"
             android:layout_height="1dp"
-            android:background="@color/border"/>
+            android:background="@color/border"
+            android:visibility="gone"/>
 
         <LinearLayout
             android:id="@+id/warning_banner"
@@ -263,63 +266,105 @@
                 android:fontFamily="sans-serif-medium"
                 android:visibility="gone"/>
 
+
+            <com.atrum.chat.BackdropBlurView
+                android:id="@+id/reply_panel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:orientation="horizontal"
+                android:paddingHorizontal="16dp"
+                android:paddingVertical="10dp"
+                android:layout_marginHorizontal="12dp"
+                android:layout_marginBottom="12dp"
+                android:gravity="center_vertical"
+                android:clipToOutline="true"
+                android:background="@android:color/transparent"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:layout_marginEnd="8dp">
+
+                    <TextView
+                        android:id="@+id/tv_reply_sender"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/accent"
+                        android:textSize="13.5sp"
+                        android:fontFamily="sans-serif-medium"
+                        android:singleLine="true"
+                        android:ellipsize="end"
+                        android:layout_marginBottom="1dp"
+                        android:textStyle="bold"/>
+
+                    <TextView
+                        android:id="@+id/tv_reply_text"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/white"
+                        android:textSize="13sp"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:alpha="0.8"/>
+
+                    <LinearLayout
+                        android:id="@+id/ll_reply_photo_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:visibility="gone">
+                        <ImageView
+                            android:layout_width="14dp"
+                            android:layout_height="14dp"
+                            android:src="@drawable/ic_image_outline"
+                            app:tint="@color/accent"
+                            android:layout_marginEnd="4dp" />
+                        <TextView
+                            android:id="@+id/tv_reply_photo_label"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/accent"
+                            android:textSize="13sp"
+                            android:text="@string/reply_photo_label" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <com.google.android.material.imageview.ShapeableImageView
+                    android:id="@+id/iv_reply_thumb"
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    android:scaleType="centerCrop"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="8dp"
+                    android:visibility="gone"
+                    app:shapeAppearanceOverlay="@style/ShapeAppearance.GithubChat.RoundedImage" />
+
+                <ImageButton
+                    android:id="@+id/btn_cancel_reply"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_close"
+                    android:background="@drawable/bg_icon_button"
+                    android:contentDescription="@string/cd_cancel_reply"
+                    android:padding="7dp"
+                    android:layout_marginStart="4dp"
+                    app:tint="#B3FFFFFF"/>
+            </com.atrum.chat.BackdropBlurView>
+
         </FrameLayout>
 
-        <!-- Reply panel -->
-        <LinearLayout
-            android:id="@+id/reply_panel"
+        <!-- ═══ Sticker panel container (visibility=gone by default) ═══ -->
+        <FrameLayout
+            android:id="@+id/sticker_panel_container"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:background="@color/chat_overlay"
-            android:paddingHorizontal="14dp"
-            android:paddingVertical="10dp"
-            android:visibility="gone">
-
-            <View
-                android:layout_width="3dp"
-                android:layout_height="match_parent"
-                android:background="@color/accent"
-                android:layout_marginEnd="12dp"
-                android:minHeight="32dp"/>
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical"
-                android:gravity="center_vertical">
-
-                <TextView
-                    android:id="@+id/tv_reply_sender"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/accent"
-                    android:textSize="12sp"
-                    android:fontFamily="sans-serif-medium"
-                    android:singleLine="true"
-                    android:ellipsize="end"/>
-
-                <TextView
-                    android:id="@+id/tv_reply_text"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="13sp"
-                    android:maxLines="1"
-                    android:ellipsize="end"/>
-            </LinearLayout>
-
-            <ImageButton
-                android:id="@+id/btn_cancel_reply"
-                android:layout_width="34dp"
-                android:layout_height="34dp"
-                android:src="@drawable/ic_close"
-                android:background="@drawable/bg_icon_button"
-                android:contentDescription="@string/cd_cancel_reply"
-                android:padding="7dp"
-                app:tint="@color/text_secondary"/>
-        </LinearLayout>
+            android:background="@color/surface"
+            android:visibility="gone"/>
 
         <!-- ═══ Input area — pill container ═══ -->
         <LinearLayout
@@ -327,7 +372,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:background="@color/bg"
+            android:background="@android:color/transparent"
             android:paddingHorizontal="12dp"
             android:paddingTop="8dp"
             android:paddingBottom="14dp"
@@ -351,6 +396,16 @@
                     android:src="@drawable/ic_attach"
                     android:background="@drawable/bg_icon_button"
                     android:contentDescription="@string/cd_attach"
+                    android:padding="11dp"
+                    app:tint="@color/text_secondary"/>
+
+                <ImageButton
+                    android:id="@+id/btn_sticker"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:src="@drawable/ic_sticker"
+                    android:background="@drawable/bg_icon_button"
+                    android:contentDescription="@string/sticker_cd_button"
                     android:padding="11dp"
                     app:tint="@color/text_secondary"/>
 

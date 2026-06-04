@@ -25,4 +25,16 @@
         <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">false</item>
     </style>
 
+
+    <!-- AlertDialog — тёмная тема: Dark-родитель даёт белый текст по умолчанию -->
+    <style name="Theme.GithubChat.Dialog" parent="Theme.MaterialComponents.Dialog.Alert">
+        <item name="colorPrimary">@color/accent</item>
+        <item name="colorAccent">@color/accent</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textColorAlertDialogListItem">@color/text_primary</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:background">@color/surface</item>
+    </style>
+
 </resources>

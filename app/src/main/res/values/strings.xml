@@ -56,7 +56,7 @@
     <string name="chat_empty">Здесь пока ничего нет</string>
 
     <!-- Список чатов -->
-    <string name="chats_title">Чаты</string>
+    <string name="chats_title">ATRUM</string>
     <string name="chats_empty_title">Пока нет чатов</string>
     <string name="chats_empty_hint">Нажмите + чтобы создать новый чат</string>
     <string name="cd_create_chat">Создать чат</string>
@@ -251,6 +251,7 @@
     <string name="dialog_delete_message">Сообщение будет удалено для всех. Это действие нельзя отменить.</string>
     <string name="btn_save">Сохранить</string>
     <string name="btn_cancel">Отмена</string>
+    <string name="network_connecting">Подключение…</string>
     <string name="msg_copied">Скопировано</string>
     <string name="error_message_not_found">Сообщение уже изменено или удалено</string>
     <string name="error_edit">Не удалось изменить</string>
@@ -469,9 +470,14 @@
 
     <!-- Crash screen -->
     <string name="crash_title">Что-то пошло не так</string>
-    <string name="crash_subtitle">Приложение столкнулось с неожиданной ошибкой. Лог уже скопирован в буфер обмена — просто отправьте его разработчику.</string>
+    <string name="crash_subtitle">Нашли баг — помоги его исправить.</string>
+    <string name="crash_copied_pill">Лог скопирован</string>
+    <string name="crash_tg_title">Чат для приёма багов</string>
+    <string name="crash_tg_text">Лог уже скопирован — вставь его в чат.</string>
+    <string name="crash_tg_hint">Приложи скриншот и опиши что делал перед вылетом — это поможет найти причину быстрее.</string>
     <string name="crash_log_label">Отчёт об ошибке</string>
     <string name="crash_copy">Скопировать</string>
+    <string name="crash_open_tg">Чат для приёма багов</string>
     <string name="crash_close">Закрыть</string>
     <string name="crash_log_unavailable">Лог недоступен.</string>
     <string name="crash_copied_toast">Лог скопирован в буфер обмена</string>
@@ -497,4 +503,100 @@
     <string name="profile_status_label">Статус</string>
     <string name="profile_photos_label">Фото</string>
 
+
+    <!-- Profile Banner / Header -->
+    <string name="header_settings_title">Настройка шапки</string>
+    <string name="header_settings_change">Сменить шапку</string>
+    <string name="header_settings_remove">Убрать шапку</string>
+    <string name="header_settings_remove_title">Убрать шапку?</string>
+    <string name="header_settings_remove_confirm">Шапка профиля будет удалена.</string>
+    <string name="header_settings_remove_action">Убрать</string>
+    <string name="header_settings_crop_title">Кадрировать шапку</string>
+    <string name="header_settings_tip_title">Рекомендуемый размер</string>
+    <string name="header_settings_tip_body">Соотношение сторон 3:1\nНапример 1500 × 500 px</string>
+    <string name="header_settings_no_banner">Шапка не установлена</string>
+    <!-- Banner validation errors -->
+    <string name="header_error_format">Поддерживаются только JPG, PNG и WebP. GIF и анимации не поддерживаются.</string>
+    <string name="header_error_size">Файл слишком большой. Максимум — 8 МБ.</string>
+    <string name="header_error_resolution">Изображение слишком маленькое. Минимум: 1200 × 400 пикселей.</string>
+    <string name="header_error_rate_limit">Слишком частая смена шапки. Попробуйте через %d сек.</string>
+    <string name="header_safe_zone_tip">Края изображения могут быть обрезаны на разных устройствах. Размещайте важные элементы ближе к центру.</string>
+    <string name="header_safe_zone_title">Совет по кадрированию</string>
+    <string name="header_safe_zone_continue">Продолжить</string>
+    <string name="header_content_rules">Шапка не должна содержать откровенный контент, насилие или запрещённые материалы.</string>
+
+    <string name="settings_item_stickers">Стикеры</string>
+    <string name="settings_section_security">БЕЗОПАСНОСТЬ</string>
+    <string name="settings_item_change_pin">Изменить PIN-код</string>
+    <string name="settings_item_change_pin_desc">Пароль для входа в приложение</string>
+    <string name="settings_item_credits">Благодарности</string>
+
+    <!-- Change PIN screen -->
+    <string name="dialog_old_pin_title">Текущий PIN-код</string>
+    <string name="error_old_pin_wrong">Неверный текущий PIN-код</string>
+    <string name="dialog_new_pin_title">Новый PIN-код</string>
+    <string name="settings_pin_changed">PIN-код успешно изменен</string>
+
+    <!-- Sticker settings -->
+    <string name="sticker_settings_title">Стикеры</string>
+    <string name="sticker_settings_token_section">ТОКЕН</string>
+    <string name="sticker_settings_token_label">GitHub токен</string>
+    <string name="sticker_settings_token_hint">Введите токен</string>
+    <string name="sticker_settings_token_hint_desc">Токен нужен для загрузки стикер-паков из Gist</string>
+    <string name="sticker_settings_token_save">Сохранить</string>
+    <string name="sticker_settings_token_saved">Токен сохранен</string>
+    <string name="sticker_settings_packs_section">МОИ ПАКИ</string>
+    <string name="sticker_add_pack_title">Добавить пак</string>
+    <string name="sticker_add_pack_btn">Добавить</string>
+    <string name="sticker_add_pack_cancel">Отмена</string>
+    <string name="sticker_add_pack_hint">Введите ссылку на Gist</string>
+    <string name="sticker_settings_delete_pack">Удалить</string>
+    <string name="sticker_settings_delete_title">Удалить пак?</string>
+    <string name="sticker_settings_delete_msg">Удалить стикер-пак «%1$s»?</string>
+    <string name="sticker_settings_delete_confirm">Удалить</string>
+    <string name="sticker_settings_deleted">Пак удален</string>
+    <string name="sticker_settings_no_token">Сначала введите GitHub токен в настройках</string>
+
+    <plurals name="sticker_count">
+        <item quantity="one">%1$d стикер</item>
+        <item quantity="few">%1$d стикера</item>
+        <item quantity="many">%1$d стикеров</item>
+        <item quantity="other">%1$d стикеров</item>
+    </plurals>
+
+    <!-- Sticker panel -->
+    <string name="sticker_empty_title">Стикеров пока нет</string>
+    <string name="sticker_empty_hint">Добавьте стикер-пак в настройках</string>
+    <string name="sticker_loading">Загрузка…</string>
+    <string name="sticker_pack_label_default">Стикеры</string>
+    <string name="sticker_add_pack_cd">Добавить пак</string>
+    <string name="sticker_help_cd">Помощь</string>
+    <string name="sticker_cd_button">Стикеры</string>
+    <string name="sticker_anim_badge">GIF</string>
+    <string name="sticker_error_invalid_link">Некорректная ссылка на Gist</string>
+    <string name="sticker_error_not_found">Пак не найден</string>
+    <string name="sticker_error_network">Ошибка сети при загрузке стикеров</string>
+
+    <!-- Sticker onboarding -->
+    <string name="sticker_onboarding_title">Как добавить стикеры</string>
+    <string name="sticker_onboarding_step_1">Создайте Gist с файлом стикеров на GitHub</string>
+    <string name="sticker_onboarding_step_2">Скопируйте ссылку на Gist</string>
+    <string name="sticker_onboarding_step_3">Вставьте ссылку в поле выше</string>
+    <string name="sticker_onboarding_step_4">Нажмите «Добавить пак»</string>
+    <string name="sticker_onboarding_btn">Понятно</string>
+
+    <!-- Update screen -->
+    <string name="update_screen_checking">Проверка обновлений…</string>
+    <string name="update_screen_btn_close">Закрыть</string>
+    <string name="update_screen_title_new">Доступно обновление %1$s</string>
+    <string name="update_screen_subtitle_new">Текущая версия: %1$s</string>
+    <string name="update_screen_title_ok">У вас актуальная версия</string>
+    <string name="update_screen_subtitle_ok">Версия %1$s</string>
+    <string name="update_screen_changelog_label">Что нового</string>
+    <string name="update_screen_github_releases">Посмотреть на GitHub</string>
+    <string name="update_screen_github_code">Исходный код</string>
+    <string name="reply_photo_label">Фото</string>
+    <string name="search_hint">Поиск</string>
+    <string name="search_empty">Чаты не найдены</string>
+    <string name="cd_search">Поиск чатов</string>
 </resources>

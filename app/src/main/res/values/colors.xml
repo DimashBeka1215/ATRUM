@@ -40,9 +40,12 @@
     <color name="sent_tick">#9D9DA5</color>
 
     <!-- Chat overlay (полупрозрачный фон тулбара/инпута при наличии обоев) -->
-    <color name="chat_overlay">#D9FFFFFF</color>          <!-- 85% белый — светлая тема -->
-    <color name="chat_input_pill">#D9FFFFFF</color>       <!-- пилюля поля ввода -->
+    <color name="chat_overlay">#CCFFFFFF</color>          <!-- 80% белый -->
+    <color name="chat_input_pill">#CCFFFFFF</color>       <!-- 80% белый -->
     <color name="chat_msg_other_wp">#D9E5E5EA</color>     <!-- чужой пузырёк с обоями -->
+
+    <!-- Стикеры -->
+    <color name="sticker_onboarding_overlay">#CC000000</color>
 
     <!-- Стандартные -->
     <color name="white">#FFFFFF</color>

@@ -33,6 +33,17 @@ class ImageLoader(private val api: ChatTransport, private val password: String) 
 
     // ── Public API ─────────────────────────────────────────────────────────────
 
+    /**
+     * Загружает сырые байты файла (для TGS-стикеров).
+     * Контент хранится как base64 в gist — декодируем обратно в байты.
+     */
+    suspend fun loadRawBytes(fileName: String): ByteArray? {
+        val base64 = loadBase64(fileName) ?: return null
+        return try {
+            android.util.Base64.decode(base64, android.util.Base64.NO_WRAP)
+        } catch (_: Exception) { null }
+    }
+
     /** Загружает Bitmap. Возвращает null если что-то пошло не так. */
     suspend fun loadBitmap(fileName: String): Bitmap? {
         ImageCache.getBitmap(fileName)?.let { return it }
