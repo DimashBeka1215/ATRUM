@@ -274,7 +274,13 @@ class GistApi(
         if (!files.has(name)) {
             throw RuntimeException("Файл '$name' не найден в gist")
         }
-        files.getJSONObject(name).getString("content")
+        val fileObj = files.getJSONObject(name)
+        // Файлы > 1 МБ помечаются truncated=true — получаем полный контент по raw_url.
+        if (fileObj.optBoolean("truncated", false)) {
+            loadRawUrl(fileObj.getString("raw_url"))
+        } else {
+            fileObj.getString("content")
+        }
     }
 
     /**

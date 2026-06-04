@@ -35,5 +35,5 @@ GoogleService-Info.plist
 secrets.properties 
 local.properties 
 *.env 
-main 
+/main
 app/release/ 
