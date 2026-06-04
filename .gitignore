@@ -36,3 +36,4 @@ secrets.properties
 local.properties 
 *.env 
 main 
+app/release/ 
