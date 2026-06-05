@@ -2,18 +2,23 @@ package com.atrum.chat
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.View
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
 import com.atrum.chat.databinding.ActivityLockBinding
 
 /**
- * Экран блокировки. Показывается если у пользователя установлен локальный пароль.
+ * Экран блокировки. Показывается если у пользователя установлен локальный пароль (PIN).
+ *
+ * Если включён вход по отпечатку — на экране есть выбор: ввести PIN или приложить
+ * палец. Отпечаток проверяется системным BiometricPrompt (на Samsung — через Knox/TEE);
+ * приложение саму биометрию не хранит и не регистрирует.
  */
 class LockActivity : SecureActivity() {
 
     private lateinit var binding: ActivityLockBinding
     private lateinit var prefs: Prefs
     private var failCount = 0
+    private var biometricEnabled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -26,15 +31,47 @@ class LockActivity : SecureActivity() {
             tryUnlock()
             true
         }
-        binding.etPwd.requestFocus()
+
+        // Вход по отпечатку доступен, только если пользователь его включил
+        // и система телефона готова (есть железо + добавлен отпечаток).
+        biometricEnabled = prefs.biometricEnabled && BiometricHelper.canUse(this)
+        if (biometricEnabled) {
+            binding.orDivider.visibility = View.VISIBLE
+            binding.btnBiometric.visibility = View.VISIBLE
+            binding.btnBiometric.setOnClickListener { showBiometricPrompt() }
+            // Сразу предлагаем системный диалог отпечатка.
+            showBiometricPrompt()
+        } else {
+            binding.orDivider.visibility = View.GONE
+            binding.btnBiometric.visibility = View.GONE
+            binding.etPwd.requestFocus()
+        }
+    }
+
+    private fun showBiometricPrompt() {
+        BiometricHelper.authenticate(
+            activity = this,
+            title = getString(R.string.biometric_prompt_title),
+            subtitle = getString(R.string.biometric_prompt_subtitle),
+            negativeButton = getString(R.string.biometric_prompt_cancel),
+            onSuccess = { unlock() },
+            onError = { _, _ ->
+                // Пользователь отменил или система недоступна — остаётся вход по PIN.
+                binding.etPwd.requestFocus()
+            }
+        )
+    }
+
+    private fun unlock() {
+        failCount = 0
+        startActivity(Intent(this, ChatsListActivity::class.java))
+        finish()
     }
 
     private fun tryUnlock() {
         val pwd = binding.etPwd.text.toString()
         if (prefs.checkLocalPassword(pwd)) {
-            failCount = 0
-            startActivity(Intent(this, ChatsListActivity::class.java))
-            finish()
+            unlock()
         } else {
             failCount++
             val delayMs = when {

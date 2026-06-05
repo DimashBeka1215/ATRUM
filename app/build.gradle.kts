@@ -39,8 +39,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 4
-        versionName = "2.0.4"
+        versionCode = 5
+        versionName = "2.1.0"
 
         // Включаем multidex чтобы не упереться в лимит 65k методов
         // когда много AndroidX/Material/Room/uCrop/browser библиотек
@@ -153,5 +153,9 @@ dependencies {
 
     // Lottie — анимации и стикеры
     implementation("com.airbnb.android:lottie:6.3.0")
+
+    // Biometric — системный отпечаток (BiometricPrompt). Биометрия НЕ хранится
+    // в приложении: запрос идёт в системную подсистему телефона (на Samsung — Knox/TEE).
+    implementation("androidx.biometric:biometric:1.1.0")
 
 }

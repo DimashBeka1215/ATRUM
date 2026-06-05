@@ -116,6 +116,16 @@ class Prefs(context: Context) {
         set(v) = prefs.edit().putBoolean(KEY_ONBOARDED, v).apply()
 
     /**
+     * Включён ли вход по отпечатку. Только локальный флаг — сама биометрия
+     * хранится в системе телефона (Knox/TEE), приложение её не записывает.
+     * Имеет смысл только вместе с установленным PIN: отпечаток — альтернатива
+     * вводу PIN на экране блокировки.
+     */
+    var biometricEnabled: Boolean
+        get() = prefs.getBoolean(KEY_BIOMETRIC, false)
+        set(v) = prefs.edit().putBoolean(KEY_BIOMETRIC, v).apply()
+
+    /**
      * Выбранная тема: "dark" | "light" | "system".
      * По умолчанию "dark" — приложение задумано тёмным.
      */
@@ -335,6 +345,7 @@ class Prefs(context: Context) {
         private const val KEY_BANNER_CHANGED_AT = "banner_changed_at"
         private const val KEY_LOCAL_PWD_HASH = "local_pwd_hash"
         private const val KEY_ONBOARDED = "onboarded"
+        private const val KEY_BIOMETRIC = "biometric_enabled"
         private const val KEY_DEFAULT_TOKEN = "default_gist_token"
         private const val KEY_NAME_HISTORY = "name_history"
         private const val KEY_EULA_ACCEPTED = "eula_accepted"

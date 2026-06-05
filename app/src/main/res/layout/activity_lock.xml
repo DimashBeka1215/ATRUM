@@ -51,11 +51,69 @@
         android:id="@+id/btn_unlock"
         android:layout_width="match_parent"
         android:layout_height="56dp"
-        android:text="@string/lock_unlock"
+        android:text="@string/lock_use_pin"
         android:textColor="@color/white"
         android:textSize="16sp"
         android:textStyle="bold"
         android:background="@drawable/bg_button"
         android:stateListAnimator="@null"
         android:textAllCaps="false"/>
+
+    <!-- Разделитель "или" — виден только если включён вход по отпечатку -->
+    <LinearLayout
+        android:id="@+id/or_divider"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="24dp"
+        android:layout_marginBottom="20dp"
+        android:visibility="gone">
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1"
+            android:background="@color/border"/>
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/lock_or"
+            android:textColor="@color/text_tertiary"
+            android:textSize="12sp"
+            android:layout_marginHorizontal="12dp"/>
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1"
+            android:background="@color/border"/>
+    </LinearLayout>
+
+    <!-- Кнопка входа по отпечатку — видна только если включён вход по отпечатку -->
+    <LinearLayout
+        android:id="@+id/btn_biometric"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="6dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+        <ImageView
+            android:layout_width="66dp"
+            android:layout_height="66dp"
+            android:src="@drawable/ic_fingerprint"
+            android:tint="@color/accent"
+            android:padding="15dp"
+            android:background="@drawable/bg_biometric_circle"
+            android:contentDescription="@string/lock_use_fingerprint"/>
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/lock_use_fingerprint"
+            android:textColor="@color/accent_light"
+            android:textSize="14sp"
+            android:layout_marginTop="10dp"/>
+    </LinearLayout>
 </LinearLayout>

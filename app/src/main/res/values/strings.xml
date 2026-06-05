@@ -529,6 +529,18 @@
     <string name="settings_section_security">БЕЗОПАСНОСТЬ</string>
     <string name="settings_item_change_pin">Изменить PIN-код</string>
     <string name="settings_item_change_pin_desc">Пароль для входа в приложение</string>
+    <string name="settings_item_biometric">Вход по отпечатку</string>
+    <string name="settings_item_biometric_desc">Системная биометрия телефона</string>
+    <string name="biometric_warn_title">Отпечаток не добавлен</string>
+    <string name="biometric_warn_desc">Сначала зарегистрируйте отпечаток в настройках телефона. Atrum не записывает биометрию сам.</string>
+    <string name="biometric_open_settings">Открыть настройки телефона</string>
+    <string name="biometric_need_pin">Сначала установите PIN-код</string>
+    <string name="biometric_prompt_title">Вход в Atrum</string>
+    <string name="biometric_prompt_subtitle">Подтвердите отпечатком пальца</string>
+    <string name="biometric_prompt_cancel">Использовать PIN</string>
+    <string name="lock_or">или</string>
+    <string name="lock_use_fingerprint">Войти по отпечатку</string>
+    <string name="lock_use_pin">Войти по PIN</string>
     <string name="settings_item_credits">Благодарности</string>
 
     <!-- Change PIN screen -->

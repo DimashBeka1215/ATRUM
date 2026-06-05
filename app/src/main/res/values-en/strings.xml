@@ -487,6 +487,18 @@
     <string name="settings_section_security">SECURITY</string>
     <string name="settings_item_change_pin">Change PIN</string>
     <string name="settings_item_change_pin_desc">App lock password</string>
+    <string name="settings_item_biometric">Fingerprint unlock</string>
+    <string name="settings_item_biometric_desc">Phone\'s system biometrics</string>
+    <string name="biometric_warn_title">No fingerprint enrolled</string>
+    <string name="biometric_warn_desc">First add a fingerprint in your phone settings. Atrum never records biometrics itself.</string>
+    <string name="biometric_open_settings">Open phone settings</string>
+    <string name="biometric_need_pin">Set a PIN first</string>
+    <string name="biometric_prompt_title">Unlock Atrum</string>
+    <string name="biometric_prompt_subtitle">Confirm with your fingerprint</string>
+    <string name="biometric_prompt_cancel">Use PIN</string>
+    <string name="lock_or">or</string>
+    <string name="lock_use_fingerprint">Use fingerprint</string>
+    <string name="lock_use_pin">Unlock with PIN</string>
     <string name="settings_item_credits">Credits</string>
 
     <!-- Change PIN screen -->

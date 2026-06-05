@@ -349,6 +349,98 @@
                             android:src="@drawable/ic_chevron_right" android:tint="@color/text_tertiary" />
                     </LinearLayout>
 
+                    <LinearLayout
+                        android:id="@+id/itemBiometric"
+                        android:layout_width="match_parent"
+                        android:layout_height="56dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:paddingHorizontal="16dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:visibility="gone"
+                        android:clickable="true"
+                        android:focusable="true">
+                        <ImageView android:layout_width="22dp" android:layout_height="22dp"
+                            android:src="@drawable/ic_fingerprint" android:tint="@color/accent" android:layout_marginEnd="14dp" />
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/settings_item_biometric"
+                                android:textColor="@color/text_primary"
+                                android:textSize="15sp" />
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="@string/settings_item_biometric_desc"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+                        <androidx.appcompat.widget.SwitchCompat
+                            android:id="@+id/switchBiometric"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false"
+                            android:focusable="false" />
+                    </LinearLayout>
+
+                </LinearLayout>
+
+                <!-- Жёлтое предупреждение: в телефоне нет зарегистрированного отпечатка -->
+                <LinearLayout
+                    android:id="@+id/warnBiometric"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:background="@drawable/bg_warning"
+                    android:padding="14dp"
+                    android:layout_marginBottom="20dp"
+                    android:visibility="gone">
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_warning"
+                        android:tint="@color/warning"
+                        android:layout_marginEnd="12dp"
+                        android:layout_marginTop="1dp" />
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/biometric_warn_title"
+                            android:textColor="@color/warning"
+                            android:fontFamily="sans-serif-medium"
+                            android:textSize="13sp" />
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/biometric_warn_desc"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp"
+                            android:layout_marginTop="4dp" />
+                        <TextView
+                            android:id="@+id/btnBiometricEnroll"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/biometric_open_settings"
+                            android:textColor="@color/warning"
+                            android:fontFamily="sans-serif-medium"
+                            android:textSize="13sp"
+                            android:background="@drawable/bg_button_warning_outline"
+                            android:paddingHorizontal="14dp"
+                            android:paddingVertical="9dp"
+                            android:layout_marginTop="12dp"
+                            android:clickable="true"
+                            android:focusable="true" />
+                    </LinearLayout>
                 </LinearLayout>
 
                 <!-- ЕЩЕ (MORE) -->

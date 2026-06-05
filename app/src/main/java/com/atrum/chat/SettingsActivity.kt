@@ -68,6 +68,16 @@ class SettingsActivity : SecureActivity() {
             startActivity(Intent(this, ChangePinActivity::class.java))
         }
 
+        setupBiometric()
+        binding.itemBiometric.setOnClickListener { toggleBiometric() }
+        binding.btnBiometricEnroll.setOnClickListener {
+            try {
+                startActivity(BiometricHelper.enrollIntent())
+            } catch (_: Exception) {
+                Toast.makeText(this, R.string.biometric_open_settings, Toast.LENGTH_SHORT).show()
+            }
+        }
+
         binding.itemVersion.setOnClickListener {
             UpdateActivity.startForCheck(this, forceRefresh = true)
         }
@@ -88,6 +98,60 @@ class SettingsActivity : SecureActivity() {
         // Обновляем баннер и профиль при возвращении (например, из HeaderSettingsActivity)
         setupBanner()
         setupProfile()
+        setupBiometric()
+    }
+
+    /**
+     * Настройка строки «Вход по отпечатку».
+     * Строка показывается ТОЛЬКО если в телефоне есть физический биометрический
+     * сканер. Сама биометрия берётся из системы (на Samsung — Knox/TEE),
+     * приложение её не хранит и не регистрирует.
+     */
+    private fun setupBiometric() {
+        if (!BiometricHelper.hasHardware(this)) {
+            binding.itemBiometric.visibility = View.GONE
+            binding.warnBiometric.visibility = View.GONE
+            return
+        }
+        binding.itemBiometric.visibility = View.VISIBLE
+        // Если пользователь удалил отпечаток из телефона — сбрасываем флаг.
+        if (prefs.biometricEnabled && !BiometricHelper.canUse(this)) {
+            prefs.biometricEnabled = false
+        }
+        binding.switchBiometric.isChecked = prefs.biometricEnabled
+        // Отпечаток снова доступен — прячем жёлтое предупреждение.
+        if (BiometricHelper.canUse(this)) {
+            binding.warnBiometric.visibility = View.GONE
+        }
+    }
+
+    private fun toggleBiometric() {
+        if (binding.switchBiometric.isChecked) {
+            // Выключаем вход по отпечатку.
+            prefs.biometricEnabled = false
+            binding.switchBiometric.isChecked = false
+            binding.warnBiometric.visibility = View.GONE
+            return
+        }
+        // Включаем. Отпечаток — альтернатива PIN, поэтому PIN обязателен.
+        if (!prefs.hasLocalPassword()) {
+            Toast.makeText(this, R.string.biometric_need_pin, Toast.LENGTH_SHORT).show()
+            return
+        }
+        when {
+            BiometricHelper.canUse(this) -> {
+                prefs.biometricEnabled = true
+                binding.switchBiometric.isChecked = true
+                binding.warnBiometric.visibility = View.GONE
+            }
+            BiometricHelper.isNoneEnrolled(this) -> {
+                // Сканер есть, но отпечаток не добавлен — жёлтое предупреждение.
+                binding.warnBiometric.visibility = View.VISIBLE
+            }
+            else -> {
+                Toast.makeText(this, R.string.biometric_warn_title, Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun setupParallax() {
