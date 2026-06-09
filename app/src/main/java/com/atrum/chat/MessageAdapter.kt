@@ -584,17 +584,13 @@ class MessageAdapter(
                         lottie.visibility = View.GONE
                     }
                 } else if (fileName.endsWith(".webm", ignoreCase = true)) {
-                    // VIDEO sticker: show first frame as preview
+                    // VIDEO sticker: декодируем первый кадр из raw webm через MediaMetadataRetriever.
+                    // BitmapFactory не умеет webm — раньше у получателя стикер просто исчезал (null).
                     val bitmap = cachedBmp ?: withContext(Dispatchers.IO) {
-                        try {
-                            val bytes = android.util.Base64.decode(base64, android.util.Base64.NO_WRAP)
-                            // It's already the frame if we saved it as such, 
-                            // but if it's the raw webm, we'd need a temp file and MediaMetadataRetriever.
-                            // Assuming for now it's pre-rendered frame if it comes from the same base64 path.
-                            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        } catch (_: Exception) { null }
+                        decodeWebmFirstFrame(base64)
                     }
                     if (lottie.tag == fileName && bitmap != null) {
+                        if (ImageCache.getBitmap(fileName) == null) ImageCache.put(fileName, base64, bitmap)
                         lottie.setImageBitmap(bitmap)
                     } else if (lottie.tag == fileName) {
                         lottie.visibility = View.GONE
@@ -614,6 +610,35 @@ class MessageAdapter(
                     }
                 }
             }
+        }
+
+        /**
+         * Декодирует первый кадр .webm-стикера прямо из raw-байтов (base64) без temp-файла.
+         * Используется MediaDataSource (API 23+, minSdk 24) + MediaMetadataRetriever.
+         * BitmapFactory не понимает webm, поэтому раньше у получателя стикер пропадал.
+         */
+        private fun decodeWebmFirstFrame(base64: String): android.graphics.Bitmap? {
+            return try {
+                val bytes = android.util.Base64.decode(base64, android.util.Base64.NO_WRAP)
+                val retriever = android.media.MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(object : android.media.MediaDataSource() {
+                        override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
+                            if (position >= bytes.size) return -1
+                            val end = minOf(bytes.size.toLong(), position + size).toInt()
+                            val len = end - position.toInt()
+                            if (len <= 0) return -1
+                            System.arraycopy(bytes, position.toInt(), buffer, offset, len)
+                            return len
+                        }
+                        override fun getSize(): Long = bytes.size.toLong()
+                        override fun close() {}
+                    })
+                    retriever.getFrameAtTime(0L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                } finally {
+                    retriever.release()
+                }
+            } catch (_: Exception) { null }
         }
 
                 private fun bindCollage(msg: Message, collage: CollageLayout) {
