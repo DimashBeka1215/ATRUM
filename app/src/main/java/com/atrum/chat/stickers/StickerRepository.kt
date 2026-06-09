@@ -2,6 +2,8 @@ package com.atrum.chat.stickers
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -9,6 +11,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Загружает стикер-паки через Telegram Bot API и кеширует их в filesDir.
@@ -70,39 +73,46 @@ class StickerRepository(private val context: Context) {
         val stickersArr = setJson.getJSONArray("stickers")
         val total     = stickersArr.length()
 
-        // 2. Скачиваем каждый стикер
-        val stickers = mutableListOf<Sticker>()
-        for (i in 0 until total) {
-            val stickerObj = stickersArr.getJSONObject(i)
-            val fileId     = stickerObj.getString("file_id")
-            val emoji      = stickerObj.optString("emoji", "")
-            val isAnimated = stickerObj.optBoolean("is_animated", false)
-            val isVideo    = stickerObj.optBoolean("is_video", false)
+        // 2. Скачиваем каждый стикер параллельно
+        val counter = AtomicInteger(0)
+        val deferredStickers = (0 until total).map { i ->
+            async {
+                val stickerObj = stickersArr.getJSONObject(i)
+                val fileId = stickerObj.getString("file_id")
+                val emoji = stickerObj.optString("emoji", "")
+                val isAnimated = stickerObj.optBoolean("is_animated", false)
+                val isVideo = stickerObj.optBoolean("is_video", false)
 
-            val type = when {
-                isVideo    -> StickerType.VIDEO
-                isAnimated -> StickerType.ANIMATED
-                else       -> StickerType.STATIC
-            }
-            val ext  = extensionFor(type)
-            val file = File(packDir, "$fileId$ext")
-
-            if (!file.exists()) {
-                try {
-                    downloadFile(fileId, file)
-                } catch (_: Exception) {
-                    // Не критично — пропускаем один стикер, продолжаем
+                val type = when {
+                    isVideo -> StickerType.VIDEO
+                    isAnimated -> StickerType.ANIMATED
+                    else -> StickerType.STATIC
                 }
-            }
+                val ext = extensionFor(type)
+                val file = File(packDir, "$fileId$ext")
 
-            stickers.add(Sticker(
-                fileId    = fileId,
-                localPath = if (file.exists()) file.absolutePath else null,
-                type      = type,
-                emoji     = emoji
-            ))
-            onProgress?.invoke(i + 1, total)
+                if (!file.exists()) {
+                    try {
+                        // Для анимаций и видео ВСЕГДА скачиваем основной файл, а не превью
+                        downloadFile(fileId, file)
+                    } catch (e: Exception) {
+                        android.util.Log.e("StickerRepo", "Failed to download sticker $fileId", e)
+                    }
+                }
+
+                val sticker = Sticker(
+                    fileId = fileId,
+                    localPath = if (file.exists()) file.absolutePath else null,
+                    type = type,
+                    emoji = emoji
+                )
+                
+                onProgress?.invoke(counter.incrementAndGet(), total)
+                sticker
+            }
         }
+
+        val stickers = deferredStickers.awaitAll()
 
         // 3. Сохраняем meta.json
         val thumbPath = stickers.firstOrNull { it.localPath != null }?.localPath
@@ -272,6 +282,7 @@ class StickerRepository(private val context: Context) {
                     emoji     = obj.optString("emoji", "")
                 )
             }
+       
             StickerPack(
                 name      = json.getString("name"),
                 title     = json.getString("title"),

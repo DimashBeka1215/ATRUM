@@ -82,6 +82,7 @@ class OnboardingActivity : AppCompatActivity() {
                 return
             }
             prefs.setLocalPassword(pwd)
+            prefs.localPasswordPlaintext = pwd
         } else {
             prefs.setLocalPassword(null)
         }

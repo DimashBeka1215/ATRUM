@@ -76,7 +76,7 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Анимированный стикер (.tgs / Lottie) -->
+        <!-- Анимированный стикер (.tgs / Lottie) или статический -->
         <com.airbnb.lottie.LottieAnimationView
             android:id="@+id/lottie_sticker"
             android:layout_width="160dp"

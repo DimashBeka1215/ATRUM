@@ -11,6 +11,8 @@ import android.view.animation.Animation
 import android.view.animation.LinearInterpolator
 import android.view.animation.OvershootInterpolator
 import android.view.animation.RotateAnimation
+import android.widget.EditText
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.atrum.chat.data.AppDatabase
@@ -109,9 +111,14 @@ class JoinChatActivity : SecureActivity() {
     private fun onConnectClicked() {
         if (state == UiState.LOADING) return
 
-        val input = binding.etPassword.text?.toString().orEmpty()
+        val input = binding.etPassword.text?.toString().orEmpty().trim()
         if (input.isBlank()) {
             showError(getString(R.string.join_err_empty))
+            return
+        }
+
+        if (InviteCodec.looksLikeEncryptedInvite(input)) {
+            showPinDialog(input)
             return
         }
 
@@ -128,6 +135,41 @@ class JoinChatActivity : SecureActivity() {
 
         connectJob?.cancel()
         connectJob = lifecycleScope.launch { runConnect(invite) }
+    }
+
+    private fun showPinDialog(input: String) {
+        val view = layoutInflater.inflate(R.layout.dialog_join_pin, null)
+        val etPin = view.findViewById<EditText>(R.id.et_join_pin)
+        etPin.requestFocus()
+
+        val dialog = AlertDialog.Builder(this, R.style.Theme_GithubChat_Dialog)
+            .setView(view)
+            .create()
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        view.findViewById<android.widget.Button>(R.id.btn_cancel).setOnClickListener {
+            dialog.dismiss()
+        }
+        view.findViewById<android.widget.Button>(R.id.btn_connect).setOnClickListener {
+            val pin = etPin.text.toString()
+            try {
+                val invite = InviteCodec.decode(input, pin)
+                if (invite != null) {
+                    dialog.dismiss()
+                    connectJob?.cancel()
+                    connectJob = lifecycleScope.launch { runConnect(invite) }
+                } else {
+                    showError(getString(R.string.join_err_corrupt))
+                }
+            } catch (e: InviteCodec.ExpiredException) {
+                dialog.dismiss()
+                showError(getString(R.string.join_err_expired))
+            } catch (e: Exception) {
+                dialog.dismiss()
+                showError(getString(R.string.join_err_wrong_pin))
+            }
+        }
+        dialog.show()
     }
 
     private suspend fun runConnect(invite: InviteCodec.Decoded) {

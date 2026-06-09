@@ -12,20 +12,4 @@
         android:adjustViewBounds="true"
         android:layout_gravity="center"/>
 
-    <!-- Бейдж анимированного стикера (TGS) -->
-    <TextView
-        android:id="@+id/tv_anim_badge"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|end"
-        android:layout_margin="2dp"
-        android:paddingHorizontal="3dp"
-        android:paddingVertical="1dp"
-        android:text="@string/sticker_anim_badge"
-        android:textColor="@color/white"
-        android:textSize="8sp"
-        android:fontFamily="sans-serif-medium"
-        android:background="@drawable/bg_beta_badge"
-        android:visibility="gone"/>
-
 </FrameLayout>

@@ -15,7 +15,7 @@ class LocalTransport(
 ) : ChatTransport {
     override val displayName: String = "Local"
     override val displayIcon: String = "★"
-    override val chatId: String = "local_$chatIdLong"
+    override val chatId: String = "local_$chatIdLong" // Используем фиксированный ID для локального чата
 
     private val storageFile: File
         get() = File(context.filesDir, "local_chat_${chatIdLong}.dat")
@@ -52,6 +52,12 @@ class LocalTransport(
         localContent = if (localContent.isEmpty()) encryptedLine
                        else "$localContent\n$encryptedLine"
         saveToDisk()
+        
+        // В локальном чате стикеры и другие файлы тоже нужно сохранять на диск,
+        // иначе MessageAdapter не сможет их загрузить (будут вечно «в обработке»).
+        extraFiles.forEach { (name, content) ->
+            saveFile(name, content)
+        }
     }
 
     override suspend fun loadFileOrNull(name: String): String? = try {

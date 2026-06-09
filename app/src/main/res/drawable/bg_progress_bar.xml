@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Трек (фоновая линия) — максимально тонкий и нейтральный -->
+    <item android:id="@android:id/background">
+        <shape>
+            <corners android:radius="4dp" />
+            <solid android:color="#0D000000" />
+        </shape>
+    </item>
+
+    <!-- Прогресс с градиентом от светлого к насыщенному фиолетовому -->
+    <item android:id="@android:id/progress">
+        <clip>
+            <shape>
+                <corners android:radius="4dp" />
+                <gradient
+                    android:startColor="#E0B1FF"
+                    android:centerColor="#9D4EDD"
+                    android:endColor="#5A189A"
+                    android:type="linear" />
+            </shape>
+        </clip>
+    </item>
+</layer-list>

@@ -59,6 +59,23 @@ data class Profile(
      * null = участник открыл чат старой версией или ещё не инициировал сессию.
      */
     val ephemeralPubKey: String? = null,
+    /**
+     * Base64 Ed25519 публичный ключ ИДЕНТИЧНОСТИ устройства (долговременный).
+     * Подписывает эфемерные ключи — защита от подмены (MITM) на рукопожатии.
+     * null = старый клиент без identity-ключа.
+     */
+    val identityPubKey: String? = null,
+    /**
+     * Base64 Ed25519 подпись эфемерного ключа (ephemeralPubKey), сделанная
+     * приватным identity-ключом. Партнёр проверяет её публичным identityPubKey.
+     */
+    val ephemeralSig: String? = null,
+    /**
+     * Base64 identity-ключа партнёра, который ЭТОТ пользователь лично подтвердил
+     * (сверил SAS/QR). Партнёр читает поле и, если оно равно его собственному
+     * identity-ключу, понимает, что его подтвердили → взаимная проверка.
+     */
+    val verifiedPartnerIdk: String? = null,
     /** Статус пользователя — произвольный текст, задаётся в настройках. */
     val status: String? = null
 ) {
@@ -72,6 +89,9 @@ data class Profile(
         if (onlineTs > 0L) put("onlineTs", onlineTs)
         if (deleted) put("deleted", true)
         if (ephemeralPubKey != null) put("eph", ephemeralPubKey)
+        if (identityPubKey != null) put("idk", identityPubKey)
+        if (ephemeralSig != null) put("esig", ephemeralSig)
+        if (verifiedPartnerIdk != null) put("vpk", verifiedPartnerIdk)
         if (status != null) put("status", status)
     }
 
@@ -89,6 +109,9 @@ data class Profile(
                 onlineTs = json.optLong("onlineTs", 0L),
                 deleted = json.optBoolean("deleted", false),
                 ephemeralPubKey = json.optString("eph", "").takeIf { it.isNotBlank() },
+                identityPubKey = json.optString("idk", "").takeIf { it.isNotBlank() },
+                ephemeralSig = json.optString("esig", "").takeIf { it.isNotBlank() },
+                verifiedPartnerIdk = json.optString("vpk", "").takeIf { it.isNotBlank() },
                 status = json.optString("status", null)?.takeIf { it.isNotBlank() }
             )
         }

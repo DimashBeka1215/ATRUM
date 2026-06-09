@@ -26,8 +26,15 @@ object ImageCache {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
 
-    /** Временный in-memory кеш для base64 (только активная сессия). */
     private val base64s = HashMap<String, String>()
+
+    private val compositions = object : LruCache<String, com.airbnb.lottie.LottieComposition>(100) {
+        override fun sizeOf(key: String, value: com.airbnb.lottie.LottieComposition): Int {
+            // Approximate size: characters in json string (if we had it) or just count items.
+            // Lottie compositions can be heavy, but 100 items is usually safe for modern devices.
+            return 1 
+        }
+    }
 
     private var diskCacheDir: File? = null
 
@@ -41,6 +48,14 @@ object ImageCache {
         diskCacheDir = File(context.cacheDir, DISK_CACHE_SUBDIR).apply {
             if (!exists()) mkdirs()
         }
+    }
+
+    // ── Lottie ─────────────────────────────────────────────────────────────────
+
+    fun getComposition(key: String): com.airbnb.lottie.LottieComposition? = compositions.get(key)
+
+    fun putComposition(key: String, composition: com.airbnb.lottie.LottieComposition) {
+        compositions.put(key, composition)
     }
 
     // ── Bitmap ─────────────────────────────────────────────────────────────────
@@ -100,6 +115,7 @@ object ImageCache {
 
     fun clear() {
         bitmaps.evictAll()
+        compositions.evictAll()
         synchronized(base64s) { base64s.clear() }
         shownConfirmations.clear()
         try {

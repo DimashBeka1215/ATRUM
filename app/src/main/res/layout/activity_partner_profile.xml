@@ -56,16 +56,33 @@
                 app:shapeAppearanceOverlay="@style/ShapeAppearance.GithubChat.Circle" />
         </FrameLayout>
 
-        <!-- Name -->
-        <TextView
-            android:id="@+id/tv_profile_name"
+        <!-- Name + shield статуса безопасности -->
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
             android:layout_marginTop="16dp"
-            android:fontFamily="sans-serif-medium"
-            android:textColor="@color/text_primary"
-            android:textSize="22sp" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+            <TextView
+                android:id="@+id/tv_profile_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="@color/text_primary"
+                android:textSize="22sp" />
+            <ImageButton
+                android:id="@+id/btn_shield_status"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:layout_marginStart="8dp"
+                android:padding="5dp"
+                android:src="@drawable/ic_shield"
+                app:tint="@color/text_primary"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:visibility="gone"
+                android:contentDescription="@string/profile_security_label" />
+        </LinearLayout>
 
         <!-- Tag -->
         <TextView
@@ -110,6 +127,136 @@
                 android:lineSpacingExtra="2dp"
                 android:textColor="@color/text_primary"
                 android:textSize="14sp" />
+        </LinearLayout>
+
+        <!-- Security section — скрыта, раскрывается по тапу на щит -->
+        <LinearLayout
+            android:id="@+id/card_security"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="24dp"
+            android:layout_marginTop="24dp"
+            android:background="@drawable/bg_glass_card"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:paddingHorizontal="18dp"
+            android:paddingVertical="14dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.12"
+                android:text="@string/profile_security_label"
+                android:textAllCaps="true"
+                android:textColor="@color/accent_light"
+                android:textSize="10sp" />
+
+            <LinearLayout
+                android:id="@+id/ll_identity_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginTop="12dp"
+                android:visibility="gone">
+                <ImageView
+                    android:id="@+id/iv_security_badge"
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:layout_marginEnd="8dp"
+                    android:src="@drawable/ic_shield_check"
+                    android:contentDescription="@null" />
+                <TextView
+                    android:id="@+id/tv_security_badge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:textSize="13sp"
+                    android:text="@string/identity_unverified" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tv_security_fingerprint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:fontFamily="monospace"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp"
+                android:text="@string/fingerprint_loading" />
+
+            <ImageView
+                android:id="@+id/iv_security_qr"
+                android:layout_width="148dp"
+                android:layout_height="148dp"
+                android:layout_marginTop="14dp"
+                android:layout_gravity="center_horizontal"
+                android:background="@drawable/bg_qr_white"
+                android:padding="8dp"
+                android:scaleType="fitCenter"
+                android:visibility="gone"
+                android:contentDescription="@string/fingerprint_description" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:fontFamily="sans-serif"
+                android:text="@string/fingerprint_description"
+                android:textColor="@color/text_tertiary"
+                android:textSize="13sp" />
+
+            <LinearLayout
+                android:id="@+id/warn_identity_changed"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/bg_error_card"
+                android:padding="12dp"
+                android:layout_marginTop="14dp"
+                android:visibility="gone">
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:src="@drawable/ic_warning"
+                    app:tint="@color/error"
+                    android:layout_marginEnd="10dp"
+                    android:layout_marginTop="1dp"
+                    android:contentDescription="@null" />
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/identity_changed_warn"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp"
+                    android:lineSpacingExtra="2dp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tv_verify_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="@string/verify_hint"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp"
+                android:lineSpacingExtra="2dp"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/btn_verify"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="12dp"
+                android:text="@string/verify_confirm_btn"
+                android:textColor="@color/white"
+                android:textSize="15sp"
+                android:fontFamily="sans-serif-medium"
+                android:textAllCaps="false"
+                android:background="@drawable/bg_button"
+                android:stateListAnimator="@null"
+                android:visibility="gone" />
         </LinearLayout>
 
         <!-- Photos section -->

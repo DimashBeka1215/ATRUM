@@ -111,6 +111,18 @@ class Prefs(context: Context) {
             else prefs.edit().putString(KEY_LOCAL_PWD_HASH, v).apply()
         }
 
+    /**
+     * Текст локального пароля (PIN) в открытом виде, если введён в текущей сессии.
+     * Используется для шифрования инвайтов.
+     *
+     * Хранится в companion (общий на весь процесс), а не в экземпляре: PIN,
+     * введённый на экране блокировки, должен быть виден в других Activity
+     * (например при шеринге приглашения). Только в памяти — на диск не пишется.
+     */
+    var localPasswordPlaintext: String?
+        get() = sharedLocalPasswordPlaintext
+        set(v) { sharedLocalPasswordPlaintext = v }
+
     var isOnboarded: Boolean
         get() = prefs.getBoolean(KEY_ONBOARDED, false)
         set(v) = prefs.edit().putBoolean(KEY_ONBOARDED, v).apply()
@@ -124,6 +136,63 @@ class Prefs(context: Context) {
     var biometricEnabled: Boolean
         get() = prefs.getBoolean(KEY_BIOMETRIC, false)
         set(v) = prefs.edit().putBoolean(KEY_BIOMETRIC, v).apply()
+
+    /** Число подряд неверных PIN. Хранится на диске — рестарт не сбрасывает троттлинг. */
+    var pinFailCount: Int
+        get() = prefs.getInt(KEY_PIN_FAIL, 0)
+        set(v) = prefs.edit().putInt(KEY_PIN_FAIL, v).apply()
+
+    /** Время (unix-мс), до которого ввод PIN заблокирован после серии ошибок. */
+    var pinLockoutUntil: Long
+        get() = prefs.getLong(KEY_PIN_LOCK_UNTIL, 0L)
+        set(v) = prefs.edit().putLong(KEY_PIN_LOCK_UNTIL, v).apply()
+
+    /**
+     * Долговременный Ed25519 identity-ключ устройства (создаётся один раз).
+     * Подписывает эфемерные ключи — защита от подмены на рукопожатии (MITM).
+     * @return (приватный ключ, публичный ключ base64).
+     */
+    fun getOrCreateIdentity(): Pair<ByteArray, String> {
+        val privB64 = prefs.getString(KEY_IDENTITY_PRIV, null)
+        val pub = prefs.getString(KEY_IDENTITY_PUB, null)
+        if (privB64 != null && pub != null) {
+            return android.util.Base64.decode(privB64, android.util.Base64.NO_WRAP) to pub
+        }
+        val (priv, pubKey) = CryptoHelper.generateIdentityKeyPair()
+        prefs.edit()
+            .putString(KEY_IDENTITY_PRIV, android.util.Base64.encodeToString(priv, android.util.Base64.NO_WRAP))
+            .putString(KEY_IDENTITY_PUB, pubKey)
+            .apply()
+        return priv to pubKey
+    }
+
+    /** Публичный identity-ключ этого устройства (base64). */
+    val myIdentityPubKey: String
+        get() = getOrCreateIdentity().second
+
+    /** TOFU: запомненный identity-ключ партнёра для чата (обнаружение подмены). */
+    fun getKnownPartnerIdentity(chatId: String): String? =
+        prefs.getString("partner_idk_$chatId", null)
+
+    fun setKnownPartnerIdentity(chatId: String, pubB64: String) {
+        prefs.edit().putString("partner_idk_$chatId", pubB64).apply()
+    }
+
+    /**
+     * identity-ключ партнёра, который пользователь ЛИЧНО подтвердил (сверил SAS/QR).
+     * Привязан к конкретному ключу: если ключ партнёра сменится — подтверждение
+     * перестаёт совпадать и сбрасывается автоматически.
+     */
+    fun getConfirmedPartnerIdentity(chatId: String): String? =
+        prefs.getString("partner_confirmed_idk_$chatId", null)
+
+    fun setConfirmedPartnerIdentity(chatId: String, pubB64: String) {
+        prefs.edit().putString("partner_confirmed_idk_$chatId", pubB64).apply()
+    }
+
+    fun clearConfirmedPartnerIdentity(chatId: String) {
+        prefs.edit().remove("partner_confirmed_idk_$chatId").apply()
+    }
 
     /**
      * Выбранная тема: "dark" | "light" | "system".
@@ -283,6 +352,8 @@ class Prefs(context: Context) {
         prefs.edit().putString(KEY_USER_ID, keepUserId).apply()
         // stablePrefs хранит только userId — не трогаем (он и так "чист")
         stablePrefs.edit().putString(KEY_USER_ID, keepUserId).apply()
+        // Затираем PIN из памяти при выходе из аккаунта.
+        sharedLocalPasswordPlaintext = null
     }
 
     private fun sha256(s: String): String {
@@ -332,7 +403,22 @@ class Prefs(context: Context) {
         get() = prefs.getInt(KEY_UI_ALPHA, 100).coerceIn(10, 100)
         set(v) = prefs.edit().putInt(KEY_UI_ALPHA, v.coerceIn(10, 100)).apply()
 
+    /**
+     * [DEBUG] Отключить FLAG_SECURE во всех Activity (для скриншотов/демо).
+     */
+    var debugDisableSecureFlags: Boolean
+        get() = prefs.getBoolean(KEY_DEBUG_DISABLE_SECURE, false)
+        set(v) = prefs.edit().putBoolean(KEY_DEBUG_DISABLE_SECURE, v).apply()
+
     companion object {
+        /**
+         * PIN в открытом виде, общий на весь процесс. Живёт только в памяти —
+         * на диск не пишется, обнуляется при логауте (clear()). Делится между
+         * всеми экземплярами Prefs, поэтому виден из любой Activity.
+         */
+        @Volatile
+        private var sharedLocalPasswordPlaintext: String? = null
+
         private const val FILE_NAME = "github_chat_secure_prefs_v2"
         /** Резервный файл для userId — plain, не зашифрован. */
         private const val STABLE_FILE = "github_chat_stable_ids"
@@ -346,6 +432,10 @@ class Prefs(context: Context) {
         private const val KEY_LOCAL_PWD_HASH = "local_pwd_hash"
         private const val KEY_ONBOARDED = "onboarded"
         private const val KEY_BIOMETRIC = "biometric_enabled"
+        private const val KEY_PIN_FAIL = "pin_fail_count"
+        private const val KEY_PIN_LOCK_UNTIL = "pin_lockout_until"
+        private const val KEY_IDENTITY_PRIV = "identity_priv"
+        private const val KEY_IDENTITY_PUB = "identity_pub"
         private const val KEY_DEFAULT_TOKEN = "default_gist_token"
         private const val KEY_NAME_HISTORY = "name_history"
         private const val KEY_EULA_ACCEPTED = "eula_accepted"
@@ -361,6 +451,7 @@ class Prefs(context: Context) {
         private const val KEY_BUBBLE_ALPHA_SELF  = "bubble_alpha_self"
         private const val KEY_BUBBLE_ALPHA_OTHER = "bubble_alpha_other"
         private const val KEY_UI_ALPHA           = "ui_alpha"
+        private const val KEY_DEBUG_DISABLE_SECURE = "debug_disable_secure"
 
         const val CHAT_UI_CLASSIC = "classic"
         const val CHAT_UI_GLASS   = "glass"
@@ -394,12 +485,12 @@ class Prefs(context: Context) {
                 // Данные теряются, но это безопаснее, чем хранить секреты без шифрования.
                 try {
                     context.deleteFile(FILE_NAME)
-                build()
-            } catch (_: Exception) {
-                // Последний шанс — незашифрованные SharedPreferences (никогда не должно доходить)
-                context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
+                    build()
+                } catch (_: Exception) {
+                    // Последний шанс — незашифрованные SharedPreferences (не должно доходить).
+                    context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
+                }
             }
         }
     }
-}
 }

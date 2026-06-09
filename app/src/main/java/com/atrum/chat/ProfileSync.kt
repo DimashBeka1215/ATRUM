@@ -127,7 +127,10 @@ object ProfileSync {
         myEphemeralPubKey: String? = null,
         myName: String = "",
         myTag: String? = null,
-        myAvatarBase64: String? = null
+        myAvatarBase64: String? = null,
+        myIdentityPubKey: String? = null,
+        myEphemeralSig: String? = null,
+        myVerifiedPartnerIdk: String? = null
     ): Boolean = profilesMutex.withLock {
         try {
             val existing = pullProfiles(api, password).toMutableMap()
@@ -139,11 +142,15 @@ object ProfileSync {
                 tag          = gist.tag ?: myTag,
                 avatarBase64 = gist.avatarBase64 ?: myAvatarBase64
             ) ?: Profile(userId = myUserId, name = myName, tag = myTag, avatarBase64 = myAvatarBase64)
-            
+
             existing[myUserId] = base.copy(
-                typingTs        = typingTs,
-                onlineTs        = onlineTs,
-                ephemeralPubKey = myEphemeralPubKey ?: base.ephemeralPubKey
+                typingTs           = typingTs,
+                onlineTs           = onlineTs,
+                ephemeralPubKey    = myEphemeralPubKey ?: base.ephemeralPubKey,
+                // identity-поля всегда заново вставляем — чтобы presence-пуш их не терял
+                identityPubKey     = myIdentityPubKey ?: base.identityPubKey,
+                ephemeralSig       = myEphemeralSig ?: base.ephemeralSig,
+                verifiedPartnerIdk = myVerifiedPartnerIdk ?: base.verifiedPartnerIdk
             )
             val json = JSONObject().apply {
                 for ((uid, p) in existing) put(uid, p.toJsonObject())
@@ -173,15 +180,23 @@ object ProfileSync {
         myUserId: String,
         typingTs: Long,
         onlineTs: Long,
-        myEphemeralPubKey: String? = null
+        myEphemeralPubKey: String? = null,
+        myIdentityPubKey: String? = null,
+        myEphemeralSig: String? = null,
+        myVerifiedPartnerIdk: String? = null
     ): Boolean {
         val myProfile = cachedProfiles[myUserId] ?: return false
         return try {
             val updated = cachedProfiles.toMutableMap()
             updated[myUserId] = myProfile.copy(
-                typingTs        = typingTs,
-                onlineTs        = onlineTs,
-                ephemeralPubKey = myEphemeralPubKey ?: myProfile.ephemeralPubKey
+                typingTs           = typingTs,
+                onlineTs           = onlineTs,
+                ephemeralPubKey    = myEphemeralPubKey ?: myProfile.ephemeralPubKey,
+                // identity-поля всегда заново вставляем — иначе write-only пуш из
+                // устаревшего кэша затирает identityPubKey, и партнёр не видит щит.
+                identityPubKey     = myIdentityPubKey ?: myProfile.identityPubKey,
+                ephemeralSig       = myEphemeralSig ?: myProfile.ephemeralSig,
+                verifiedPartnerIdk = myVerifiedPartnerIdk ?: myProfile.verifiedPartnerIdk
             )
             val json = JSONObject().apply {
                 for ((uid, p) in updated) put(uid, p.toJsonObject())

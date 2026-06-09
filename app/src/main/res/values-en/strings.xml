@@ -312,6 +312,13 @@
     <string name="join_err_empty_response">GitHub returned an empty response. Please try again.</string>
     <string name="join_err_generic_fmt">Failed to connect. %1$s</string>
 
+    <!-- Join PIN Dialog -->
+    <string name="join_pin_title">Secure Login</string>
+    <string name="join_pin_desc">This invite code is encrypted. Enter the PIN provided by the chat creator.</string>
+    <string name="join_pin_hint">PIN code</string>
+    <string name="join_err_wrong_pin">Incorrect PIN or corrupted invite.</string>
+    <string name="join_err_expired">This invite has expired. Ask for a new one.</string>
+
     <!-- Share invite -->
     <string name="invite_share_action">Share invite</string>
     <string name="invite_share_action_locked">Chat is already taken</string>
@@ -323,6 +330,14 @@
     <string name="invite_warning_title">⚠️ Before sharing</string>
     <string name="invite_warning_message">The invite code contains a GitHub token and chat password in one string.\n\nIf someone intercepts this code — they get full access to the conversation.\n\nShare the invite only through trusted private channels (e.g. in person or via an encrypted messenger).</string>
     <string name="invite_warning_confirm">Got it, share</string>
+    <string name="invite_pin_title">Invite PIN</string>
+    <string name="invite_pin_desc">Set a code for this invite. The recipient will need to enter it to join.</string>
+    <string name="invite_pin_hint">Invite code</string>
+    <string name="invite_pin_warning">Send the code to the recipient separately — not together with the link. Without it the invite can\'t be opened.</string>
+    <string name="invite_pin_share">Share</string>
+    <string name="invite_pin_regenerate">Generate a new code</string>
+    <string name="invite_pin_empty">Enter an invite code</string>
+    <string name="invite_create_failed">Couldn\'t create invite</string>
 
     <!-- Password mode -->
     <string name="cc_pwd_mode_generate">Generate</string>
@@ -460,6 +475,20 @@
     <!-- Partner profile screen -->
     <string name="profile_status_label">Status</string>
     <string name="profile_photos_label">Photos</string>
+    <string name="profile_security_label">Security</string>
+    <string name="fingerprint_loading">Loading…</string>
+    <string name="fingerprint_none">Session not established</string>
+    <string name="fingerprint_description">Verification code (SAS) against MITM. If the code or QR match for both of you, the channel is secure.</string>
+    <string name="identity_verified">Identity verified</string>
+    <string name="identity_unverified">Identity not verified</string>
+    <string name="identity_changed">Partner\'s key changed</string>
+    <string name="identity_changed_warn">The partner\'s long-term key has changed. This can happen after reinstalling the app, but it may also indicate impersonation. Verify the code or QR in person before trusting.</string>
+    <string name="verify_hint">Compare the code or QR with your contact in person, then confirm.</string>
+    <string name="verify_confirm_btn">Confirm authenticity</string>
+    <string name="verify_cancel_btn">Undo confirmation</string>
+    <string name="identity_confirmed_both">Confirmed by both</string>
+    <string name="identity_confirmed_waiting">You confirmed — waiting for your contact</string>
+    <string name="identity_not_confirmed">Not confirmed in person</string>
 
 
     <!-- Profile Banner / Header -->
@@ -485,6 +514,12 @@
 
     <string name="settings_item_stickers">Stickers</string>
     <string name="settings_section_security">SECURITY</string>
+    <string name="settings_section_debug">DEVELOPMENT &amp; TESTS</string>
+    <string name="settings_item_debug">Debug settings</string>
+    <string name="debug_disable_secure_title">Screenshot protection</string>
+    <string name="debug_disable_secure_desc">Allow screenshots everywhere (demo only)</string>
+    <string name="debug_crash_title">Force crash</string>
+    <string name="debug_crash_desc">Trigger RuntimeException to check logs</string>
     <string name="settings_item_change_pin">Change PIN</string>
     <string name="settings_item_change_pin_desc">App lock password</string>
     <string name="settings_item_biometric">Fingerprint unlock</string>
@@ -498,6 +533,8 @@
     <string name="biometric_prompt_cancel">Use PIN</string>
     <string name="lock_or">or</string>
     <string name="lock_use_fingerprint">Use fingerprint</string>
+    <string name="biometric_how_title">How fingerprint unlock works</string>
+    <string name="biometric_how_body">The fingerprint is checked by the phone\'s own system — Atrum never sees or stores it. Valid for one login: the app asks again each time you open it.</string>
     <string name="lock_use_pin">Unlock with PIN</string>
     <string name="settings_item_credits">Credits</string>
 
@@ -509,23 +546,23 @@
 
     <!-- Sticker settings -->
     <string name="sticker_settings_title">Stickers</string>
-    <string name="sticker_settings_token_section">TOKEN</string>
-    <string name="sticker_settings_token_label">GitHub token</string>
-    <string name="sticker_settings_token_hint">Enter token</string>
-    <string name="sticker_settings_token_hint_desc">Token is required to load sticker packs from Gist</string>
-    <string name="sticker_settings_token_save">Save</string>
+    <string name="sticker_settings_token_section">BOT TOKEN</string>
+    <string name="sticker_settings_token_label">Token from @BotFather</string>
+    <string name="sticker_settings_token_hint">Token from @BotFather</string>
+    <string name="sticker_settings_token_hint_desc">Required to load your packs from Telegram</string>
+    <string name="sticker_settings_token_save">SAVE</string>
     <string name="sticker_settings_token_saved">Token saved</string>
-    <string name="sticker_settings_packs_section">MY PACKS</string>
-    <string name="sticker_add_pack_title">Add pack</string>
+    <string name="sticker_settings_packs_section">MY STICKERS</string>
+    <string name="sticker_add_pack_title">Add Pack</string>
     <string name="sticker_add_pack_btn">Add</string>
     <string name="sticker_add_pack_cancel">Cancel</string>
-    <string name="sticker_add_pack_hint">Enter Gist URL</string>
+    <string name="sticker_add_pack_hint">Enter pack link</string>
     <string name="sticker_settings_delete_pack">Remove</string>
     <string name="sticker_settings_delete_title">Remove pack?</string>
     <string name="sticker_settings_delete_msg">Remove sticker pack "%1$s"?</string>
     <string name="sticker_settings_delete_confirm">Remove</string>
     <string name="sticker_settings_deleted">Pack removed</string>
-    <string name="sticker_settings_no_token">Enter GitHub token in settings first</string>
+    <string name="sticker_settings_no_token">Enter bot token in settings first</string>
 
     <plurals name="sticker_count">
         <item quantity="one">%1$d sticker</item>
@@ -541,16 +578,16 @@
     <string name="sticker_help_cd">Help</string>
     <string name="sticker_cd_button">Stickers</string>
     <string name="sticker_anim_badge">GIF</string>
-    <string name="sticker_error_invalid_link">Invalid Gist URL</string>
+    <string name="sticker_error_invalid_link">Invalid sticker pack link</string>
     <string name="sticker_error_not_found">Pack not found</string>
     <string name="sticker_error_network">Network error while loading stickers</string>
 
     <!-- Sticker onboarding -->
     <string name="sticker_onboarding_title">How to add stickers</string>
-    <string name="sticker_onboarding_step_1">Create a Gist with a sticker file on GitHub</string>
-    <string name="sticker_onboarding_step_2">Copy the Gist link</string>
-    <string name="sticker_onboarding_step_3">Paste the link into the field above</string>
-    <string name="sticker_onboarding_step_4">Tap «Add pack»</string>
+    <string name="sticker_onboarding_step_1">Find a sticker pack in Telegram</string>
+    <string name="sticker_onboarding_step_2">Copy the link (t.me/addstickers/…)</string>
+    <string name="sticker_onboarding_step_3">Paste the link or pack name above</string>
+    <string name="sticker_onboarding_step_4">Tap «Add»</string>
     <string name="sticker_onboarding_btn">Got it</string>
 
     <!-- Update screen -->

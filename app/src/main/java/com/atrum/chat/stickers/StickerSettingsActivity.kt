@@ -38,6 +38,7 @@ class StickerSettingsActivity : AppCompatActivity() {
 
         updateTokenPreview()
         binding.btnTokenContainer.setOnClickListener { showEditTokenDialog() }
+        binding.btnSaveToken.setOnClickListener { showEditTokenDialog() }
         binding.btnBack.setOnClickListener { finish() }
 
         // Add pack
@@ -176,24 +177,35 @@ class StickerSettingsActivity : AppCompatActivity() {
     }
 
     private fun downloadPack(input: String) {
-        Toast.makeText(this, getString(R.string.sticker_loading), Toast.LENGTH_SHORT).show()
+        binding.loadingContainer.visibility = View.VISIBLE
+        binding.pbDownload.progress = 0
+        
         scope.launch {
             try {
-                repository.addPack(input)
+                repository.addPack(input) { downloaded, total ->
+                    runOnUiThread {
+                        binding.pbDownload.max = total
+                        binding.pbDownload.progress = downloaded
+                    }
+                }
+                binding.loadingContainer.visibility = View.GONE
                 loadPacks()
             } catch (e: IllegalArgumentException) {
+                binding.loadingContainer.visibility = View.GONE
                 Toast.makeText(
                     this@StickerSettingsActivity,
                     getString(R.string.sticker_error_invalid_link),
                     Toast.LENGTH_SHORT
                 ).show()
             } catch (e: StickerException) {
+                binding.loadingContainer.visibility = View.GONE
                 Toast.makeText(
                     this@StickerSettingsActivity,
                     getString(R.string.sticker_error_not_found) + ": " + e.message,
                     Toast.LENGTH_LONG
                 ).show()
             } catch (_: Exception) {
+                binding.loadingContainer.visibility = View.GONE
                 Toast.makeText(
                     this@StickerSettingsActivity,
                     getString(R.string.sticker_error_network),

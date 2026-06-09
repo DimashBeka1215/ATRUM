@@ -324,6 +324,8 @@ class ChatsListActivity : SecureActivity() {
         val aliases = prefs.nameHistory
 
         for (chat in chats) {
+            if (chat.isFavorites) continue
+
             try {
                 val chatToken = prefs.getChatToken(chat.gistId)
                     .takeIf { it.isNotEmpty() }
@@ -465,18 +467,52 @@ class ChatsListActivity : SecureActivity() {
      * Перехват invite = полный доступ к переписке. Пользователь должен
      * осознанно передавать его только через доверенные каналы.
      */
+    /**
+     * Окно «PIN для приглашения». При КАЖДОМ шеринге пользователь задаёт отдельный
+     * код, которым шифруется invite (InviteCodec.encode). Код-замок приложения при
+     * этом НЕ раскрывается — у каждого приглашения свой одноразовый код, который
+     * передаётся получателю отдельным каналом.
+     */
     private fun shareInvite(chat: Chat) {
-        AlertDialog.Builder(this, R.style.Theme_GithubChat_Dialog)
-            .setTitle(R.string.invite_warning_title)
-            .setMessage(R.string.invite_warning_message)
-            .setPositiveButton(R.string.invite_warning_confirm) { _, _ ->
-                doShareInvite(chat)
+        val view = layoutInflater.inflate(R.layout.dialog_invite_pin, null)
+        val etPin = view.findViewById<android.widget.EditText>(R.id.et_invite_pin)
+        etPin.setText(generateInviteCode())
+        etPin.setSelection(etPin.text.length)
+
+        val dialog = AlertDialog.Builder(this, R.style.Theme_GithubChat_Dialog)
+            .setView(view)
+            .create()
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        view.findViewById<android.widget.ImageButton>(R.id.btn_regenerate).setOnClickListener {
+            etPin.setText(generateInviteCode())
+            etPin.setSelection(etPin.text.length)
+        }
+        view.findViewById<android.widget.Button>(R.id.btn_cancel).setOnClickListener {
+            dialog.dismiss()
+        }
+        view.findViewById<android.widget.Button>(R.id.btn_share).setOnClickListener {
+            val pin = etPin.text.toString().trim()
+            if (pin.isBlank()) {
+                android.widget.Toast.makeText(
+                    this, R.string.invite_pin_empty, android.widget.Toast.LENGTH_SHORT
+                ).show()
+                return@setOnClickListener
             }
-            .setNegativeButton(R.string.btn_cancel, null)
-            .show()
+            dialog.dismiss()
+            doShareInvite(chat, pin)
+        }
+        dialog.show()
     }
 
-    private fun doShareInvite(chat: Chat) {
+    /** Случайный код приглашения: 6 символов без неоднозначных (0/O/1/I/L). */
+    private fun generateInviteCode(): String {
+        val alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+        val rnd = java.security.SecureRandom()
+        return (1..6).map { alphabet[rnd.nextInt(alphabet.length)] }.joinToString("")
+    }
+
+    private fun doShareInvite(chat: Chat, pin: String) {
         try {
             val token = prefs.getChatToken(chat.gistId)
                 .takeIf { it.isNotEmpty() }
@@ -484,11 +520,14 @@ class ChatsListActivity : SecureActivity() {
             val password = prefs.getChatPassword(chat.gistId)
                 .takeIf { it.isNotEmpty() }
                 ?: @Suppress("DEPRECATION") chat.chatPassword
-            val invite = InviteCodec.encodeLegacy(
+
+            val invite = InviteCodec.encode(
                 gistId = chat.gistId,
                 gistToken = token,
-                chatPassword = password
+                chatPassword = password,
+                pin = pin
             )
+
             val text = getString(R.string.invite_share_text_fmt, invite)
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
@@ -498,7 +537,7 @@ class ChatsListActivity : SecureActivity() {
         } catch (e: Throwable) {
             android.widget.Toast.makeText(
                 this,
-                "Не удалось создать приглашение",
+                getString(R.string.invite_create_failed),
                 android.widget.Toast.LENGTH_SHORT
             ).show()
             e.printStackTrace()

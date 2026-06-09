@@ -317,6 +317,13 @@
     <string name="join_err_empty_response">GitHub вернул пустой ответ. Попробуйте ещё раз.</string>
     <string name="join_err_generic_fmt">Не удалось подключиться. %1$s</string>
 
+    <!-- Join PIN Dialog -->
+    <string name="join_pin_title">Защищённый вход</string>
+    <string name="join_pin_desc">Этот код приглашения зашифрован. Введите PIN-код, который вам передал создатель чата.</string>
+    <string name="join_pin_hint">PIN-код</string>
+    <string name="join_err_wrong_pin">Неверный PIN-код или повреждённое приглашение.</string>
+    <string name="join_err_expired">Срок действия приглашения истёк. Попросите создать новое.</string>
+
     <!-- Share invite -->
     <string name="invite_share_action">Поделиться приглашением</string>
     <string name="invite_share_action_locked">Чат уже занят</string>
@@ -328,6 +335,14 @@
     <string name="invite_warning_title">⚠️ Перед отправкой</string>
     <string name="invite_warning_message">Код приглашения содержит GitHub-токен и пароль чата в одной строке.\n\nЕсли кто-то перехватит этот код — он получит полный доступ к переписке.\n\nПередавай приглашение только через доверенные личные каналы (например, при личной встрече или через зашифрованный мессенджер).</string>
     <string name="invite_warning_confirm">Понятно, отправить</string>
+    <string name="invite_pin_title">PIN для приглашения</string>
+    <string name="invite_pin_desc">Придумайте код для этого приглашения. Получателю нужно будет ввести его, чтобы подключиться.</string>
+    <string name="invite_pin_hint">Код приглашения</string>
+    <string name="invite_pin_warning">Передайте код получателю отдельно — не вместе со ссылкой. Без него приглашение не открыть.</string>
+    <string name="invite_pin_share">Поделиться</string>
+    <string name="invite_pin_regenerate">Сгенерировать новый код</string>
+    <string name="invite_pin_empty">Введите код приглашения</string>
+    <string name="invite_create_failed">Не удалось создать приглашение</string>
 
     <!-- Password mode toggle + warning -->
     <string name="cc_pwd_mode_generate">Сгенерировать</string>
@@ -502,6 +517,20 @@
     <!-- Partner profile screen -->
     <string name="profile_status_label">Статус</string>
     <string name="profile_photos_label">Фото</string>
+    <string name="profile_security_label">Безопасность</string>
+    <string name="fingerprint_loading">Загрузка…</string>
+    <string name="fingerprint_none">Сессия не установлена</string>
+    <string name="fingerprint_description">Код сверки (SAS) для защиты от MITM. Если код или QR совпадают у обоих собеседников — канал защищён.</string>
+    <string name="identity_verified">Идентичность подтверждена</string>
+    <string name="identity_unverified">Идентичность не подтверждена</string>
+    <string name="identity_changed">Ключ партнёра изменился</string>
+    <string name="identity_changed_warn">Долговременный ключ собеседника изменился. Это бывает при переустановке приложения, но может означать подмену. Сверьте код или QR лично, прежде чем доверять.</string>
+    <string name="verify_hint">Сравните код или QR с собеседником лично, затем подтвердите.</string>
+    <string name="verify_confirm_btn">Подтвердить подлинность</string>
+    <string name="verify_cancel_btn">Отменить подтверждение</string>
+    <string name="identity_confirmed_both">Подлинность подтверждена обоими</string>
+    <string name="identity_confirmed_waiting">Вы подтвердили — ждём собеседника</string>
+    <string name="identity_not_confirmed">Не подтверждено лично</string>
 
 
     <!-- Profile Banner / Header -->
@@ -540,8 +569,18 @@
     <string name="biometric_prompt_cancel">Использовать PIN</string>
     <string name="lock_or">или</string>
     <string name="lock_use_fingerprint">Войти по отпечатку</string>
+    <string name="biometric_how_title">Как работает вход по отпечатку</string>
+    <string name="biometric_how_body">Отпечаток проверяет сама система телефона — Atrum его не видит и не хранит. Действует на один вход: при каждом открытии приложение спрашивает заново.</string>
     <string name="lock_use_pin">Войти по PIN</string>
     <string name="settings_item_credits">Благодарности</string>
+
+    <string name="settings_section_debug">DEVELOPMENT &amp; TESTS</string>
+    <string name="settings_item_debug">Debug settings</string>
+    <string name="debug_disable_secure_title">Screenshot protection</string>
+    <string name="debug_disable_secure_desc">Allow screenshots everywhere (demo only)</string>
+    <string name="debug_crash_title">Force crash</string>
+    <string name="debug_crash_desc">Trigger RuntimeException to check logs</string>
+    <string name="debug_restart_hint">Restart the app to apply changes</string>
 
     <!-- Change PIN screen -->
     <string name="dialog_old_pin_title">Текущий PIN-код</string>
@@ -551,23 +590,23 @@
 
     <!-- Sticker settings -->
     <string name="sticker_settings_title">Стикеры</string>
-    <string name="sticker_settings_token_section">ТОКЕН</string>
-    <string name="sticker_settings_token_label">GitHub токен</string>
-    <string name="sticker_settings_token_hint">Введите токен</string>
-    <string name="sticker_settings_token_hint_desc">Токен нужен для загрузки стикер-паков из Gist</string>
-    <string name="sticker_settings_token_save">Сохранить</string>
+    <string name="sticker_settings_token_section">ТОКЕН БОТА</string>
+    <string name="sticker_settings_token_label">Токен от @BotFather</string>
+    <string name="sticker_settings_token_hint">Токен от @BotFather</string>
+    <string name="sticker_settings_token_hint_desc">Нужен для загрузки ваших паков из Telegram</string>
+    <string name="sticker_settings_token_save">SAVE</string>
     <string name="sticker_settings_token_saved">Токен сохранен</string>
-    <string name="sticker_settings_packs_section">МОИ ПАКИ</string>
+    <string name="sticker_settings_packs_section">МОИ СТИКЕРЫ</string>
     <string name="sticker_add_pack_title">Добавить пак</string>
     <string name="sticker_add_pack_btn">Добавить</string>
     <string name="sticker_add_pack_cancel">Отмена</string>
-    <string name="sticker_add_pack_hint">Введите ссылку на Gist</string>
+    <string name="sticker_add_pack_hint">Введите ссылку на пак</string>
     <string name="sticker_settings_delete_pack">Удалить</string>
     <string name="sticker_settings_delete_title">Удалить пак?</string>
     <string name="sticker_settings_delete_msg">Удалить стикер-пак «%1$s»?</string>
     <string name="sticker_settings_delete_confirm">Удалить</string>
     <string name="sticker_settings_deleted">Пак удален</string>
-    <string name="sticker_settings_no_token">Сначала введите GitHub токен в настройках</string>
+    <string name="sticker_settings_no_token">Сначала введите токен бота в настройках</string>
 
     <plurals name="sticker_count">
         <item quantity="one">%1$d стикер</item>
@@ -585,16 +624,16 @@
     <string name="sticker_help_cd">Помощь</string>
     <string name="sticker_cd_button">Стикеры</string>
     <string name="sticker_anim_badge">GIF</string>
-    <string name="sticker_error_invalid_link">Некорректная ссылка на Gist</string>
+    <string name="sticker_error_invalid_link">Некорректная ссылка на стикер-пак</string>
     <string name="sticker_error_not_found">Пак не найден</string>
     <string name="sticker_error_network">Ошибка сети при загрузке стикеров</string>
 
     <!-- Sticker onboarding -->
     <string name="sticker_onboarding_title">Как добавить стикеры</string>
-    <string name="sticker_onboarding_step_1">Создайте Gist с файлом стикеров на GitHub</string>
-    <string name="sticker_onboarding_step_2">Скопируйте ссылку на Gist</string>
-    <string name="sticker_onboarding_step_3">Вставьте ссылку в поле выше</string>
-    <string name="sticker_onboarding_step_4">Нажмите «Добавить пак»</string>
+    <string name="sticker_onboarding_step_1">Найдите стикер-пак в Telegram</string>
+    <string name="sticker_onboarding_step_2">Скопируйте ссылку (t.me/addstickers/…)</string>
+    <string name="sticker_onboarding_step_3">Вставьте ссылку или имя пака выше</string>
+    <string name="sticker_onboarding_step_4">Нажмите «Добавить»</string>
     <string name="sticker_onboarding_btn">Понятно</string>
 
     <!-- Update screen -->

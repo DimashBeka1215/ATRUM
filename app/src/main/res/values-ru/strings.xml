@@ -3,6 +3,13 @@
     <!-- Settings sections -->
     <string name="settings_section_main">ОСНОВНОЕ</string>
     <string name="settings_section_extra">ДОПОЛНИТЕЛЬНО</string>
+    <string name="settings_section_security">БЕЗОПАСНОСТЬ</string>
+    <string name="settings_section_debug">РАЗРАБОТКА И ТЕСТЫ</string>
+    <string name="settings_item_debug">Параметры отладки</string>
+    <string name="debug_disable_secure_title">Защита от скриншотов</string>
+    <string name="debug_disable_secure_desc">Разрешить скриншоты во всём приложении (только для демо)</string>
+    <string name="debug_crash_title">Принудительный вылет</string>
+    <string name="debug_crash_desc">Вызвать RuntimeException для проверки логов</string>
     <string name="settings_section_more">ЕЩЁ</string>
     <string name="settings_item_main">Аккаунт</string>
     <string name="settings_item_personalization">Персонализация</string>
@@ -80,4 +87,54 @@
     <string name="header_safe_zone_title">Совет по кадрированию</string>
     <string name="header_safe_zone_continue">Продолжить</string>
     <string name="header_content_rules">Шапка не должна содержать откровенный контент, насилие или запрещённые материалы.</string>
+
+    <string name="settings_item_stickers">Стикеры</string>
+
+    <!-- Sticker settings -->
+    <string name="sticker_settings_title">Стикеры</string>
+    <string name="sticker_settings_token_section">ТОКЕН БОТА</string>
+    <string name="sticker_settings_token_label">Токен от @BotFather</string>
+    <string name="sticker_settings_token_hint">Токен от @BotFather</string>
+    <string name="sticker_settings_token_hint_desc">Нужен для загрузки ваших паков из Telegram</string>
+    <string name="sticker_settings_token_save">SAVE</string>
+    <string name="sticker_settings_token_saved">Токен сохранен</string>
+    <string name="sticker_settings_packs_section">МОИ СТИКЕРЫ</string>
+    <string name="sticker_add_pack_title">Добавить пак</string>
+    <string name="sticker_add_pack_btn">Добавить</string>
+    <string name="sticker_add_pack_cancel">Отмена</string>
+    <string name="sticker_add_pack_hint">Введите ссылку на пак</string>
+    <string name="sticker_settings_delete_pack">Удалить</string>
+    <string name="sticker_settings_delete_title">Удалить пак?</string>
+    <string name="sticker_settings_delete_msg">Удалить стикер-пак «%1$s»?</string>
+    <string name="sticker_settings_delete_confirm">Удалить</string>
+    <string name="sticker_settings_deleted">Пак удален</string>
+    <string name="sticker_settings_no_token">Сначала введите токен бота в настройках</string>
+
+    <plurals name="sticker_count">
+        <item quantity="one">%1$d стикер</item>
+        <item quantity="few">%1$d стикера</item>
+        <item quantity="many">%1$d стикеров</item>
+        <item quantity="other">%1$d стикеров</item>
+    </plurals>
+
+    <!-- Sticker panel -->
+    <string name="sticker_empty_title">Стикеров пока нет</string>
+    <string name="sticker_empty_hint">Добавьте стикер-пак в настройках</string>
+    <string name="sticker_loading">Загрузка…</string>
+    <string name="sticker_pack_label_default">Стикеры</string>
+    <string name="sticker_add_pack_cd">Добавить пак</string>
+    <string name="sticker_help_cd">Помощь</string>
+    <string name="sticker_cd_button">Стикеры</string>
+    <string name="sticker_anim_badge">GIF</string>
+    <string name="sticker_error_invalid_link">Некорректная ссылка на стикер-пак</string>
+    <string name="sticker_error_not_found">Пак не найден</string>
+    <string name="sticker_error_network">Ошибка сети при загрузке стикеров</string>
+
+    <!-- Sticker onboarding -->
+    <string name="sticker_onboarding_title">Как добавить стикеры</string>
+    <string name="sticker_onboarding_step_1">Найдите стикер-пак в Telegram</string>
+    <string name="sticker_onboarding_step_2">Скопируйте ссылку (t.me/addstickers/…)</string>
+    <string name="sticker_onboarding_step_3">Вставьте ссылку или имя пака выше</string>
+    <string name="sticker_onboarding_step_4">Нажмите «Добавить»</string>
+    <string name="sticker_onboarding_btn">Понятно</string>
 </resources>

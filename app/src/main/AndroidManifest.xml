@@ -148,6 +148,11 @@
             android:exported="false" />
 
         <activity
+            android:name=".stickers.StickerSettingsActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name=".UpdateActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />

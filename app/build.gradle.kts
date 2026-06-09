@@ -39,8 +39,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 5
-        versionName = "2.1.0"
+        versionCode = 31
+        versionName = "2.6.5"
 
         // Включаем multidex чтобы не упереться в лимит 65k методов
         // когда много AndroidX/Material/Room/uCrop/browser библиотек
@@ -153,6 +153,9 @@ dependencies {
 
     // Lottie — анимации и стикеры
     implementation("com.airbnb.android:lottie:6.3.0")
+
+    // ZXing — генерация QR-кода сверки (SAS) для защиты от MITM.
+    implementation("com.google.zxing:core:3.5.3")
 
     // Biometric — системный отпечаток (BiometricPrompt). Биометрия НЕ хранится
     // в приложении: запрос идёт в системную подсистему телефона (на Samsung — Knox/TEE).

@@ -1,6 +1,7 @@
 package com.atrum.chat
 
 import com.atrum.chat.transport.GistTransport
+import com.atrum.chat.stickers.StickerSettingsActivity
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
@@ -78,6 +79,10 @@ class SettingsActivity : SecureActivity() {
             }
         }
 
+        binding.itemStickers.setOnClickListener {
+            startActivity(Intent(this, StickerSettingsActivity::class.java))
+        }
+
         binding.itemVersion.setOnClickListener {
             UpdateActivity.startForCheck(this, forceRefresh = true)
         }
@@ -90,6 +95,7 @@ class SettingsActivity : SecureActivity() {
         binding.btnLogout.setOnClickListener { confirmLogout() }
 
         setupVersionRow()
+        setupDebugSection()
         setupParallax()
     }
 
@@ -190,6 +196,20 @@ class SettingsActivity : SecureActivity() {
     }
 
     // ── Строка версии + проверка обновлений ──────────────────────────────────
+
+    private fun setupDebugSection() {
+        binding.switchDebugSecure.isChecked = prefs.debugDisableSecureFlags
+        binding.itemDebugSecure.setOnClickListener {
+            val newState = !binding.switchDebugSecure.isChecked
+            binding.switchDebugSecure.isChecked = newState
+            prefs.debugDisableSecureFlags = newState
+            Toast.makeText(this, R.string.debug_restart_hint, Toast.LENGTH_SHORT).show()
+        }
+
+        binding.itemDebugCrash.setOnClickListener {
+            throw RuntimeException("Test Crash from Settings")
+        }
+    }
 
     /** Последний известный релиз — сохраняем чтобы показать диалог по клику. */
     private var latestRelease: ForceUpdateChecker.ReleaseInfo? = null
@@ -546,23 +566,12 @@ class SettingsActivity : SecureActivity() {
         val a130 = (130 shl 24) or rgb
         val a210 = (210 shl 24) or rgb
 
-        // 9 stops for maximum smoothness: 0% to ~45% is transparent, then aggressive but smooth fade
-        val gradient = GradientDrawable(
-            GradientDrawable.Orientation.TOP_BOTTOM,
-            intArrayOf(a0, a0, a0, a0, a15, a60, a130, a210, bgColor)
+        // 9 stops for maximum smoothness: прозрачный → сплошной фон страницы
+        val colors = intArrayOf(a0, a0, a15, a60, a130, a210, bgColor, bgColor, bgColor)
+        val gradient = android.graphics.drawable.GradientDrawable(
+            android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+            colors
         )
         binding.vBannerGradient.background = gradient
     }
-
-    /** Плавное появление баннера (и оверлея затемнения). */
-    private fun animateBannerIn() {
-        binding.ivBanner.alpha = 0f
-        binding.vBannerDimOverlay.alpha = 0f
-        binding.vBannerGradient.alpha = 0f
-        
-        binding.ivBanner.animate().alpha(1f).setDuration(300).start()
-        binding.vBannerDimOverlay.animate().alpha(1f).setDuration(300).start()
-        binding.vBannerGradient.animate().alpha(1f).setDuration(300).start()
-    }
-
 }

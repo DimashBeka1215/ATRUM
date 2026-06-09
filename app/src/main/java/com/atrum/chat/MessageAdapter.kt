@@ -14,12 +14,15 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.imageview.ShapeableImageView
 import com.airbnb.lottie.LottieAnimationView
 import com.airbnb.lottie.LottieCompositionFactory
+import com.airbnb.lottie.RenderMode
 import java.io.ByteArrayInputStream
 import java.util.zip.GZIPInputStream
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -392,34 +395,40 @@ class MessageAdapter(
                 else -> textView
             }
 
-            // ── Glass mode: swap bubble background ────────────────────────────
-            // Стикеры отображаются без пузырька (как в Telegram)
+            // ── Glass mode & Sticker Style ────────────────────────────────────
             if (msg.isSticker) {
+                // Нативный вид Telegram: убираем всё лишнее, оставляем только сам стикер
                 bubbleContainer?.background = null
                 bubbleContainer?.setPadding(0, 0, 0, 0)
                 bubbleContainer?.elevation = 0f
                 bubbleContainer?.alpha = 1f
-            } else {
-            bubbleContainer?.let { bubble ->
-                val ctx = itemView.context
-                if (glassMode) {
-                    val drawableRes = if (msg.isSelf) R.drawable.bg_glass_msg_self
-                                      else            R.drawable.bg_glass_msg_other
-                    bubble.background = ContextCompat.getDrawable(ctx, drawableRes)
-                    // "Other" bubbles: force white text so it's readable on any wallpaper
-                    if (!msg.isSelf) textView.setTextColor(Color.WHITE)
-                } else {
-                    val drawableRes = if (msg.isSelf) R.drawable.bg_message_self
-                                      else            R.drawable.bg_message_other
-                    bubble.background = ContextCompat.getDrawable(ctx, drawableRes)
-                    if (!msg.isSelf) textView.setTextColor(
-                        ContextCompat.getColor(ctx, R.color.text_primary)
-                    )
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    bubbleContainer?.outlineSpotShadowColor = android.graphics.Color.TRANSPARENT
                 }
-                // Применяем пользовательскую непрозрачность пузырька
-                bubble.alpha = if (msg.isSelf) bubbleAlphaSelf else bubbleAlphaOther
+            } else {
+                bubbleContainer?.let { bubble ->
+                    val ctx = itemView.context
+                    val density = ctx.resources.displayMetrics.density
+                    // Возвращаем стандартные паддинги (14dp horiz, 8dp top, 6dp bot)
+                    bubble.setPadding((14 * density).toInt(), (8 * density).toInt(), (14 * density).toInt(), (6 * density).toInt())
+                    
+                    if (glassMode) {
+                        val drawableRes = if (msg.isSelf) R.drawable.bg_glass_msg_self
+                                          else            R.drawable.bg_glass_msg_other
+                        bubble.background = ContextCompat.getDrawable(ctx, drawableRes)
+                        if (!msg.isSelf) textView.setTextColor(Color.WHITE)
+                    } else {
+                        val drawableRes = if (msg.isSelf) R.drawable.bg_message_self
+                                          else            R.drawable.bg_message_other
+                        bubble.background = ContextCompat.getDrawable(ctx, drawableRes)
+                        if (!msg.isSelf) textView.setTextColor(
+                            ContextCompat.getColor(ctx, R.color.text_primary)
+                        )
+                    }
+                    bubble.alpha = if (msg.isSelf) bubbleAlphaSelf else bubbleAlphaOther
+                }
             }
-            } // end sticker else
+
 
             // ── Selection highlight ───────────────────────────────────────────
             when {
@@ -510,8 +519,8 @@ class MessageAdapter(
          * (данные готовы). Пока изображение загружается (спиннер виден), клик игнорируется.
          */
         /**
-         * Загружает TGS-стикер и проигрывает его через LottieAnimationView.
-         * TGS = gzip(Lottie JSON), хранится в gist как base64.
+         * Загружает стикер (STATIC .webp, ANIMATED .tgs или VIDEO .webm) и отображает его.
+         * STATIC отображается как Bitmap, ANIMATED через Lottie, VIDEO как первый кадр (Bitmap).
          */
         private fun bindSticker(msg: Message, lottie: LottieAnimationView) {
             val fileName = msg.imageFileName ?: return
@@ -520,31 +529,90 @@ class MessageAdapter(
             lottie.isFocusable = false
             lottie.tag = fileName
             lottie.cancelAnimation()
-            lottie.setImageDrawable(null)
+            
+            // Сразу ставим превью из кеша если есть, чтобы не было пустоты
+            val cachedBmp = ImageCache.getBitmap(fileName)
+            if (cachedBmp != null) {
+                lottie.setImageBitmap(cachedBmp)
+            } else {
+                lottie.setImageDrawable(null)
+            }
 
             val loader = getImageLoader() ?: return
             val scope = loadScope ?: return
             scope.launch {
-                // Берём base64 из кэша или скачиваем
-                val base64 = ImageCache.getBase64(fileName)
-                    ?: loader.loadBase64(fileName)
-                    ?: run { lottie.visibility = View.GONE; return@launch }
-
-                if (lottie.tag != fileName) return@launch
-
-                val comp = withContext(Dispatchers.IO) {
-                    try {
-                        val bytes = android.util.Base64.decode(base64, android.util.Base64.NO_WRAP)
-                        val json = GZIPInputStream(ByteArrayInputStream(bytes)).bufferedReader().readText()
-                        LottieCompositionFactory.fromJsonStringSync(json, fileName)?.value
-                    } catch (_: Exception) { null }
+                val isTgs = fileName.endsWith(".tgs", ignoreCase = true)
+                
+                if (isTgs) {
+                    val cachedComp = ImageCache.getComposition(fileName)
+                    if (cachedComp != null) {
+                        if (lottie.tag == fileName) {
+                            lottie.setComposition(cachedComp)
+                            lottie.repeatCount = com.airbnb.lottie.LottieDrawable.INFINITE
+                            lottie.playAnimation()
+                        }
+                        return@launch
+                    }
                 }
 
+                val base64 = ImageCache.getBase64(fileName)
+                    ?: loader.loadBase64(fileName)
+                    ?: run { if (lottie.tag == fileName) lottie.visibility = View.GONE; return@launch }
+
                 if (lottie.tag != fileName) return@launch
-                if (comp == null) { lottie.visibility = View.GONE; return@launch }
-                lottie.setComposition(comp)
-                lottie.repeatCount = com.airbnb.lottie.LottieDrawable.INFINITE
-                lottie.playAnimation()
+
+                if (isTgs) {
+                    val comp = withContext(Dispatchers.IO) {
+                        try {
+                            val bytes = android.util.Base64.decode(base64, android.util.Base64.NO_WRAP)
+                            val gzis = GZIPInputStream(ByteArrayInputStream(bytes))
+                            val jsonString = gzis.bufferedReader().use { it.readText() }
+                            LottieCompositionFactory.fromJsonStringSync(jsonString, fileName).value
+                        } catch (e: Exception) { 
+                            android.util.Log.e("MessageAdapter", "Lottie error: ${e.message}")
+                            null 
+                        }
+                    }
+                    if (lottie.tag == fileName && comp != null) {
+                        ImageCache.putComposition(fileName, comp)
+                        lottie.setComposition(comp)
+                        lottie.repeatCount = com.airbnb.lottie.LottieDrawable.INFINITE
+                        lottie.setRenderMode(RenderMode.HARDWARE)
+                        lottie.setSafeMode(false)
+                        lottie.playAnimation()
+                    } else if (lottie.tag == fileName && cachedBmp == null) {
+                        lottie.visibility = View.GONE
+                    }
+                } else if (fileName.endsWith(".webm", ignoreCase = true)) {
+                    // VIDEO sticker: show first frame as preview
+                    val bitmap = cachedBmp ?: withContext(Dispatchers.IO) {
+                        try {
+                            val bytes = android.util.Base64.decode(base64, android.util.Base64.NO_WRAP)
+                            // It's already the frame if we saved it as such, 
+                            // but if it's the raw webm, we'd need a temp file and MediaMetadataRetriever.
+                            // Assuming for now it's pre-rendered frame if it comes from the same base64 path.
+                            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        } catch (_: Exception) { null }
+                    }
+                    if (lottie.tag == fileName && bitmap != null) {
+                        lottie.setImageBitmap(bitmap)
+                    } else if (lottie.tag == fileName) {
+                        lottie.visibility = View.GONE
+                    }
+                } else {
+                    // STATIC (.webp)
+                    val bitmap = cachedBmp ?: withContext(Dispatchers.IO) {
+                        try {
+                            val bytes = android.util.Base64.decode(base64, android.util.Base64.NO_WRAP)
+                            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        } catch (_: Exception) { null }
+                    }
+                    if (lottie.tag == fileName && bitmap != null) {
+                        lottie.setImageBitmap(bitmap)
+                    } else if (lottie.tag == fileName) {
+                        lottie.visibility = View.GONE
+                    }
+                }
             }
         }
 

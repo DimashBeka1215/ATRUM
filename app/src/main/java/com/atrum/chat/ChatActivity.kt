@@ -23,6 +23,7 @@ import com.atrum.chat.transport.ChatTransport
 import com.atrum.chat.transport.TransportFactory
 import android.text.Editable
 import android.text.TextWatcher
+import com.atrum.chat.stickers.StickerPanelController
 import android.view.animation.DecelerateInterpolator
 import androidx.core.content.ContextCompat
 import android.content.res.Configuration
@@ -89,6 +90,10 @@ class ChatActivity : SecureActivity() {
 
     /** false до момента первой успешной загрузки сообщений. */
     private var firstLoadComplete = false
+    // Гейт показа чата: держим loading overlay пока не установится сессия (или таймаут).
+    private var contentLoaded = false
+    private var handshakeSettled = false
+    private val handshakeRevealTimeoutMs = 10_000L
 
     /**
      * Счётчик последовательных ошибок одного типа.
@@ -167,6 +172,8 @@ class ChatActivity : SecureActivity() {
      * вычислить ECDH-общий секрет и установить сессионный ключ.
      */
     private var myCurrentEphemeralPubKey: String? = null
+    /** Ed25519-подпись нашего эфемерного ключа (identity). Публикуется в профиле. */
+    private var myEphemeralSig: String? = null
 
     /**
      * ephemeralPubKey последнего известного профиля партнёра.
@@ -207,12 +214,14 @@ class ChatActivity : SecureActivity() {
      */
     private val lastKnownProfiles = mutableMapOf<String, Profile>()
 
-    /**
-     * Хеш последнего полученного содержимого profiles.txt.
+    /** Хеш последнего полученного содержимого profiles.txt.
      * Позволяет пропустить парсинг если файл не изменился с прошлого polling-тика.
      * Снижает CPU-нагрузку при частом опросе (профили меняются только при presence-пуше).
      */
     private var lastProfilesHash: Int = 0
+
+    /** Контроллер панели стикеров. */
+    private var stickerPanel: StickerPanelController? = null
 
 
     /** Pick: выбор одного или нескольких изображений из галереи (макс. 10). */
@@ -284,12 +293,17 @@ class ChatActivity : SecureActivity() {
                 db.chatDao().updateMyEphemeralKeys(chat.id,
                     Base64.encodeToString(privKey, Base64.NO_WRAP), pubKeyB64)
             }
+            // Подписываем свой эфемерный ключ долговременным identity-ключом (защита от MITM).
+            myEphemeralSig = computeEphemeralSig(myCurrentEphemeralPubKey, chat.gistId)
 
             // Если в БД уже был ключ партнёра — сразу устанавливаем сессионный ключ,
             // чтобы первое же loadMessages() расшифровало V3-сообщения.
             if (chat.partnerEphemeralPubKeyB64 != null) {
                 tryEstablishSessionKey(chat.partnerEphemeralPubKeyB64)
             }
+            // Держим overlay до завершения рукопожатия (с таймаутом) — чтобы при входе
+            // в чат сессия и проверка идентичности уже были готовы.
+            startHandshakeGate()
             // Первая загрузка — silent: gist может быть только что создан,
             // первая попытка может выдать "файл не найден" — это норм, polling попробует ещё.
             loadMessages(silent = true)
@@ -379,7 +393,10 @@ class ChatActivity : SecureActivity() {
         }
 
         // Устанавливаем сессионный ключ если партнёр опубликовал свой ephemeral pub key
-        if (partner != null) tryEstablishSessionKey(partner.ephemeralPubKey)
+        if (partner != null) {
+            tryEstablishSessionKey(partner.ephemeralPubKey)
+            verifyPartnerIdentity(partner)
+        }
 
         // Пушим свой профиль (свежие данные из Settings).
         // ephemeralPubKey включаем чтобы партнёр мог вычислить ECDH и начать V3-шифрование.
@@ -391,6 +408,9 @@ class ChatActivity : SecureActivity() {
             avatarBase64 = prefs.myAvatarBase64,
             onlineTs = if (isInForeground) System.currentTimeMillis() else 0L,
             ephemeralPubKey = myCurrentEphemeralPubKey,
+            identityPubKey = prefs.myIdentityPubKey,
+            ephemeralSig = myEphemeralSig,
+            verifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.gistId),
             status = prefs.myStatus.takeIf { it.isNotBlank() }
         )
         ProfileSync.pushMyProfile(transport, chat.chatPassword, myProfile)
@@ -475,6 +495,10 @@ class ChatActivity : SecureActivity() {
             putExtra(PartnerProfileActivity.EXTRA_GIST_ID, chat.gistId)
             putExtra(PartnerProfileActivity.EXTRA_GIST_TOKEN, chat.gistToken)
             putExtra(PartnerProfileActivity.EXTRA_CHAT_PASSWORD, chat.chatPassword)
+            putExtra(PartnerProfileActivity.EXTRA_IDENTITY_PUB, partner?.identityPubKey)
+            putExtra(PartnerProfileActivity.EXTRA_EPH_PUB, partner?.ephemeralPubKey)
+            putExtra(PartnerProfileActivity.EXTRA_EPH_SIG, partner?.ephemeralSig)
+            putExtra(PartnerProfileActivity.EXTRA_VERIFIED_PARTNER_IDK, partner?.verifiedPartnerIdk)
             putStringArrayListExtra(PartnerProfileActivity.EXTRA_IMAGE_REFS, ArrayList(refs))
         }
         startActivity(intent)
@@ -692,6 +716,21 @@ class ChatActivity : SecureActivity() {
         binding.btnSend.setOnClickListener { sendMessage() }
         binding.btnAttach.setOnClickListener { pickImages.launch("image/*") }
         binding.btnCancelReply.setOnClickListener { clearReply() }
+
+        // ── Sticker panel ────────────────────────────────────────────────────
+        stickerPanel = StickerPanelController(
+            context = this,
+            chatBinding = binding,
+            prefs = prefs,
+            scope = lifecycleScope,
+            onStickerSelected = { sticker ->
+                sendSticker(sticker)
+            }
+        ).also { it.init() }
+
+        binding.btnSticker.setOnClickListener {
+            stickerPanel?.togglePanel()
+        }
 
         binding.etMessage.setOnEditorActionListener { _, _, _ ->
             sendMessage()
@@ -921,6 +960,9 @@ class ChatActivity : SecureActivity() {
             val capturedName       = prefs.myName
             val capturedAvatar     = prefs.myAvatarBase64
             val capturedEphKey     = myCurrentEphemeralPubKey
+            val capturedIdentity   = prefs.myIdentityPubKey
+            val capturedSig        = myEphemeralSig
+            val capturedConfirmed  = prefs.getConfirmedPartnerIdentity(chat.gistId)
             AppScope.launch {
                 try {
                     ProfileSync.pushPresence(
@@ -931,7 +973,10 @@ class ChatActivity : SecureActivity() {
                         onlineTs          = 0L,
                         myEphemeralPubKey = capturedEphKey,
                         myName            = capturedName,
-                        myAvatarBase64    = capturedAvatar
+                        myAvatarBase64    = capturedAvatar,
+                        myIdentityPubKey     = capturedIdentity,
+                        myEphemeralSig       = capturedSig,
+                        myVerifiedPartnerIdk = capturedConfirmed
                     )
                 } catch (_: Exception) {}
             }
@@ -982,6 +1027,7 @@ class ChatActivity : SecureActivity() {
 
         // Проверяем появился ли у партнёра новый ephemeral pub key — если да, устанавливаем V3
         tryEstablishSessionKey(partner.ephemeralPubKey)
+        verifyPartnerIdentity(partner)
 
         // Синхронизируем имя и аватарку партнёра при каждом опросе профилей.
         // Ранее это делалось только в syncProfiles() (один раз при открытии чата).
@@ -1060,6 +1106,7 @@ class ChatActivity : SecureActivity() {
 
         // Обновляем V3-сессионный ключ если партнёр опубликовал новый ephemeral ключ
         tryEstablishSessionKey(partner.ephemeralPubKey)
+        verifyPartnerIdentity(partner)
 
         // Обновляем имя/аватар партнёра
         if (partner.name.isNotBlank() &&
@@ -1160,12 +1207,14 @@ class ChatActivity : SecureActivity() {
         val reactionsRaw = data.reactionsContent
         if (reactionsRaw != lastReactionsRaw) {
             lastReactionsRaw = reactionsRaw
-            // Расшифровываем реакции (V4/Argon2id). Fallback на сырой текст для
-            // backward-compat со старыми plaintext reactions.txt.
-            val decryptedReactions = if (reactionsRaw.isBlank()) reactionsRaw
-            else CryptoHelper.decrypt(reactionsRaw, chat.chatPassword, chat.gistId) ?: reactionsRaw
-            lastReactionsContent = decryptedReactions
-            currentReactions = parseReactions(decryptedReactions)
+            // Расшифровываем и парсим реакции в фоновом потоке (V4/Argon2id тяжелый)
+            val parsedReactions = withContext(Dispatchers.Default) {
+                val decrypted = if (reactionsRaw.isBlank()) reactionsRaw
+                else CryptoHelper.decrypt(reactionsRaw, chat.chatPassword, chat.gistId) ?: reactionsRaw
+                parseReactions(decrypted)
+            }
+            currentReactions = parsedReactions
+            lastReactionsContent = "" // Больше не нужно хранить сырую дешифрованную строку здесь
         }
         withContext(Dispatchers.Main) {
             adapter.setReactions(currentReactions, prefs.myUserId)
@@ -1174,7 +1223,13 @@ class ChatActivity : SecureActivity() {
         // ETag content dedup: пропускаем парсинг сообщений если chat.txt не изменился
         // и read receipt уже был отправлен. lastPushedReadIndex = -1 форсирует
         // обработку даже при совпадении контента (первый запуск, onResume).
-        if (chatContent == lastContent && lastPushedReadIndex != -1) return
+        if (chatContent == lastContent && lastPushedReadIndex != -1) {
+            // Даже если контент не изменился (в т.ч. пустой чат при первой загрузке) —
+            // снимаем загрузочный оверлей, иначе спиннер крутится бесконечно.
+            contentLoaded = true
+            maybeReveal()
+            return
+        }
         hideChatWarning()
         consecutiveFailures = 0
         lastContent = chatContent
@@ -1218,11 +1273,9 @@ class ChatActivity : SecureActivity() {
             if (activeWarning == WarningType.FORWARD_SECRECY) hideChatWarning()
         }
 
-        // Первая загрузка: анимация overlay → messages
-        if (!firstLoadComplete) {
-            firstLoadComplete = true
-            revealMessages()
-        }
+        // Первая загрузка: показываем чат только когда рукопожатие готово (или таймаут).
+        contentLoaded = true
+        maybeReveal()
 
         // ── КЛЮЧЕВОЕ: stable reconciliation через ChatStore ───────────────────
         // reconcile() сохраняет pending-сообщения, убирает tombstones.
@@ -1308,6 +1361,103 @@ class ChatActivity : SecureActivity() {
         }
     }
 
+    private fun sendSticker(sticker: com.atrum.chat.stickers.Sticker) {
+        if (sendManager.isPunished()) return
+        val now = System.currentTimeMillis()
+        
+        // Генерируем правильное имя файла с расширением (tgs/webp/webm), чтобы MessageAdapter понял тип
+        val ext = when (sticker.type) {
+            com.atrum.chat.stickers.StickerType.ANIMATED -> ".tgs"
+            com.atrum.chat.stickers.StickerType.VIDEO -> ".webm"
+            else -> ".webp"
+        }
+        val stickerFileName = Message.newStickerFileName().removeSuffix(".txt") + ext
+
+        lifecycleScope.launch {
+            try {
+                // 1. Подготовка метаданных (текстовое сообщение с именем файла стикера)
+                val plaintext = Message.composePlaintext(
+                    senderName = prefs.myName,
+                    senderUserId = prefs.myUserId,
+                    text = "",
+                    imageFileName = stickerFileName,
+                    timestampMs = now
+                )
+                val encryptedMessage = withContext(Dispatchers.Default) {
+                    CryptoHelper.encrypt(plaintext, chat.chatPassword, transport.chatId)
+                }
+
+                val stickerFile = sticker.localPath?.let { java.io.File(it) }
+                if (stickerFile == null || !stickerFile.exists()) {
+                    throw RuntimeException("Sticker file not found")
+                }
+
+                // 2. Оптимистичное добавление в UI
+                val pendingMsg = Message(
+                    sender = prefs.myName,
+                    text = "",
+                    isSelf = true,
+                    rawEncrypted = encryptedMessage,
+                    timestampMs = now,
+                    imageFileName = stickerFileName,
+                    senderUserId = prefs.myUserId,
+                    isPending = true
+                )
+
+                // 3. Подготовка данных для отправки и кеша (одним проходом)
+                val (encryptedMessageFinal, extraFilesFinal) = withContext(Dispatchers.Default) {
+                    val bytes = stickerFile.readBytes()
+                    val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                    
+                    // Обновляем кеш ДО отправки, чтобы UI сразу подхватил
+                    if (ext == ".tgs") {
+                        try {
+                            val gzis = java.util.zip.GZIPInputStream(java.io.ByteArrayInputStream(bytes))
+                            val jsonString = gzis.bufferedReader().use { it.readText() }
+                            val comp = com.airbnb.lottie.LottieCompositionFactory.fromJsonStringSync(jsonString, stickerFileName).value
+                            if (comp != null) ImageCache.putComposition(stickerFileName, comp)
+                        } catch (_: Exception) {}
+                    }
+                    
+                    // Рендерим превью (если нет в кеше) для мгновенного показа
+                    if (ImageCache.getBitmap(stickerFileName) == null) {
+                        val preview = com.atrum.chat.stickers.StickerRepository(this@ChatActivity).renderFirstFrame(sticker)
+                        ImageCache.put(stickerFileName, b64, preview)
+                    }
+                    ImageCache.markShownConfirmation(stickerFileName)
+
+                    val encryptedSticker = CryptoHelper.encrypt(b64, chat.chatPassword, transport.chatId)
+                    val encHeader = CryptoHelper.encrypt(plaintext, chat.chatPassword, transport.chatId)
+                    
+                    encHeader to mapOf(stickerFileName to encryptedSticker)
+                }
+
+                chatStore.addOptimistic(pendingMsg)
+                stickerPanel?.hidePanel()
+
+                // 4. Отправка ОДНИМ запросом (Batch PATCH)
+                withContext(Dispatchers.IO) {
+                    transport.appendLine(
+                        encryptedLine = encryptedMessageFinal,
+                        extraFiles = extraFilesFinal
+                    )
+                }
+
+                // Cache-bust и синхронизация
+                (transport as? com.atrum.chat.transport.GistTransport)?.resetEtag()
+                chatStore.confirmSent(encryptedMessage) // Сразу подтверждаем отправку в ChatStore
+                syncEngine.forceSync(delayMs = 0L)
+                stopTypingSignal()
+
+            } catch (e: Exception) {
+                val reason = e.message?.take(120) ?: "unknown"
+                android.widget.Toast.makeText(this@ChatActivity,
+                    getString(R.string.error_send) + "\n" + reason,
+                    android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     private fun sendMessage() {
         val text = binding.etMessage.text.toString().trim()
         if (text.isEmpty()) return
@@ -1318,43 +1468,47 @@ class ChatActivity : SecureActivity() {
         val now = System.currentTimeMillis()
         val reply = replyingTo
 
-        val plaintext = Message.composePlaintext(
-            senderName = prefs.myName,
-            senderUserId = prefs.myUserId,
-            text = text,
-            quotedSender = reply?.sender,
-            quotedText = reply?.text,
-            timestampMs = now
-        )
-        val encrypted = CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.gistId)
+        lifecycleScope.launch {
+            val plaintext = Message.composePlaintext(
+                senderName = prefs.myName,
+                senderUserId = prefs.myUserId,
+                text = text,
+                quotedSender = reply?.sender,
+                quotedText = reply?.text,
+                timestampMs = now
+            )
+            val encrypted = withContext(Dispatchers.Default) {
+                CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.gistId)
+            }
 
-        val pendingMsg = Message(
-            sender = prefs.myName,
-            text = text,
-            isSelf = true,
-            rawEncrypted = encrypted,
-            timestampMs = now,
-            quotedSender = reply?.sender,
-            quotedText = reply?.text,
-            senderUserId = prefs.myUserId,
-            isPending = true
-        )
+            val pendingMsg = Message(
+                sender = prefs.myName,
+                text = text,
+                isSelf = true,
+                rawEncrypted = encrypted,
+                timestampMs = now,
+                quotedSender = reply?.sender,
+                quotedText = reply?.text,
+                senderUserId = prefs.myUserId,
+                isPending = true
+            )
 
-        val item = MessageSendManager.QueueItem(
-            text = text,
-            encrypted = encrypted,
-            pendingMsg = pendingMsg
-        )
+            val item = MessageSendManager.QueueItem(
+                text = text,
+                encrypted = encrypted,
+                pendingMsg = pendingMsg
+            )
 
-        val accepted = sendManager.tryEnqueue(item)
-        if (accepted) {
-            // Мгновенный optimistic UI — сообщение появляется без ожидания сервера
-            chatStore.addOptimistic(pendingMsg)
-            // Очищаем поле, onQueueChanged обновит адаптер
-            binding.etMessage.setText("")
-            clearReply()
-            // Сообщение ушло — больше не «печатаем»
-            stopTypingSignal()
+            val accepted = sendManager.tryEnqueue(item)
+            if (accepted) {
+                // Мгновенный optimistic UI — сообщение появляется без ожидания сервера
+                chatStore.addOptimistic(pendingMsg)
+                // Очищаем поле, onQueueChanged обновит адаптер
+                binding.etMessage.setText("")
+                clearReply()
+                // Сообщение ушло — больше не «печатаем»
+                stopTypingSignal()
+            }
         }
         // Если отклонено (очередь полна) — текст остаётся в поле, пользователь видит отказ
     }
@@ -1395,6 +1549,54 @@ class ChatActivity : SecureActivity() {
      *
      * После setSessionKey() все новые encrypt() автоматически используют V3 (forward secrecy).
      */
+    /**
+     * Проверяет identity партнёра (пункт 7, аддитивно — НЕ блокирует сессию).
+     * Сверяет подпись эфемерного ключа и сравнивает identity-ключ с запомненным (TOFU).
+     */
+    private fun verifyPartnerIdentity(partner: Profile) {
+        val idk = partner.identityPubKey
+        val sig = partner.ephemeralSig
+        val eph = partner.ephemeralPubKey
+        // Партнёр опубликовал, что лично подтвердил НАШ identity-ключ?
+        val partnerVerifiedMe = partner.verifiedPartnerIdk != null &&
+            partner.verifiedPartnerIdk == prefs.myIdentityPubKey
+
+        if (idk == null || sig == null || eph == null) {
+            IdentityState.set(chat.gistId, IdentityState.Info(IdentityState.State.UNVERIFIED, idk, partnerVerifiedMe))
+            return
+        }
+        val data = Base64.decode(eph, Base64.NO_WRAP) + chat.gistId.toByteArray(Charsets.UTF_8)
+        if (!CryptoHelper.verifyIdentitySignature(idk, data, sig)) {
+            IdentityState.set(chat.gistId, IdentityState.Info(IdentityState.State.UNVERIFIED, idk, partnerVerifiedMe))
+            return
+        }
+        val known = prefs.getKnownPartnerIdentity(chat.gistId)
+        val state = when (known) {
+            null -> {
+                prefs.setKnownPartnerIdentity(chat.gistId, idk)   // trust on first use
+                IdentityState.State.VERIFIED
+            }
+            idk -> IdentityState.State.VERIFIED
+            else -> IdentityState.State.CHANGED
+        }
+        IdentityState.set(chat.gistId, IdentityState.Info(state, idk, partnerVerifiedMe))
+    }
+
+    /**
+     * Подписывает эфемерный ключ долговременным Ed25519 identity-ключом.
+     * Данные подписи: ephPubBytes ‖ chatId (привязка к чату от replay).
+     */
+    private fun computeEphemeralSig(ephPubB64: String?, chatId: String): String? {
+        if (ephPubB64 == null) return null
+        val (priv, _) = prefs.getOrCreateIdentity()
+        return try {
+            val data = Base64.decode(ephPubB64, Base64.NO_WRAP) + chatId.toByteArray(Charsets.UTF_8)
+            CryptoHelper.signWithIdentity(priv, data)
+        } finally {
+            priv.fill(0)
+        }
+    }
+
     private fun tryEstablishSessionKey(partnerPubKey: String?) {
         if (partnerPubKey == null) return
         if (partnerPubKey == lastPartnerEphemeralPubKey) return   // ключ не изменился
@@ -1529,7 +1731,10 @@ class ChatActivity : SecureActivity() {
                     myUserId          = myUserId,
                     typingTs          = typingTs,
                     onlineTs          = onlineTs,
-                    myEphemeralPubKey = myCurrentEphemeralPubKey
+                    myEphemeralPubKey = myCurrentEphemeralPubKey,
+                    myIdentityPubKey     = prefs.myIdentityPubKey,
+                    myEphemeralSig       = myEphemeralSig,
+                    myVerifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.gistId)
                 )
             } else {
                 // Первый тик: наш профиль ещё не в кэше — полный GET+PATCH чтобы
@@ -1543,7 +1748,10 @@ class ChatActivity : SecureActivity() {
                     myEphemeralPubKey = myCurrentEphemeralPubKey,
                     myName            = prefs.myName,
                     myTag             = prefs.myTag,
-                    myAvatarBase64    = prefs.myAvatarBase64
+                    myAvatarBase64    = prefs.myAvatarBase64,
+                    myIdentityPubKey     = prefs.myIdentityPubKey,
+                    myEphemeralSig       = myEphemeralSig,
+                    myVerifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.gistId)
                 )
             }
         }
@@ -1692,7 +1900,9 @@ class ChatActivity : SecureActivity() {
                     imageFileName = imageFileName,
                     timestampMs = now
                 )
-                val encryptedMessage = CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.gistId)
+                val encryptedMessage = withContext(Dispatchers.Default) {
+                    CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.gistId)
+                }
                 tempEncrypted = encryptedMessage
 
                 val pendingMsg = Message(
@@ -1708,7 +1918,9 @@ class ChatActivity : SecureActivity() {
                 chatStore.addOptimistic(pendingMsg)
 
                 // 3. Шифруем изображение для пакетной отправки
-                val encryptedImage = CryptoHelper.encrypt(base64, chat.chatPassword, chat.gistId)
+                val encryptedImage = withContext(Dispatchers.Default) {
+                    CryptoHelper.encrypt(base64, chat.chatPassword, chat.gistId)
+                }
 
                 // 4. Отправляем сообщение и изображение ОДНИМ запросом (Batch PATCH)
                 withContext(Dispatchers.IO) {
@@ -1789,7 +2001,9 @@ class ChatActivity : SecureActivity() {
                     aspectRatios   = finalRatios,
                     timestampMs    = now
                 )
-                val encryptedMessage = CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.gistId)
+                val encryptedMessage = withContext(Dispatchers.Default) {
+                    CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.gistId)
+                }
                 tempEncrypted = encryptedMessage
 
                 val pendingMsg = Message(
@@ -1811,7 +2025,9 @@ class ChatActivity : SecureActivity() {
                     imageFileNames.forEachIndexed { index, fileName ->
                         launch {
                             val b64 = base64s[index] ?: return@launch
-                            val encrypted = CryptoHelper.encrypt(b64, chat.chatPassword, chat.gistId)
+                            val encrypted = withContext(Dispatchers.Default) {
+                                CryptoHelper.encrypt(b64, chat.chatPassword, chat.gistId)
+                            }
                             synchronized(extraFiles) {
                                 extraFiles[fileName] = encrypted
                             }
@@ -2337,6 +2553,33 @@ class ChatActivity : SecureActivity() {
      * Overlay уходит за 250 мс, RecyclerView появляется за 350 мс —
      * небольшой сдвиг даёт ощущение «контент проявляется» а не «мигает».
      */
+    /** Запускает ожидание установки сессии с таймаутом, затем разрешает показ чата. */
+    private fun startHandshakeGate() {
+        if (chat.isFavorites) {
+            handshakeSettled = true
+            maybeReveal()
+            return
+        }
+
+        lifecycleScope.launch {
+            val deadline = System.currentTimeMillis() + handshakeRevealTimeoutMs
+            while (System.currentTimeMillis() < deadline && !CryptoHelper.hasSessionKey(chat.gistId)) {
+                delay(200)
+            }
+            handshakeSettled = true
+            maybeReveal()
+        }
+    }
+
+    /** Показывает чат, когда И контент загружен, И рукопожатие завершено/истёк таймаут. */
+    private fun maybeReveal() {
+        if (firstLoadComplete) return
+        if (contentLoaded && handshakeSettled) {
+            firstLoadComplete = true
+            revealMessages()
+        }
+    }
+
     private fun revealMessages() {
         val overlay = binding.loadingOverlay
         val rv      = binding.rvMessages
@@ -2355,101 +2598,9 @@ class ChatActivity : SecureActivity() {
             .setDuration(350)
             .setStartDelay(80)
             .setInterpolator(android.view.animation.DecelerateInterpolator())
+            .withStartAction { rv.visibility = View.VISIBLE }
             .start()
     }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        if (::sendManager.isInitialized) sendManager.cancel()
-        if (::syncEngine.isInitialized) syncEngine.stop()
-        syncCollectorJob?.cancel()
-        if (::patchQueue.isInitialized) patchQueue.cancel()
-        countdownJob?.cancel()
-        stopTypingJob?.cancel()
-        presenceJob?.cancel()
-        if (::chat.isInitialized) {
-            // Уничтожаем Argon2-ключ (V2) — освобождаем RAM
-            CryptoHelper.clearCachedKey(chat.gistId, chat.chatPassword)
-            // Уничтожаем сессионный ключ (V3) — это момент forward secrecy:
-            // после этого V3-сообщения прошлой сессии нечитаемы даже зная пароль
-            CryptoHelper.clearSessionKey(chat.gistId)
-        }
-        // Зачищаем приватный X25519-ключ в памяти
-        myEphemeralPrivKey?.fill(0)
-        myEphemeralPrivKey = null
-        myCurrentEphemeralPubKey = null
-        // V3-сессионный ключ уже очищен в CryptoHelper.clearSessionKey() выше
-    }
-
-    override fun onBackPressed() {
-        when {
-            // Если активен режим выбора — выходим из него
-            adapter.isSelectionMode -> adapter.exitSelectionMode()
-            // Если есть активный reply — сначала отменяем его
-            replyingTo != null      -> clearReply()
-            else                    -> super.onBackPressed()
-        }
-    }
-
-    /**
-     * Проверяет реальную доступность GitHub и при необходимости переключается на Nostr.
-     * Вызывается в фоне после setupUi() — UI уже готов и не ждёт этой проверки.
-     *
-     * Если транспорт изменился — ImageLoader пересоздаётся, чтобы не ходить в Gist
-     * за картинками когда GitHub заблокирован.
-     */
-    private suspend fun resolveTransport() {
-        try {
-            val resolved = transportFactory.get()
-            val switched = resolved::class != transport::class
-            transport = resolved
-            if (switched) {
-                // Транспорт изменился (Gist → Nostr) — обновляем ImageLoader
-                val newLoader = ImageLoader(transport, chat.chatPassword)
-                imageLoader = newLoader
-                adapter.updateImageLoader(newLoader)
-            }
-            showTransportBadge(resolved.displayIcon)
-        } catch (_: Exception) {
-            // Если разрешение упало — остаёмся на начальном GistTransport
-        }
-    }
-
-    /** Показывает иконку активного транспорта рядом с subtitle (☁ Gist / ⚡ Nostr). */
-    private fun showTransportBadge(icon: String) {
-        runOnUiThread {
-            try {
-                val current = binding.tvChatSubtitle.text?.toString() ?: ""
-                // Не перезаписываем статус "печатает" и "Профиль удалён"
-                if (!current.contains("печата") && !current.contains("удалён")) {
-                    binding.tvChatSubtitle.text = icon
-                }
-            } catch (_: Exception) {}
-        }
-    }
-
-    /**
-     * Адаптивный интервал опроса сообщений.
-     *
-     * Стратегия: в тихом чате (нет новых сообщений) плавно увеличиваем паузу до [MAX_MS].
-     * При любой активности (новое сообщение, отправка, открытие чата) — мгновенный сброс к [BASE_MS].
-     *
-     * Влияет только на частоту опроса — не меняет логику обработки сообщений.
-     * Не используется в текущей реализации (заменён фиксированным POLL_INTERVAL_MS + ETag),
-     * но сохранён для будущего возврата к адаптивному поллингу.
-     */
-    private class PollIntervalAdapter {
-        private var current = BASE_MS
-        /** Возвращает следующий интервал (с экспоненциальным ростом до MAX_MS). */
-        fun next(): Long {
-            current = minOf((current * 1.5).toLong(), MAX_MS)
-            return current
-        }
-        /** Сбрасывает интервал к BASE_MS при любой активности. */
-        fun reset() { current = BASE_MS }
-    }
-
-    // ── Companion ─────────────────────────────────────────────────────────────
 
     companion object {
         /** Ключ intent-экстра: идентификатор чата (Long, из Room). */

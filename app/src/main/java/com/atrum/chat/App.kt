@@ -1,6 +1,8 @@
 package com.atrum.chat
 
+import android.app.Activity
 import android.app.Application
+import android.os.Bundle
 import android.content.Intent
 import android.graphics.Bitmap
 import androidx.appcompat.app.AppCompatDelegate
@@ -40,6 +42,30 @@ class App : Application() {
             if (lang.isEmpty()) LocaleListCompat.getEmptyLocaleList()
             else LocaleListCompat.forLanguageTags(lang)
         )
+
+        // Повторная блокировка при уходе в фон: когда последний экран
+        // останавливается (и это не поворот экрана), помечаем приложение
+        // заблокированным, если задан PIN. Возврат на передний план → LockActivity.
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            private var startedCount = 0
+            override fun onActivityStarted(activity: Activity) {
+                startedCount++
+            }
+            override fun onActivityStopped(activity: Activity) {
+                startedCount--
+                if (startedCount <= 0) {
+                    startedCount = 0
+                    if (!activity.isChangingConfigurations && prefs.hasLocalPassword()) {
+                        AppLock.locked = true
+                    }
+                }
+            }
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityResumed(activity: Activity) {}
+            override fun onActivityPaused(activity: Activity) {}
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+            override fun onActivityDestroyed(activity: Activity) {}
+        })
     }
 
     companion object {

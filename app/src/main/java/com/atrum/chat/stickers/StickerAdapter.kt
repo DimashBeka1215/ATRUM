@@ -2,7 +2,6 @@ package com.atrum.chat.stickers
 
 import android.graphics.BitmapFactory
 import android.view.LayoutInflater
-import android.view.View
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import com.airbnb.lottie.LottieCompositionFactory
@@ -14,7 +13,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileInputStream
 import java.util.zip.GZIPInputStream
 
 class StickerAdapter(
@@ -38,14 +36,12 @@ class StickerAdapter(
     override fun onBindViewHolder(holder: VH, position: Int) {
         val sticker = stickers[position]
         val binding = holder.binding
-
         val path = sticker.localPath ?: return
 
-        // Сброс и остановка старой анимации
+        // Очищаем вью перед загрузкой нового стикера, чтобы не было фантомных кадров
+        binding.ivSticker.tag = path
         binding.ivSticker.cancelAnimation()
         binding.ivSticker.setImageDrawable(null)
-        binding.ivSticker.tag = path
-        binding.tvAnimBadge.visibility = View.GONE
 
         when (sticker.type) {
             StickerType.STATIC -> {
@@ -57,24 +53,60 @@ class StickerAdapter(
                 }
             }
             StickerType.ANIMATED -> {
-                binding.tvAnimBadge.visibility = View.VISIBLE
                 scope.launch {
+                    val cached = com.atrum.chat.ImageCache.getComposition(path)
+                    if (cached != null) {
+                        if (binding.ivSticker.tag == path) {
+                            binding.ivSticker.setComposition(cached)
+                            binding.ivSticker.repeatCount = LottieDrawable.INFINITE
+                            binding.ivSticker.setRenderMode(com.airbnb.lottie.RenderMode.HARDWARE)
+                            binding.ivSticker.playAnimation()
+                        }
+                        return@launch
+                    }
+
                     val comp = withContext(Dispatchers.IO) {
                         try {
-                            val json = GZIPInputStream(FileInputStream(File(path)))
-                                .bufferedReader().readText()
-                            LottieCompositionFactory.fromJsonStringSync(json, path)?.value
-                        } catch (_: Exception) { null }
+                            val file = File(path)
+                            if (!file.exists()) return@withContext null
+                            
+                            val bytes = file.readBytes()
+                            val gzis = GZIPInputStream(java.io.ByteArrayInputStream(bytes))
+                            val jsonString = gzis.bufferedReader().use { it.readText() }
+                            
+                            // Важно: cacheKey должен быть уникальным
+                            LottieCompositionFactory.fromJsonStringSync(jsonString, path).value
+                        } catch (e: Exception) {
+                            android.util.Log.e("StickerAdapter", "TGS decode failed for $path", e)
+                            null
+                        }
                     }
                     if (binding.ivSticker.tag == path && comp != null) {
+                        com.atrum.chat.ImageCache.putComposition(path, comp)
                         binding.ivSticker.setComposition(comp)
                         binding.ivSticker.repeatCount = LottieDrawable.INFINITE
+                        binding.ivSticker.setRenderMode(com.airbnb.lottie.RenderMode.HARDWARE)
                         binding.ivSticker.playAnimation()
                     }
                 }
             }
             StickerType.VIDEO -> {
-                binding.tvAnimBadge.visibility = View.VISIBLE
+                // .webm видео-стикеры: в пикере показываем первый кадр (ImageView не умеет видео).
+                // Полноценное проигрывание .webm требует TextureView — отдельная задача.
+                scope.launch {
+                    val bitmap = withContext(Dispatchers.IO) {
+                        try {
+                            val retriever = android.media.MediaMetadataRetriever()
+                            try {
+                                retriever.setDataSource(path)
+                                retriever.getFrameAtTime(0)
+                            } finally { retriever.release() }
+                        } catch (_: Exception) { null }
+                    }
+                    if (binding.ivSticker.tag == path && bitmap != null) {
+                        binding.ivSticker.setImageBitmap(bitmap)
+                    }
+                }
             }
         }
 

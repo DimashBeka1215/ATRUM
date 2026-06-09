@@ -592,7 +592,11 @@ class GistApi(
     suspend fun appendLine(encryptedLine: String, extraFiles: Map<String, String> = emptyMap()) = writeMutex.withLock {
         val now = System.currentTimeMillis()
         val hintFresh = (now - appendHintMs) < APPEND_HINT_TTL_MS && appendHintContent.isNotEmpty()
-        val old = if (hintFresh) appendHintContent else loadContent()
+        val old = if (hintFresh) appendHintContent else {
+            val loaded = loadContent()
+            updateChatContentHint(loaded)
+            loaded
+        }
 
         val newContent = if (old.isBlank()) encryptedLine else "$old\n$encryptedLine"
         

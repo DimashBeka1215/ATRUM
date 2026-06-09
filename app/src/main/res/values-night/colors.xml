@@ -52,4 +52,5 @@
     <color name="black">#000000</color>
     <color name="error">#FF5252</color>
     <color name="warning">#FFB454</color>
+    <color name="warning_muted">#D49E5D</color>
 </resources>
