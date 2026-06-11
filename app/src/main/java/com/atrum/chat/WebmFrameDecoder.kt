@@ -78,6 +78,27 @@ object WebmFrameDecoder {
                     ms * 1000L
                 } catch (_: Exception) { 0L }
             }
+            // САМЫЙ надёжный источник длительности — таймстемпы сэмплов (presentationTime).
+            // KEY_DURATION и MMR на части webm пусты, и тогда задержка падала на фикс 64мс →
+            // стикер играл на ~2x. Сканируем сэмплы БЕЗ декода, берём последний PTS + один кадр
+            // и используем как длительность (если она надёжнее/больше). Затем перематываем в начало.
+            run {
+                var maxPts = 0L
+                var prevPts = 0L
+                var frameStepUs = 0L
+                while (true) {
+                    val t = extractor.sampleTime
+                    if (t < 0L) break
+                    if (t > maxPts) maxPts = t
+                    if (t > prevPts) { val d = t - prevPts; if (d in 1..200_000L) frameStepUs = d }
+                    prevPts = t
+                    if (!extractor.advance()) break
+                }
+                extractor.seekTo(0L, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                // последний кадр стартует в maxPts; полная петля ≈ maxPts + длительность кадра.
+                val scanned = if (maxPts > 0L) maxPts + (if (frameStepUs > 0L) frameStepUs else 0L) else 0L
+                if (scanned > 0L && (durUs <= 0L || scanned > durUs)) durUs = scanned
+            }
             // Кадры берём РАВНОМЕРНО по всей длительности (по времени presentationTime), а не
             // первые N: иначе длинный стикер обрезается и при фиксированной задержке играет быстрее.
             val stepUs = if (durUs > 0L) durUs / maxFrames else 0L

@@ -26,14 +26,14 @@ import java.util.zip.GZIPOutputStream
  */
 object StickerDiskCache {
 
-    private const val MAGIC = 0x53544B34  // "STK4" — + срез пустых кадров по краям (фикс мигания)
+    private const val MAGIC = 0x53544B35  // "STK5" — длительность из таймстемпов сэмплов (фикс 2x)
     private const val MAX_FRAMES = 120
     private const val MAX_DIM = 1024
     private const val MAX_CACHE_BYTES = 64L * 1024 * 1024  // потолок диск-кеша кадров
 
-    // v4 — добавлен срез почти-прозрачных кадров по краям (фикс мигания на стыке петли).
-    // Имя сменили, чтобы уже запечённые кадры с пустым крайним кадром перекодировались.
-    private const val CURRENT_DIR = "sticker_frames_v4"
+    // v5 — длительность берётся из таймстемпов сэмплов (родная скорость, без 2x).
+    // Имя сменили, чтобы кадры с неверной задержкой пересчитались.
+    private const val CURRENT_DIR = "sticker_frames_v5"
 
     private fun dir(cacheDir: File): File =
         File(cacheDir, CURRENT_DIR).apply { if (!exists()) mkdirs() }
