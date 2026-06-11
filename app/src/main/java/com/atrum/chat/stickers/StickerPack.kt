@@ -6,7 +6,7 @@ package com.atrum.chat.stickers
 enum class StickerType {
     STATIC,     // .webp — обычный ImageView
     ANIMATED,   // .tgs  — Lottie (сжатый JSON)
-    VIDEO       // .webm — TextureView + MediaPlayer
+    VIDEO       // .webm — покадровый движок WebmStickerView (MediaCodec → кеш кадров → ImageView)
 }
 
 /**

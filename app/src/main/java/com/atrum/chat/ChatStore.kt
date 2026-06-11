@@ -20,8 +20,19 @@ class ChatStore {
         emit()
     }
 
+    /**
+     * Подтверждает отправку: часы -> галочка МГНОВЕННО, без ожидания опроса.
+     * Не удаляем оптимистичное сообщение (иначе оно исчезнет до прихода серверной
+     * строки), а помечаем isPending=false и сразу emit(). reconcile() позже заменит
+     * его серверной копией (совпадение rawEncrypted) — бесшовно, без дублей.
+     * Так стикер/сообщение никогда не "зависает в отправке до перезахода".
+     */
     fun confirmSent(encryptedLine: String) {
-        pendingByRaw.remove(encryptedLine)
+        val msg = pendingByRaw[encryptedLine]
+        if (msg != null && msg.isPending) {
+            pendingByRaw[encryptedLine] = msg.copy(isPending = false)
+        }
+        emit()
     }
 
     /**
@@ -60,10 +71,16 @@ class ChatStore {
         lastRemote = remote
         val serverIds = remote.map { it.msgId }.toSet()
         tombstones.removeAll { id -> id !in serverIds }
+        // Снимаем pending, у которых появилась серверная копия — по rawEncrypted ИЛИ по
+        // имени файла стикера/картинки. Шифртекст недетерминирован (random salt/nonce),
+        // поэтому для стикеров сверка по imageFileName надёжнее — иначе оставались дубли.
         val visible = remote.filter { it.msgId !in tombstones }
         val serverRaws = visible.map { it.rawEncrypted }.toSet()
-        pendingByRaw.entries.removeAll { (raw, _) -> raw in serverRaws }
-        _messages.value = visible + pendingByRaw.values.toList()
+        val serverFiles = visible.mapNotNull { it.imageFileName }.toSet()
+        pendingByRaw.entries.removeAll { (raw, m) ->
+            raw in serverRaws || (m.imageFileName != null && m.imageFileName in serverFiles)
+        }
+        _messages.value = compose()
     }
 
     fun pendingSnapshot(): List<Message> = pendingByRaw.values.toList()
@@ -77,8 +94,23 @@ class ChatStore {
         _messages.value = emptyList()
     }
 
-    private fun emit() {
+    /**
+     * Собирает итоговый список: серверные сообщения + pending, но БЕЗ дублей.
+     * pending скрывается, если для него уже есть серверная копия — по rawEncrypted
+     * ИЛИ по imageFileName (стикеры/картинки, у которых ciphertext недетерминирован).
+     */
+    private fun compose(): List<Message> {
         val visible = lastRemote.filter { it.msgId !in tombstones }
-        _messages.value = visible + pendingByRaw.values.toList()
+        val serverRaws = visible.map { it.rawEncrypted }.toSet()
+        val serverFiles = visible.mapNotNull { it.imageFileName }.toSet()
+        val pend = pendingByRaw.values.filter { m ->
+            m.rawEncrypted !in serverRaws &&
+            (m.imageFileName == null || m.imageFileName !in serverFiles)
+        }
+        return visible + pend
+    }
+
+    private fun emit() {
+        _messages.value = compose()
     }
 }

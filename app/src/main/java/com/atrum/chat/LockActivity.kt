@@ -42,7 +42,9 @@ class LockActivity : SecureActivity() {
 
         // Вход по отпечатку доступен, только если пользователь его включил
         // и система телефона готова (есть железо + добавлен отпечаток).
-        biometricEnabled = prefs.biometricEnabled && BiometricHelper.canUse(this)
+        // Если функция была удалена навсегда (отказ при первом включении) — никогда.
+        biometricEnabled = !prefs.biometricRemoved &&
+            prefs.biometricEnabled && BiometricHelper.canUse(this)
         if (biometricEnabled) {
             binding.orDivider.visibility = View.VISIBLE
             binding.btnBiometric.visibility = View.VISIBLE

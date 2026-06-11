@@ -366,6 +366,77 @@
             android:background="@color/surface"
             android:visibility="gone"/>
 
+        <!-- ═══ Подсказки стикеров по эмодзи (gone по умолчанию; высота задаётся в коде) ═══ -->
+        <LinearLayout
+            android:id="@+id/sticker_suggestions_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@color/surface"
+            android:visibility="gone">
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/border"/>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rv_sticker_suggestions"
+                android:layout_width="match_parent"
+                android:layout_height="80dp"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="4dp"
+                android:clipToPadding="false"
+                android:scrollbars="vertical"/>
+        </LinearLayout>
+
+        <!-- ═══ Плашка лимита GitHub — выезжает над полем ввода ═══ -->
+        <LinearLayout
+            android:id="@+id/rate_limit_banner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_rate_limit_banner"
+            android:layout_marginHorizontal="12dp"
+            android:layout_marginBottom="2dp"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="9dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/iv_rate_limit_icon"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="10dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_clock"
+                app:tint="@color/warning_on" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tv_rate_limit_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="@string/rate_limit_title"
+                    android:textColor="@color/warning_on"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/tv_rate_limit_message"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:textColor="@color/warning_on"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
         <!-- ═══ Input area — pill container ═══ -->
         <LinearLayout
             android:id="@+id/input_area"

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:#000;color:#fff;font-family:-apple-system,Roboto,"Segoe UI",sans-serif}
+  .wrap{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:18px}
+  .phone{position:relative;width:300px;max-width:86vw;height:520px;border-radius:30px;background:#000;border:2px solid rgba(157,78,221,.45);overflow:hidden}
+  .scr{position:absolute;inset:0;opacity:0;transform:translateY(10px);transition:opacity .45s,transform .45s;display:flex;flex-direction:column}
+  .scr.on{opacity:1;transform:none}
+  .tgbar{background:#17212b;font-size:13px;padding:11px 14px;display:flex;align-items:center;gap:8px;justify-content:space-between}
+  .tgbody{background:#0e1621;flex:1;padding:12px;display:flex;flex-direction:column;gap:8px}
+  .tgin{align-self:flex-start;background:#182533;color:#e9eef2;font-size:12px;padding:8px 11px;border-radius:13px;max-width:84%;line-height:1.45}
+  .tgout{align-self:flex-end;background:#2b5278;font-size:12px;padding:8px 11px;border-radius:13px;max-width:84%}
+  .atrbar{background:#0A0A0A;font-size:13px;padding:11px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #1F1F1F}
+  .atrbody{background:#000;flex:1;padding:14px;display:flex;flex-direction:column;gap:10px}
+  .field{background:#0A0A0A;border:1px solid #1F1F1F;border-radius:11px;padding:10px 11px;font-size:12px;font-family:monospace;display:flex;align-items:center;gap:7px;color:#fff}
+  .btnp{background:#9D4EDD;font-size:13px;font-weight:500;padding:11px;border-radius:11px;text-align:center}
+  .tok{color:#5fb85f;font-family:monospace}
+  .blue{color:#3aa0ff}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
+  .grid5{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
+  .cell{aspect-ratio:1;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px}
+  .cap{text-align:center;max-width:320px}
+  .capn{font-size:12px;font-weight:600;color:#9D4EDD;letter-spacing:.05em}
+  .capt{font-size:16px;font-weight:600;margin:3px 0}
+  .capd{font-size:13px;color:#9aa0a6;line-height:1.5}
+  .dots{display:flex;gap:8px}
+  .dot{width:9px;height:9px;border-radius:50%;background:rgba(157,78,221,.3);transition:.3s}
+  .dot.on{background:#9D4EDD;transform:scale(1.25)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}.live{animation:pulse 1.2s infinite}
+</style></head>
+<body><div class="wrap">
+  <div class="phone">
+    <div class="scr on">
+      <div class="tgbar"><span>🔍 <span data-l="search"></span></span></div>
+      <div class="tgbody" style="gap:6px">
+        <div style="display:flex;align-items:center;gap:10px;background:#17212b;border-radius:12px;padding:10px">
+          <div style="width:34px;height:34px;border-radius:50%;background:#2b5278;display:flex;align-items:center;justify-content:center">B</div>
+          <div style="font-size:13px">BotFather <span class="blue">✔</span></div>
+        </div>
+        <div style="font-size:11px;color:#5b6b7a;padding-left:4px" data-l="official"></div>
+      </div>
+    </div>
+    <div class="scr">
+      <div class="tgbar"><span>🤖 BotFather <span class="blue">✔</span></span></div>
+      <div class="tgbody">
+        <div class="tgout">/newbot</div>
+        <div class="tgin" data-l="bfname"></div>
+        <div class="tgout" data-l="botname"></div>
+        <div class="tgin" data-l="bfuser"></div>
+        <div class="tgout">moi_stikery_bot</div>
+      </div>
+    </div>
+    <div class="scr">
+      <div class="tgbar"><span>🤖 BotFather <span class="blue">✔</span></span></div>
+      <div class="tgbody">
+        <div class="tgin">Done! <span data-l="tokenline"></span><br><br><span class="tok">7123456789:AAHdqTcvCH1vGWJ…</span><br><br><span style="color:#7a8a99" data-l="keep"></span></div>
+        <div style="align-self:flex-end;background:#182533;color:#3aa0ff;font-size:11px;padding:6px 10px;border-radius:10px">✔ <span data-l="copied"></span></div>
+      </div>
+    </div>
+    <div class="scr">
+      <div class="atrbar"><span>‹</span> <span data-l="settings"></span></div>
+      <div class="atrbody">
+        <div style="font-size:11px;color:#A0A0A8;letter-spacing:.06em" data-l="tokensec"></div>
+        <div class="field">🔑 7123456789:AAHdqTcvCH1v…</div>
+        <div style="font-size:12px;color:#C77DFF" data-l="gettoken"></div>
+        <div class="btnp" data-l="save"></div>
+      </div>
+    </div>
+    <div class="scr">
+      <div class="tgbar"><span>😀 Utya Duck</span><span>⋮</span></div>
+      <div class="tgbody" style="background:#17212b">
+        <div class="grid4">
+          <div class="cell" style="background:#22303c">🦆</div><div class="cell" style="background:#22303c">😎</div>
+          <div class="cell" style="background:#22303c">❤️</div><div class="cell" style="background:#22303c">🎉</div>
+          <div class="cell" style="background:#22303c">🔥</div><div class="cell" style="background:#22303c">😂</div>
+          <div class="cell" style="background:#22303c">👍</div><div class="cell" style="background:#22303c">✨</div>
+        </div>
+        <div style="margin-top:auto;background:#2b5278;font-size:13px;padding:10px;border-radius:11px;text-align:center">🔗 Copy Link</div>
+        <div style="font-size:11px;color:#7a8a99;text-align:center">t.me/addstickers/UtyaDuck</div>
+      </div>
+    </div>
+    <div class="scr">
+      <div class="atrbar"><span>😀</span> <span data-l="addpack"></span></div>
+      <div class="atrbody">
+        <div class="field">🔗 t.me/addstickers/UtyaDuck</div>
+        <div style="height:5px;border-radius:3px;background:#1F1F1F;overflow:hidden"><div style="width:72%;height:100%;background:#9D4EDD"></div></div>
+        <div class="live" style="font-size:11px;color:#A0A0A8" data-l="loading"></div>
+        <div class="grid5" style="margin-top:2px">
+          <div class="cell" style="background:#141414">🦆</div><div class="cell" style="background:#141414">😎</div>
+          <div class="cell" style="background:#141414">❤️</div><div class="cell" style="background:#141414">🎉</div>
+          <div class="cell" style="background:#141414">🔥</div><div class="cell" style="background:#141414">😂</div>
+          <div class="cell" style="background:#141414">👍</div><div class="cell" style="background:#141414">✨</div>
+          <div class="cell" style="background:#141414">🥳</div><div class="cell" style="background:#141414">💜</div>
+        </div>
+        <div style="margin-top:auto;font-size:12px;color:#5DCAA5">✔ <span data-l="done"></span></div>
+      </div>
+    </div>
+  </div>
+  <div class="cap"><div class="capn" id="capn"></div><div class="capt" id="capt"></div><div class="capd" id="capd"></div></div>
+  <div class="dots" id="dots"></div>
+</div>
+<script>
+  var scrs=[].slice.call(document.querySelectorAll('.scr'));
+  var dotsWrap=document.getElementById('dots');
+  var capn=document.getElementById('capn'),capt=document.getElementById('capt'),capd=document.getElementById('capd');
+  var STEPS=[],cur=0,timer=null;
+  var platforms=["TELEGRAM","TELEGRAM","TELEGRAM","ATRUM","TELEGRAM","ATRUM"];
+  for(var i=0;i<6;i++){var d=document.createElement('div');d.className='dot'+(i===0?' on':'');(function(k){d.onclick=function(){go(k);restart();};})(i);dotsWrap.appendChild(d);}
+  var dots=[].slice.call(dotsWrap.children);
+  function go(i){cur=i;scrs.forEach(function(s,j){s.classList.toggle('on',j===i);});dots.forEach(function(d,j){d.classList.toggle('on',j===i);});if(STEPS[i]){capn.textContent=STEPS[i].n;capt.textContent=STEPS[i].t;capd.textContent=STEPS[i].d;}}
+  function next(){go((cur+1)%6);}
+  function restart(){if(timer)clearInterval(timer);timer=setInterval(next,3400);}
+  window.applyStrings=function(L){
+    document.querySelectorAll('[data-l]').forEach(function(e){if(L[e.getAttribute('data-l')]!=null)e.textContent=L[e.getAttribute('data-l')];});
+    STEPS=[];for(var i=1;i<=6;i++){STEPS.push({n:(L.step||"STEP")+" "+i+" / 6 · "+platforms[i-1],t:L["s"+i+"t"]||"",d:L["s"+i+"d"]||""});}
+    go(0);restart();
+  };
+</script></body></html>

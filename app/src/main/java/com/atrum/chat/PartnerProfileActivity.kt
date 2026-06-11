@@ -13,6 +13,8 @@ import androidx.lifecycle.lifecycleScope
 import com.atrum.chat.transport.GistTransport
 import com.google.android.material.imageview.ShapeableImageView
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -37,6 +39,14 @@ class PartnerProfileActivity : AppCompatActivity() {
 
     private var shieldPulse: android.animation.Animator? = null
 
+    // ── Взаимная сверка (живой статус) ─────────────────────────────────────────
+    private var verifyGistId = ""
+    private var verifyToken = ""
+    private var verifyPassword = ""
+    private var verifySyncJob: Job? = null   // лёгкий опрос профиля партнёра, пока экран открыт
+    private var dotsJob: Job? = null          // анимированные точки «ждём…»
+    private var lastBothConfirmed = false     // чтобы pop-анимацию проигрывать только при переходе
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_partner_profile)
@@ -49,6 +59,11 @@ class PartnerProfileActivity : AppCompatActivity() {
         val gistToken    = intent.getStringExtra(EXTRA_GIST_TOKEN) ?: ""
         val chatPassword = intent.getStringExtra(EXTRA_CHAT_PASSWORD) ?: ""
         val imageRefs    = intent.getStringArrayListExtra(EXTRA_IMAGE_REFS) ?: arrayListOf()
+
+        // Сохраняем для живой сверки (публикация подтверждения + опрос профиля партнёра).
+        verifyGistId = gistId
+        verifyToken = gistToken
+        verifyPassword = chatPassword
 
         // Security fingerprint
         val tvFingerprint = findViewById<TextView>(R.id.tv_security_fingerprint)
@@ -210,7 +225,9 @@ class PartnerProfileActivity : AppCompatActivity() {
         val idk = intent.getStringExtra(EXTRA_IDENTITY_PUB)
         val eph = intent.getStringExtra(EXTRA_EPH_PUB)
         val esig = intent.getStringExtra(EXTRA_EPH_SIG)
-        val vpk = intent.getStringExtra(EXTRA_VERIFIED_PARTNER_IDK)
+        // intent — лишь снимок на момент открытия; живой статус берём из IdentityState
+        // (его обновляет либо polling ChatActivity, либо наш sync-цикл на этом экране).
+        val intentVpk = intent.getStringExtra(EXTRA_VERIFIED_PARTNER_IDK)
 
         // Старый клиент без identity-ключа — щит и секцию не показываем.
         if (idk == null) {
@@ -229,7 +246,9 @@ class PartnerProfileActivity : AppCompatActivity() {
 
         val myIdk = prefs.myIdentityPubKey
         val confirmed = prefs.getConfirmedPartnerIdentity(gistId) == idk
-        val partnerConfirmedMe = vpk != null && vpk == myIdk
+        // Партнёр подтвердил меня: живой флаг из IdentityState ИЛИ снимок из intent (фолбэк).
+        val partnerConfirmedMe = IdentityState.get(gistId).partnerVerifiedMe ||
+            (intentVpk != null && intentVpk == myIdk)
         val knownIdk = prefs.getKnownPartnerIdentity(gistId)
         val keyChanged = knownIdk != null && knownIdk != idk
 
@@ -240,6 +259,13 @@ class PartnerProfileActivity : AppCompatActivity() {
         val tvBadge   = findViewById<TextView>(R.id.tv_security_badge)
         val tvHint    = findViewById<TextView>(R.id.tv_verify_hint)
         val btnVerify = findViewById<android.widget.Button>(R.id.btn_verify)
+
+        // В XML бейдж/подсказка/кнопка стоят gone — включаем их, раз идентичность есть.
+        findViewById<View>(R.id.ll_identity_badge).visibility = View.VISIBLE
+        tvHint.visibility = View.VISIBLE
+        btnVerify.visibility = View.VISIBLE
+        findViewById<View>(R.id.warn_identity_changed).visibility =
+            if (keyChanged) View.VISIBLE else View.GONE
 
         // Состояние идентичности → иконка щита, цвет-токен, текст, пульсация.
         val iconRes: Int
@@ -283,6 +309,9 @@ class PartnerProfileActivity : AppCompatActivity() {
 
         if (pulse) startShieldPulse(shield) else stopShieldPulse(shield)
 
+        // Живая плашка взаимной сверки (waiting / both).
+        renderVerifyPill(confirmed, partnerConfirmedMe, gistId, shield)
+
         // Щит раскрывает/прячет секцию безопасности.
         shield.setOnClickListener {
             card.visibility = if (card.visibility == View.VISIBLE) View.GONE else View.VISIBLE
@@ -294,8 +323,12 @@ class PartnerProfileActivity : AppCompatActivity() {
         btnVerify.setOnClickListener {
             if (prefs.getConfirmedPartnerIdentity(gistId) == idk) {
                 prefs.clearConfirmedPartnerIdentity(gistId)
+                // Снятие подтверждения долетит до собеседника при возврате в чат
+                // (ChatActivity заново публикует профиль уже без vpk).
             } else {
                 prefs.setConfirmedPartnerIdentity(gistId, idk)
+                // Публикуем подтверждение СРАЗУ — собеседник узнает, не дожидаясь чата.
+                publishMyConfirmation(gistId, idk)
             }
             applyIdentityBadge(gistId)
         }
@@ -323,5 +356,135 @@ class PartnerProfileActivity : AppCompatActivity() {
         shieldPulse = null
         shield.scaleX = 1f
         shield.scaleY = 1f
+    }
+
+    // ── Живая плашка взаимной сверки ───────────────────────────────────────────
+
+    /** Рисует плашку: «ждём собеседника» (с точками) ↔ «подтверждено обоими» (pop-анимация). */
+    private fun renderVerifyPill(
+        confirmed: Boolean,
+        partnerConfirmedMe: Boolean,
+        gistId: String,
+        shield: View
+    ) {
+        val pill  = findViewById<LinearLayout>(R.id.ll_verify_status)
+        val icon  = findViewById<ImageView>(R.id.iv_verify_status_icon)
+        val title = findViewById<TextView>(R.id.tv_verify_status_title)
+        val sub   = findViewById<TextView>(R.id.tv_verify_status_sub)
+        val white = ContextCompat.getColor(this, R.color.white)
+
+        when {
+            confirmed && partnerConfirmedMe -> {
+                stopDots(); stopVerifySync()  // оба подтвердили — опрашивать нечего
+                pill.visibility = View.VISIBLE
+                pill.setBackgroundResource(R.drawable.bg_verify_both)
+                icon.setImageResource(R.drawable.ic_shield_check)
+                icon.setColorFilter(white)
+                title.text = getString(R.string.verify_status_both_title); title.setTextColor(white)
+                sub.text = getString(R.string.verify_status_both_sub)
+                sub.setTextColor((0xCCFFFFFF).toInt())   // белый 80% на акценте
+                if (!lastBothConfirmed) { popAnim(icon); popAnim(shield) }  // только при переходе
+                lastBothConfirmed = true
+            }
+            confirmed -> {
+                pill.visibility = View.VISIBLE
+                pill.setBackgroundResource(R.drawable.bg_verify_waiting)
+                icon.setImageResource(R.drawable.ic_clock)
+                icon.setColorFilter(ContextCompat.getColor(this, R.color.accent_light))
+                title.text = getString(R.string.verify_status_waiting_title)
+                title.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
+                sub.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+                startDots(sub)
+                lastBothConfirmed = false
+                startVerifySync(gistId)   // пока экран открыт — ловим подтверждение партнёра
+            }
+            else -> {
+                pill.visibility = View.GONE
+                stopDots(); stopVerifySync()
+                lastBothConfirmed = false
+            }
+        }
+    }
+
+    private fun startDots(sub: TextView) {
+        stopDots()
+        val base = getString(R.string.verify_status_waiting_sub)
+        dotsJob = lifecycleScope.launch {
+            var i = 0
+            while (true) {
+                sub.text = base + ".".repeat(i % 4)
+                i++
+                delay(450L)
+            }
+        }
+    }
+
+    private fun stopDots() { dotsJob?.cancel(); dotsJob = null }
+
+    private fun popAnim(v: View) {
+        android.animation.ObjectAnimator.ofPropertyValuesHolder(
+            v,
+            android.animation.PropertyValuesHolder.ofFloat(View.SCALE_X, 0.6f, 1.25f, 1f),
+            android.animation.PropertyValuesHolder.ofFloat(View.SCALE_Y, 0.6f, 1.25f, 1f)
+        ).apply { duration = 460; start() }
+    }
+
+    /** Одноразово публикует моё подтверждение. pushPresence сохраняет eph/sig — FS не ломается. */
+    private fun publishMyConfirmation(gistId: String, partnerIdk: String) {
+        if (verifyToken.isBlank() || verifyPassword.isBlank()) return
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val transport = GistTransport(GistApi(token = verifyToken, gistId = gistId))
+                ProfileSync.pushPresence(
+                    api = transport, password = verifyPassword, myUserId = prefs.myUserId,
+                    typingTs = 0L, onlineTs = 0L,
+                    myName = prefs.myName, myTag = prefs.myTag, myAvatarBase64 = prefs.myAvatarBase64,
+                    myIdentityPubKey = prefs.myIdentityPubKey,
+                    myVerifiedPartnerIdk = partnerIdk
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Лёгкий опрос профиля партнёра, ПОКА открыт экран сверки и пока не «подтверждено обоими».
+     * Это не сообщенческий цикл: ChatActivity на паузе → второго опросчика одновременно нет.
+     * Только через ChatTransport, ~2.5 c, авто-стоп на «оба»/паузе. Тайминги чата не трогаются.
+     */
+    private fun startVerifySync(gistId: String) {
+        if (verifySyncJob != null) return
+        if (verifyToken.isBlank() || verifyPassword.isBlank()) return
+        verifySyncJob = lifecycleScope.launch {
+            val transport = GistTransport(GistApi(token = verifyToken, gistId = gistId))
+            while (true) {
+                try {
+                    val profiles = withContext(Dispatchers.IO) {
+                        ProfileSync.pullProfiles(transport, verifyPassword)
+                    }
+                    val partner = profiles.values.firstOrNull { it.userId != prefs.myUserId }
+                    val partnerVerifiedMe = partner?.verifiedPartnerIdk != null &&
+                        partner.verifiedPartnerIdk == prefs.myIdentityPubKey
+                    val cur = IdentityState.get(gistId)
+                    if (cur.partnerVerifiedMe != partnerVerifiedMe) {
+                        IdentityState.set(gistId, cur.copy(partnerVerifiedMe = partnerVerifiedMe))
+                        applyIdentityBadge(gistId)  // перерисует плашку; при «оба» сам остановит цикл
+                    }
+                    if (partnerVerifiedMe && prefs.getConfirmedPartnerIdentity(gistId) != null) break
+                } catch (_: Exception) {}
+                delay(2500L)
+            }
+        }
+    }
+
+    private fun stopVerifySync() { verifySyncJob?.cancel(); verifySyncJob = null }
+
+    override fun onResume() {
+        super.onResume()
+        if (verifyGistId.isNotEmpty()) applyIdentityBadge(verifyGistId)  // живой ре-рендер + рестарт sync
+    }
+
+    override fun onPause() {
+        super.onPause()
+        stopVerifySync(); stopDots()  // уходим с экрана — не опрашиваем в фоне
     }
 }

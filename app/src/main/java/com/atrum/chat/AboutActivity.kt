@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.atrum.chat.databinding.ActivityAboutBinding
 import com.google.android.material.bottomsheet.BottomSheetDialog
@@ -32,12 +33,37 @@ class AboutActivity : AppCompatActivity() {
 
         binding.btnBack.setOnClickListener { finish() }
 
+        setupHiddenRestoreGesture()
+
         binding.itemDonate.setOnClickListener { showDonateDialog() }
 
         binding.itemGithub.alpha = 1f
         binding.itemGithub.setOnClickListener { openUrl(urlGithub) }
 
         binding.itemTelegram.setOnClickListener { openUrl(urlTelegram) }
+    }
+
+    // ── Тайный жест возврата скрытого входа по отпечатку ───────────────────────
+    private var logoTapCount = 0
+    private var lastLogoTapMs = 0L
+
+    /** 7 тапов по иконке приложения возвращают временно скрытый вход по отпечатку. */
+    private fun setupHiddenRestoreGesture() {
+        binding.aboutAppLogo.setOnClickListener {
+            val now = System.currentTimeMillis()
+            if (now - lastLogoTapMs > 1500L) logoTapCount = 0  // слишком медленно — сброс
+            lastLogoTapMs = now
+            logoTapCount++
+            if (logoTapCount >= 7) {
+                logoTapCount = 0
+                val prefs = Prefs(this)
+                if (prefs.biometricHidden) {
+                    prefs.biometricHidden = false
+                    Toast.makeText(this, R.string.biometric_restored, Toast.LENGTH_SHORT).show()
+                }
+                // Если не было скрыто — тихо игнорируем, жест остаётся незаметным.
+            }
+        }
     }
 
     private fun showDonateDialog() {

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Плашка сверки «подтверждено обоими»: сплошная акцентная заливка. Фон гарантированно
+    тёмный акцент (#9D4EDD) в обеих темах, поэтому текст/иконка поверх — @color/white.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/accent" />
+    <corners android:radius="11dp" />
+</shape>

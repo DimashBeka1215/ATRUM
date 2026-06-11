@@ -184,6 +184,7 @@ object NeonDialog {
         positiveText: String,
         positiveIsDestructive: Boolean = false,
         negativeText: String,
+        onNegative: (() -> Unit)? = null,
         onPositive: () -> Unit
     ): Dialog {
         val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar)
@@ -239,7 +240,7 @@ object NeonDialog {
                 gravity  = Gravity.CENTER
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
                 setBackgroundResource(ctx.rippleBg())
-                setOnClickListener { dialog.dismiss() }
+                setOnClickListener { dialog.dismiss(); onNegative?.invoke() }
             })
             addView(ctx.vDivider())
             addView(TextView(ctx).apply {
@@ -253,6 +254,120 @@ object NeonDialog {
                 setOnClickListener { dialog.dismiss(); onPositive() }
             })
         })
+
+        dialog.setContentView(root)
+        dialog.setupWindow(ctx)
+        dialog.show()
+        return dialog
+    }
+
+    /**
+     * Диалог выбора с ТРЕМЯ вертикальными кнопками: иконка + заголовок + текст +
+     * primary (залит акцентом) / neutral (контур) / destructive (красный текст) + сноска.
+     * Отмена (тап вне/назад) — ничего не делает.
+     */
+    fun showThreeChoice(
+        ctx: Context,
+        title: String,
+        message: String? = null,
+        iconRes: Int = 0,
+        primaryText: String,
+        onPrimary: () -> Unit,
+        neutralText: String,
+        onNeutral: () -> Unit,
+        destructiveText: String,
+        onDestructive: () -> Unit,
+        footnote: String? = null
+    ): Dialog {
+        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar)
+        dialog.setCancelable(true)
+        dialog.setCanceledOnTouchOutside(true)
+
+        val pad = ctx.dp(20f)
+        val root = LinearLayout(ctx).apply {
+            orientation   = LinearLayout.VERTICAL
+            background    = ctx.neonBg()
+            clipToOutline = true
+            setPadding(pad, ctx.dp(20f), pad, ctx.dp(18f))
+        }
+
+        if (iconRes != 0) {
+            root.addView(android.widget.ImageView(ctx).apply {
+                setImageResource(iconRes)
+                imageTintList = android.content.res.ColorStateList.valueOf(
+                    ContextCompat.getColor(ctx, R.color.accent))
+                val s = ctx.dp(40f)
+                layoutParams = LinearLayout.LayoutParams(s, s).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    bottomMargin = ctx.dp(12f)
+                }
+            })
+        }
+
+        root.addView(TextView(ctx).apply {
+            text = title
+            setTextColor(ctx.textPrimary())
+            textSize = 17f
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+        })
+
+        if (message != null) {
+            root.addView(TextView(ctx).apply {
+                text = message
+                setTextColor(ctx.textSecondary())
+                textSize = 14f
+                gravity = Gravity.CENTER
+                setPadding(0, ctx.dp(8f), 0, 0)
+                setLineSpacing(ctx.dp(3f).toFloat(), 1f)
+            })
+        }
+
+        fun btnBg(fill: Int?, stroke: Int?) = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = ctx.dp(11f).toFloat()
+            setColor(fill ?: Color.TRANSPARENT)
+            if (stroke != null) setStroke(ctx.dp(1f), stroke)
+        }
+        fun addButton(text: String, bg: GradientDrawable, color: Int, bold: Boolean, action: () -> Unit) {
+            root.addView(TextView(ctx).apply {
+                this.text = text
+                setTextColor(color)
+                textSize = 14.5f
+                gravity = Gravity.CENTER
+                if (bold) setTypeface(typeface, Typeface.BOLD)
+                background = bg
+                isClickable = true
+                isFocusable = true
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, ctx.dp(44f)
+                ).apply { topMargin = ctx.dp(if (root.childCount == 0) 14f else 9f) }
+                setOnClickListener { dialog.dismiss(); action() }
+            })
+        }
+
+        val accent = ContextCompat.getColor(ctx, R.color.accent)
+        val white  = ContextCompat.getColor(ctx, R.color.white)
+        val error  = ContextCompat.getColor(ctx, R.color.error)
+        addButton(primaryText, btnBg(accent, null), white, true, onPrimary)
+        addButton(neutralText, btnBg(null, ctx.borderColor()), ctx.textPrimary(), false, onNeutral)
+        addButton(destructiveText, btnBg(null, null), error, false, onDestructive)
+
+        if (footnote != null) {
+            root.addView(android.view.View(ctx).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, 1
+                ).apply { topMargin = ctx.dp(14f) }
+                setBackgroundColor(ctx.borderColor())
+            })
+            root.addView(TextView(ctx).apply {
+                text = footnote
+                setTextColor(ctx.textSecondary())
+                textSize = 11.5f
+                setPadding(0, ctx.dp(12f), 0, 0)
+                setLineSpacing(ctx.dp(2f).toFloat(), 1f)
+            })
+        }
 
         dialog.setContentView(root)
         dialog.setupWindow(ctx)

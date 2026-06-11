@@ -74,6 +74,9 @@ class StickerPanelController(
         // 4. Кнопка помощи — повторный онбординг
         panelBinding?.btnStickerHelp?.setOnClickListener { showOnboarding() }
 
+        // 4.1 Карандаш справа от названия — переименовать текущий пак
+        panelBinding?.btnStickerRenamePack?.setOnClickListener { showRenamePackDialog() }
+
         // 5. Кнопка стикера в inputbar
         chatBinding.btnSticker.setOnClickListener { togglePanel() }
 
@@ -83,6 +86,9 @@ class StickerPanelController(
 
     fun destroy() {
         loadJob?.cancel()
+        // Отвязываем адаптер — холдеры ресайклятся, любые ресурсы стикеров освобождаются.
+        try { panelBinding?.rvStickers?.adapter = null } catch (_: Exception) {}
+        stickerAdapter = null
     }
 
     // ── Видимость панели ─────────────────────────────────────────────────────
@@ -195,7 +201,8 @@ class StickerPanelController(
         val thumbSticker = pack.stickers.firstOrNull { it.localPath == pack.thumbPath } ?: pack.stickers.firstOrNull()
         if (thumbSticker != null) {
             scope.launch {
-                val bmp = repository.renderFirstFrame(thumbSticker)
+                // Превью таба маленькое (~40dp) — рендерим/уменьшаем под него, не 512².
+                val bmp = repository.renderFirstFrame(thumbSticker, maxSize = size)
                 if (bmp != null) {
                     btn.setImageBitmap(bmp)
                     btn.imageTintList = null
@@ -230,6 +237,29 @@ class StickerPanelController(
 
     // ── Добавление пака ──────────────────────────────────────────────────────
 
+    /** Переименование текущего пака (карандаш у названия в панели). */
+    private fun showRenamePackDialog() {
+        val pack = packs.getOrNull(currentPackIndex) ?: return
+        NeonDialog.showEdit(
+            ctx = context,
+            title = context.getString(R.string.sticker_rename_title),
+            initialText = pack.title,
+            positiveText = context.getString(R.string.sticker_rename_save),
+            negativeText = context.getString(R.string.sticker_add_pack_cancel),
+            subtitle = context.getString(R.string.sticker_rename_hint)
+        ) { newTitle ->
+            val clean = newTitle.trim()
+            if (clean.isNotBlank() && clean != pack.title) {
+                scope.launch {
+                    withContext(Dispatchers.IO) { repository.renamePack(pack.name, clean) }
+                    // Обновляем in-memory и подпись на месте — без перезагрузки и смены порядка табов.
+                    packs = packs.map { if (it.name == pack.name) it.copy(title = clean) else it }
+                    panelBinding?.tvStickerPackLabel?.text = clean
+                }
+            }
+        }
+    }
+
     private fun showAddPackDialog() {
         NeonDialog.showEdit(
             ctx = context,
@@ -246,14 +276,26 @@ class StickerPanelController(
     private fun downloadAndAddPack(input: String) {
         val binding = panelBinding ?: return
 
-        // Показываем загрузку
+        // Показываем загрузку с определённой полосой прогресса (как в настройках)
         binding.rvStickers.visibility         = View.GONE
         binding.stickerEmptyState.visibility   = View.GONE
         binding.stickerLoadingState.visibility = View.VISIBLE
+        binding.pbStickerDownload.max = 100
+        binding.pbStickerDownload.progress = 0
+        binding.tvStickerLoadingCount.text = ""
 
         scope.launch {
             try {
-                val pack = repository.addPack(input)
+                val pack = repository.addPack(input) { downloaded, total ->
+                    // onProgress зовётся из IO — обновляем UI на главном потоке через post.
+                    val b = panelBinding ?: return@addPack
+                    b.pbStickerDownload.post {
+                        b.pbStickerDownload.max = total
+                        b.pbStickerDownload.progress = downloaded
+                        b.tvStickerLoadingCount.text =
+                            context.getString(R.string.sticker_loading_count, downloaded, total)
+                    }
+                }
                 withContext(Dispatchers.Main) {
                     packs = packs + pack
                     currentPackIndex = packs.lastIndex

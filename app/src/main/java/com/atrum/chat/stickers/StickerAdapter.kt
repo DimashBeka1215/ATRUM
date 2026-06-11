@@ -2,6 +2,7 @@ package com.atrum.chat.stickers
 
 import android.graphics.BitmapFactory
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import com.airbnb.lottie.LottieCompositionFactory
@@ -42,6 +43,9 @@ class StickerAdapter(
         binding.ivSticker.tag = path
         binding.ivSticker.cancelAnimation()
         binding.ivSticker.setImageDrawable(null)
+        binding.ivSticker.visibility = View.VISIBLE
+        binding.webmSticker.visibility = View.GONE
+        binding.webmSticker.release()
 
         when (sticker.type) {
             StickerType.STATIC -> {
@@ -91,22 +95,18 @@ class StickerAdapter(
                 }
             }
             StickerType.VIDEO -> {
-                // .webm видео-стикеры: в пикере показываем первый кадр (ImageView не умеет видео).
-                // Полноценное проигрывание .webm требует TextureView — отдельная задача.
-                scope.launch {
-                    val bitmap = withContext(Dispatchers.IO) {
-                        try {
-                            val retriever = android.media.MediaMetadataRetriever()
-                            try {
-                                retriever.setDataSource(path)
-                                retriever.getFrameAtTime(0)
-                            } finally { retriever.release() }
-                        } catch (_: Exception) { null }
-                    }
-                    if (binding.ivSticker.tag == path && bitmap != null) {
-                        binding.ivSticker.setImageBitmap(bitmap)
-                    }
-                }
+                // .webm в пикере анимируем тем же покадровым движком, что и в чате: декод один
+                // раз в фоне (2-поточный пул) + дешёвая смена bitmap. Видео-плееров в рантайме
+                // нет, поэтому скролл плавный. При уходе за кадр анимация ставится на паузу
+                // (onViewDetachedFromWindow) и бесшовно продолжается при возврате.
+                binding.ivSticker.visibility = View.GONE
+                binding.ivSticker.setImageDrawable(null)
+                binding.webmSticker.visibility = View.VISIBLE
+                binding.webmSticker.tag = path
+                // play() сам берёт кадры из памяти/диска или декодирует в фоне. Отдельное
+                // MMR-превью убрано: его всё равно стирал release() внутри play(), а на скролле
+                // это был лишний декод на каждую ячейку. Меньше работы → плавнее прокрутка.
+                binding.webmSticker.play(File(path), path)
             }
         }
 
@@ -118,10 +118,32 @@ class StickerAdapter(
         holder.binding.ivSticker.cancelAnimation()
         holder.binding.ivSticker.setImageDrawable(null)
         holder.binding.ivSticker.tag = null
+        holder.binding.webmSticker.tag = null
+        holder.binding.webmSticker.release()
+    }
+
+    override fun onViewAttachedToWindow(holder: VH) {
+        super.onViewAttachedToWindow(holder)
+        // Вернулся в кадр — бесшовно продолжаем с того же места.
+        if (holder.binding.webmSticker.visibility == View.VISIBLE) holder.binding.webmSticker.resume()
+        holder.binding.ivSticker.resumeAnimation()
+    }
+
+    override fun onViewDetachedFromWindow(holder: VH) {
+        super.onViewDetachedFromWindow(holder)
+        // Ушёл за кадр — ставим анимацию на паузу без сброса (плавная прокрутка, экономия CPU).
+        holder.binding.webmSticker.pause()
+        holder.binding.ivSticker.pauseAnimation()
     }
 
     fun update(newStickers: List<Sticker>) {
         stickers = newStickers
         notifyDataSetChanged()
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        super.onDetachedFromRecyclerView(recyclerView)
+        // Отменяем корутины загрузки превью, иначе scope живёт и держит ссылки на view.
+        scope.coroutineContext[Job]?.cancel()
     }
 }

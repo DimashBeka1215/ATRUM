@@ -67,6 +67,30 @@ data class Message(
         /** Префикс коллажа из нескольких изображений. */
         private const val MULTI_PREFIX = "MULTI:"
 
+        /**
+         * Разделитель в новом формате имени стикера: "stk_<ts>_<rand>.<ext>|<contentRef>".
+         * Левая часть уникальна на сообщение (нужна для reconcile/дедупа в сторе),
+         * правая часть (после '|') — общая ссылка на контент в ОТДЕЛЬНОМ gist
+         * ("gist:ID" / "img_..."), что даёт дедуп и убирает раздувание чат-gist.
+         * Старый формат (без '|') хранит контент инлайн в чат-gist — поддержан для совместимости.
+         */
+        private const val STK_REF_SEP = '|'
+
+        /** Расширение стикера (webm/tgs/webp) из imageFileName — для старого и нового формата. */
+        fun stickerExt(fn: String): String =
+            fn.substringBefore(STK_REF_SEP).substringAfterLast('.', "")
+
+        /**
+         * Ссылка на контент стикера. Новый формат — часть после '|' (отдельный gist),
+         * старый — само имя файла (контент инлайн в чат-gist).
+         */
+        fun stickerContentRef(fn: String): String =
+            if (fn.indexOf(STK_REF_SEP) >= 0) fn.substringAfter(STK_REF_SEP) else fn
+
+        /** Собрать имя стикер-сообщения нового формата: уникальное имя + ссылка на контент. */
+        fun stickerRefName(ext: String, contentRef: String): String =
+            newStickerFileName().removeSuffix(".txt") + "." + ext + STK_REF_SEP + contentRef
+
         fun fromDecrypted(
             decrypted: String,
             currentUserId: String,

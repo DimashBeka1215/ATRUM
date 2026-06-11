@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Сплошная жёлтая плашка лимита GitHub (тёмная/светлая тема).
+    Фон гарантированно янтарный (@color/warning) в обеих темах,
+    поэтому текст/иконка поверх — @color/warning_on (тёмный янтарь).
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/warning" />
+    <corners android:radius="12dp" />
+</shape>

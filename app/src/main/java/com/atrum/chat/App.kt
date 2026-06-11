@@ -17,6 +17,8 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         ImageCache.init(this)
+        // Подчищаем кадры стикеров прошлых версий формата (в фоне — это файловый I/O).
+        Thread { StickerDiskCache.cleanupOldVersions(cacheDir) }.start()
         CrashHandler.install(this)
 
         // Если при прошлом запуске был краш и лог сохранился — показать сразу.

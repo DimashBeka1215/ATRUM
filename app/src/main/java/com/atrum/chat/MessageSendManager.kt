@@ -45,7 +45,12 @@ class MessageSendManager(
     /** Вызывается когда блокировка снята. */
     private val onPunishmentEnd: () -> Unit,
     /** Вызывается если сообщение не удалось отправить после всех retry. */
-    private val onSendFailed: (text: String, reason: String) -> Unit
+    private val onSendFailed: (text: String, reason: String) -> Unit,
+    /**
+     * Вызывается при ответе GitHub «лимит запросов» (RateLimitException) с
+     * рекомендованной паузой в мс — UI показывает жёлтую плашку с обратным отсчётом.
+     */
+    private val onRateLimit: (retryAfterMs: Long) -> Unit = {}
 ) {
 
     // ── Элемент очереди ───────────────────────────────────────────────────────
@@ -240,8 +245,11 @@ class MessageSendManager(
                         // Rate limit — ждём рекомендованное время перед retry.
                         // Моментальный повтор бесполезен и только добавит ещё один 429/403.
                         lastError = e.message?.take(200) ?: "rate limit"
+                        // Сообщаем UI, чтобы показать жёлтую плашку с обратным отсчётом.
+                        val waitMs = e.retryAfterMs.coerceAtMost(MAX_RATE_LIMIT_WAIT_MS)
+                        try { onRateLimit(waitMs) } catch (_: Exception) {}
                         if (attempt < MAX_RETRY) {
-                            delay(e.retryAfterMs.coerceAtMost(MAX_RATE_LIMIT_WAIT_MS))
+                            delay(waitMs)
                         }
                     } catch (e: Exception) {
                         lastError = e.message?.take(200) ?: "network error"

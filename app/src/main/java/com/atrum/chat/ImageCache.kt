@@ -21,18 +21,30 @@ object ImageCache {
 
     private const val MAX_BITMAP_BYTES = 50 * 1024 * 1024
     private const val DISK_CACHE_SUBDIR = "images_v1"
+    // Потолок диск-кеша base64 (.b64). Раньше папка росла без ограничений и копила
+    // расшифрованный контент всех картинок/стикеров за всё время. Теперь LRU-trim.
+    private const val MAX_DISK_BYTES = 48L * 1024 * 1024
 
     private val bitmaps = object : LruCache<String, Bitmap>(MAX_BITMAP_BYTES) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
     }
 
-    private val base64s = HashMap<String, String>()
+    // Ограниченный LRU по размеру (UTF-16 ~ length*2). При вытеснении строка остаётся на
+    // диске (см. getDiskFile) — повторное чтение дешевле сети. Раньше был unbounded HashMap,
+    // что копило base64 всех картинок/стикеров за сеанс и вело к OOM.
+    private const val MAX_BASE64_BYTES = 24 * 1024 * 1024
+    private val base64s = object : LruCache<String, String>(MAX_BASE64_BYTES) {
+        override fun sizeOf(key: String, value: String): Int = value.length * 2
+    }
 
-    private val compositions = object : LruCache<String, com.airbnb.lottie.LottieComposition>(100) {
+    // Бюджет кеша Lottie-композиций в КБ. Размер оцениваем по площади bounds стикера
+    // (w*h*4) как грубый проксированный «вес» — раньше лимит был «100 штук» без учёта размера.
+    private const val MAX_COMPOSITION_KB = 48 * 1024
+    private val compositions = object : LruCache<String, com.airbnb.lottie.LottieComposition>(MAX_COMPOSITION_KB) {
         override fun sizeOf(key: String, value: com.airbnb.lottie.LottieComposition): Int {
-            // Approximate size: characters in json string (if we had it) or just count items.
-            // Lottie compositions can be heavy, but 100 items is usually safe for modern devices.
-            return 1 
+            val w = value.bounds.width().takeIf { it > 0 } ?: 512
+            val h = value.bounds.height().takeIf { it > 0 } ?: 512
+            return ((w.toLong() * h * 4) / 1024).toInt().coerceAtLeast(1)
         }
     }
 
@@ -67,7 +79,7 @@ object ImageCache {
     fun getBase64(key: String): String? {
         // 1. Memory
         synchronized(base64s) {
-            base64s[key]?.let { return it }
+            base64s.get(key)?.let { return it }
         }
 
         // 2. Disk
@@ -75,8 +87,10 @@ object ImageCache {
             val file = getDiskFile(key)
             if (file.exists()) {
                 val content = file.readText()
+                // Touch для LRU: недавно прочитанное не должно вытесняться trim'ом.
+                try { file.setLastModified(System.currentTimeMillis()) } catch (_: Exception) {}
                 // Подгружаем в память для быстрых повторных тапов
-                synchronized(base64s) { base64s[key] = content }
+                synchronized(base64s) { base64s.put(key, content) }
                 content
             } else null
         } catch (_: Exception) {
@@ -87,13 +101,13 @@ object ImageCache {
     // ── Составной статус ──────────────────────────────────────────────────────
 
     fun isKnown(key: String): Boolean =
-        bitmaps.get(key) != null || synchronized(base64s) { key in base64s } || getDiskFile(key).exists()
+        bitmaps.get(key) != null || synchronized(base64s) { base64s.get(key) != null } || getDiskFile(key).exists()
 
     // ── Put ───────────────────────────────────────────────────────────────────
 
     fun put(key: String, base64: String, bitmap: Bitmap?) {
         // 1. Memory
-        synchronized(base64s) { base64s[key] = base64 }
+        synchronized(base64s) { base64s.put(key, base64) }
         if (bitmap != null) bitmaps.put(key, bitmap)
 
         // 2. Disk (async safe since we just write)
@@ -101,6 +115,8 @@ object ImageCache {
             val file = getDiskFile(key)
             if (!file.exists()) {
                 file.writeText(base64)
+                // Держим папку в пределах лимита (LRU по lastModified).
+                diskCacheDir?.let { StickerDiskCache.trimDir(it, MAX_DISK_BYTES, ".b64") }
             }
         } catch (_: Exception) {}
     }
@@ -116,7 +132,7 @@ object ImageCache {
     fun clear() {
         bitmaps.evictAll()
         compositions.evictAll()
-        synchronized(base64s) { base64s.clear() }
+        synchronized(base64s) { base64s.evictAll() }
         shownConfirmations.clear()
         try {
             diskCacheDir?.listFiles()?.forEach { it.delete() }

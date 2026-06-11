@@ -95,7 +95,6 @@ class SettingsActivity : SecureActivity() {
         binding.btnLogout.setOnClickListener { confirmLogout() }
 
         setupVersionRow()
-        setupDebugSection()
         setupParallax()
     }
 
@@ -114,7 +113,9 @@ class SettingsActivity : SecureActivity() {
      * приложение её не хранит и не регистрирует.
      */
     private fun setupBiometric() {
-        if (!BiometricHelper.hasHardware(this)) {
+        // Раздел скрыт, если: удалён навсегда, временно скрыт (возврат жестом в «О приложении»),
+        // или в телефоне нет биометрического сканера.
+        if (prefs.biometricRemoved || prefs.biometricHidden || !BiometricHelper.hasHardware(this)) {
             binding.itemBiometric.visibility = View.GONE
             binding.warnBiometric.visibility = View.GONE
             return
@@ -144,6 +145,16 @@ class SettingsActivity : SecureActivity() {
             Toast.makeText(this, R.string.biometric_need_pin, Toast.LENGTH_SHORT).show()
             return
         }
+        // Первое включение — спрашиваем выбор автора (использовать или убрать совсем).
+        if (!prefs.biometricChoiceMade) {
+            showBiometricFirstChoice()
+            return
+        }
+        enableBiometricFlow()
+    }
+
+    /** Обычное включение отпечатка после того, как выбор уже сделан. */
+    private fun enableBiometricFlow() {
         when {
             BiometricHelper.canUse(this) -> {
                 prefs.biometricEnabled = true
@@ -158,6 +169,43 @@ class SettingsActivity : SecureActivity() {
                 Toast.makeText(this, R.string.biometric_warn_title, Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    /**
+     * Диалог при ПЕРВОМ включении входа по отпечатку.
+     * «Буду пользоваться» → включаем как обычно (больше не спрашиваем).
+     * «Убрать функцию» → удаляем функционал НАВСЕГДА (раздел исчезает, разблокировка по
+     * отпечатку отключается, вернуть нельзя). Отмена диалога — оставляем выключенным, спросим позже.
+     */
+    private fun showBiometricFirstChoice() {
+        NeonDialog.showThreeChoice(
+            ctx = this,
+            title = getString(R.string.biometric_first_title),
+            message = getString(R.string.biometric_first_body),
+            iconRes = R.drawable.ic_fingerprint,
+            primaryText = getString(R.string.biometric_first_keep),
+            onPrimary = {
+                prefs.biometricChoiceMade = true
+                enableBiometricFlow()
+            },
+            neutralText = getString(R.string.biometric_first_hide),
+            onNeutral = {
+                // Мягко скрываем — вернуть можно жестом в «О приложении».
+                prefs.biometricChoiceMade = true
+                prefs.biometricHidden = true
+                prefs.biometricEnabled = false
+                setupBiometric()   // строка исчезает
+            },
+            destructiveText = getString(R.string.biometric_first_remove),
+            onDestructive = {
+                // Удаляем навсегда.
+                prefs.biometricChoiceMade = true
+                prefs.biometricRemoved = true
+                prefs.biometricEnabled = false
+                setupBiometric()
+            },
+            footnote = getString(R.string.biometric_hide_hint)
+        )
     }
 
     private fun setupParallax() {
@@ -196,20 +244,6 @@ class SettingsActivity : SecureActivity() {
     }
 
     // ── Строка версии + проверка обновлений ──────────────────────────────────
-
-    private fun setupDebugSection() {
-        binding.switchDebugSecure.isChecked = prefs.debugDisableSecureFlags
-        binding.itemDebugSecure.setOnClickListener {
-            val newState = !binding.switchDebugSecure.isChecked
-            binding.switchDebugSecure.isChecked = newState
-            prefs.debugDisableSecureFlags = newState
-            Toast.makeText(this, R.string.debug_restart_hint, Toast.LENGTH_SHORT).show()
-        }
-
-        binding.itemDebugCrash.setOnClickListener {
-            throw RuntimeException("Test Crash from Settings")
-        }
-    }
 
     /** Последний известный релиз — сохраняем чтобы показать диалог по клику. */
     private var latestRelease: ForceUpdateChecker.ReleaseInfo? = null
@@ -556,6 +590,20 @@ class SettingsActivity : SecureActivity() {
      * Starts from the middle of the banner to ensure a natural transition without harsh edges.
      * Automatically adapts to Light/Dark themes using @color/bg.
      */
+    /**
+     * Плавное появление баннера (фото профиля в шапке) — fade-in за 300мс.
+     * Утрачен при рефакторинге v2.6.5 (вызов в setupBanner остался), восстановлен из истории.
+     */
+    private fun animateBannerIn() {
+        binding.ivBanner.alpha = 0f
+        binding.vBannerDimOverlay.alpha = 0f
+        binding.vBannerGradient.alpha = 0f
+
+        binding.ivBanner.animate().alpha(1f).setDuration(300).start()
+        binding.vBannerDimOverlay.animate().alpha(1f).setDuration(300).start()
+        binding.vBannerGradient.animate().alpha(1f).setDuration(300).start()
+    }
+
     private fun applyHeroGradient() {
         val bgColor = ContextCompat.getColor(this, R.color.bg)
         val rgb = bgColor and 0x00FFFFFF

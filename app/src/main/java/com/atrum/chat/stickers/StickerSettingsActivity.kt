@@ -39,6 +39,10 @@ class StickerSettingsActivity : AppCompatActivity() {
         updateTokenPreview()
         binding.btnTokenContainer.setOnClickListener { showEditTokenDialog() }
         binding.btnSaveToken.setOnClickListener { showEditTokenDialog() }
+        binding.btnGetToken.setOnClickListener { openBotFather() }
+        binding.btnHelp.setOnClickListener {
+            startActivity(android.content.Intent(this, StickerGuideActivity::class.java))
+        }
         binding.btnBack.setOnClickListener { finish() }
 
         // Add pack
@@ -108,10 +112,15 @@ class StickerSettingsActivity : AppCompatActivity() {
             val thumbSticker = pack.stickers.firstOrNull { it.localPath == pack.thumbPath } ?: pack.stickers.firstOrNull()
             
             if (thumbSticker != null) {
+                val thumbPx = (56 * resources.displayMetrics.density).toInt()
                 scope.launch {
-                    val bmp = repository.renderFirstFrame(thumbSticker)
+                    val bmp = repository.renderFirstFrame(thumbSticker, maxSize = thumbPx)
                     if (bmp != null) thumb.setImageBitmap(bmp)
                 }
+            }
+
+            row.findViewById<ImageButton>(R.id.btnRenamePack).setOnClickListener {
+                showRenameDialog(pack)
             }
 
             row.findViewById<ImageButton>(R.id.btnDeletePack).setOnClickListener {
@@ -130,6 +139,24 @@ class StickerSettingsActivity : AppCompatActivity() {
                     )
                 }
                 container.addView(divider)
+            }
+        }
+    }
+
+    private fun showRenameDialog(pack: StickerPack) {
+        NeonDialog.showEdit(
+            ctx = this,
+            title = getString(R.string.sticker_rename_title),
+            initialText = pack.title,
+            positiveText = getString(R.string.sticker_rename_save),
+            negativeText = getString(R.string.sticker_add_pack_cancel),
+            subtitle = getString(R.string.sticker_rename_hint)
+        ) { newTitle ->
+            if (newTitle.isNotBlank() && newTitle.trim() != pack.title) {
+                scope.launch {
+                    withContext(Dispatchers.IO) { repository.renamePack(pack.name, newTitle) }
+                    loadPacks()
+                }
             }
         }
     }
@@ -212,6 +239,20 @@ class StickerSettingsActivity : AppCompatActivity() {
                     Toast.LENGTH_SHORT
                 ).show()
             }
+        }
+    }
+
+    /** Открывает @BotFather в Telegram/браузере — там пользователь создаёт бота и получает токен. */
+    private fun openBotFather() {
+        try {
+            startActivity(
+                android.content.Intent(
+                    android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse("https://t.me/BotFather")
+                )
+            )
+        } catch (_: Exception) {
+            Toast.makeText(this, R.string.sticker_error_network, Toast.LENGTH_SHORT).show()
         }
     }
 

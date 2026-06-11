@@ -17,6 +17,7 @@ import com.airbnb.lottie.LottieCompositionFactory
 import com.airbnb.lottie.RenderMode
 import java.io.ByteArrayInputStream
 import java.util.zip.GZIPInputStream
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -230,6 +231,11 @@ class MessageAdapter(
         holder.pauseSticker()
     }
 
+    override fun onViewRecycled(holder: VH) {
+        super.onViewRecycled(holder)
+        holder.recycleSticker()
+    }
+
     private fun formatTime(ms: Long): String {
         val now = Calendar.getInstance()
         val msg = Calendar.getInstance().apply { timeInMillis = ms }
@@ -272,12 +278,23 @@ class MessageAdapter(
         private val imageView: ShapeableImageView? = itemView.findViewById(R.id.iv_image)
         private val collageView: CollageLayout? = itemView.findViewById(R.id.collage_layout)
         private val lottieView: LottieAnimationView? = itemView.findViewById(R.id.lottie_sticker)
+        private val webmView: WebmStickerView? = itemView.findViewById(R.id.webm_sticker)
         private val tickView: ImageView? = itemView.findViewById(R.id.iv_tick)
         /** The rounded bubble container — background changes between classic and glass modes. */
         private val bubbleContainer: View? = itemView.findViewById(R.id.bubble_container)
 
-        fun resumeSticker() { lottieView?.takeIf { it.visibility == View.VISIBLE }?.resumeAnimation() }
-        fun pauseSticker()  { lottieView?.pauseAnimation() }
+        fun resumeSticker() {
+            lottieView?.takeIf { it.visibility == View.VISIBLE }?.resumeAnimation()
+            webmView?.takeIf { it.visibility == View.VISIBLE }?.resume()
+        }
+        fun pauseSticker()  {
+            lottieView?.pauseAnimation()
+            webmView?.pause()
+        }
+        fun recycleSticker() {
+            lottieView?.cancelAnimation()
+            webmView?.release()
+        }
 
         /** Радиус скруглений для ячеек коллажа (7dp). */
         private val cellCornerRadius = 7f * itemView.context.resources.displayMetrics.density
@@ -311,11 +328,21 @@ class MessageAdapter(
 
             // ── Картинка / коллаж / стикер ───────────────────────────────────
             when {
-                msg.isSticker && lottieView != null -> {
+                msg.isSticker && (lottieView != null || webmView != null) -> {
                     imageView?.visibility = View.GONE
                     imageView?.tag = null
                     collageView?.let { it.visibility = View.GONE; it.removeAllViews() }
-                    bindSticker(msg, lottieView)
+                    // webm -> по-кадровый движок (WebmStickerView): декод один раз в лёгкие
+                    // кадры с прозрачностью, дальше смена картинок. Без video-декодеров при
+                    // скролле -> без крашей/лагов. .tgs/.webp -> bindSticker.
+                    val isWebm = msg.imageFileName?.let { Message.stickerExt(it).equals("webm", true) } == true
+                    if (isWebm && webmView != null) {
+                        lottieView?.let { it.visibility = View.GONE; it.cancelAnimation() }
+                        bindWebmSticker(msg, webmView)
+                    } else if (lottieView != null) {
+                        webmView?.let { it.visibility = View.GONE; it.release() }
+                        bindSticker(msg, lottieView)
+                    }
                     // Стикеры не реагируют на тапы
                     itemView.isClickable = false
                     itemView.isLongClickable = false
@@ -324,6 +351,7 @@ class MessageAdapter(
                     // Коллаж: скрываем одиночный ImageView, показываем CollageLayout
                     imageView?.visibility = View.GONE
                     imageView?.tag = null
+                    webmView?.let { it.visibility = View.GONE; it.release() }
                     bindCollage(msg, collageView)
                     collageView.setOnClickListener(null)   // клик — на отдельных ячейках
                 }
@@ -331,6 +359,7 @@ class MessageAdapter(
                     // Одиночное изображение
                     collageView?.let { it.visibility = View.GONE; it.removeAllViews() }
                     lottieView?.let { it.visibility = View.GONE; it.cancelAnimation() }
+                    webmView?.let { it.visibility = View.GONE; it.release() }
                     bindImage(msg, imageView)
                     imageView.setOnClickListener { onImageClick(msg) }
                 }
@@ -339,6 +368,7 @@ class MessageAdapter(
                     imageView?.tag = null
                     collageView?.let { it.visibility = View.GONE; it.removeAllViews() }
                     lottieView?.let { it.visibility = View.GONE; it.cancelAnimation() }
+                    webmView?.let { it.visibility = View.GONE; it.release() }
                 }
             }
 
@@ -389,6 +419,7 @@ class MessageAdapter(
             }
 
             val anchor: View = when {
+                msg.isSticker && msg.imageFileName?.let { Message.stickerExt(it).equals("webm", true) } == true && webmView != null -> webmView
                 msg.isSticker && lottieView != null -> lottieView
                 msg.isMultiImage && collageView != null -> collageView
                 msg.isImage && imageView != null -> imageView
@@ -524,14 +555,25 @@ class MessageAdapter(
          */
         private fun bindSticker(msg: Message, lottie: LottieAnimationView) {
             val fileName = msg.imageFileName ?: return
+            // Контент стикера и его кеш — по общей ссылке (новый формат: часть после '|';
+            // старый формат: само имя файла). Тип определяем по расширению из имени.
+            val ref = Message.stickerContentRef(fileName)
+            val ext = Message.stickerExt(fileName)
+            // Тот же tgs уже загружен в этом холдере — не сбрасываем композицию/анимацию.
+            // Иначе notifyDataSetChanged (например при отправке стикера) перебиндивает всё
+            // и анимированные стикеры мигают/перезагружаются.
+            if (lottie.tag == fileName && lottie.composition != null) {
+                if (!lottie.isAnimating) lottie.resumeAnimation()
+                return
+            }
             lottie.visibility = View.VISIBLE
             lottie.isClickable = false
             lottie.isFocusable = false
             lottie.tag = fileName
             lottie.cancelAnimation()
-            
+
             // Сразу ставим превью из кеша если есть, чтобы не было пустоты
-            val cachedBmp = ImageCache.getBitmap(fileName)
+            val cachedBmp = ImageCache.getBitmap(ref)
             if (cachedBmp != null) {
                 lottie.setImageBitmap(cachedBmp)
             } else {
@@ -541,22 +583,24 @@ class MessageAdapter(
             val loader = getImageLoader() ?: return
             val scope = loadScope ?: return
             scope.launch {
-                val isTgs = fileName.endsWith(".tgs", ignoreCase = true)
-                
+                val isTgs = ext.equals("tgs", true)
+
                 if (isTgs) {
-                    val cachedComp = ImageCache.getComposition(fileName)
+                    val cachedComp = ImageCache.getComposition(ref)
                     if (cachedComp != null) {
                         if (lottie.tag == fileName) {
                             lottie.setComposition(cachedComp)
                             lottie.repeatCount = com.airbnb.lottie.LottieDrawable.INFINITE
+                            lottie.setRenderMode(RenderMode.HARDWARE)
+                            lottie.setSafeMode(false)
                             lottie.playAnimation()
                         }
                         return@launch
                     }
                 }
 
-                val base64 = ImageCache.getBase64(fileName)
-                    ?: loader.loadBase64(fileName)
+                val base64 = ImageCache.getBase64(ref)
+                    ?: loader.loadBase64(ref)
                     ?: run { if (lottie.tag == fileName) lottie.visibility = View.GONE; return@launch }
 
                 if (lottie.tag != fileName) return@launch
@@ -567,14 +611,14 @@ class MessageAdapter(
                             val bytes = android.util.Base64.decode(base64, android.util.Base64.NO_WRAP)
                             val gzis = GZIPInputStream(ByteArrayInputStream(bytes))
                             val jsonString = gzis.bufferedReader().use { it.readText() }
-                            LottieCompositionFactory.fromJsonStringSync(jsonString, fileName).value
-                        } catch (e: Exception) { 
+                            LottieCompositionFactory.fromJsonStringSync(jsonString, ref).value
+                        } catch (e: Exception) {
                             android.util.Log.e("MessageAdapter", "Lottie error: ${e.message}")
-                            null 
+                            null
                         }
                     }
                     if (lottie.tag == fileName && comp != null) {
-                        ImageCache.putComposition(fileName, comp)
+                        ImageCache.putComposition(ref, comp)
                         lottie.setComposition(comp)
                         lottie.repeatCount = com.airbnb.lottie.LottieDrawable.INFINITE
                         lottie.setRenderMode(RenderMode.HARDWARE)
@@ -583,14 +627,14 @@ class MessageAdapter(
                     } else if (lottie.tag == fileName && cachedBmp == null) {
                         lottie.visibility = View.GONE
                     }
-                } else if (fileName.endsWith(".webm", ignoreCase = true)) {
+                } else if (ext.equals("webm", true)) {
                     // VIDEO sticker: декодируем первый кадр из raw webm через MediaMetadataRetriever.
                     // BitmapFactory не умеет webm — раньше у получателя стикер просто исчезал (null).
                     val bitmap = cachedBmp ?: withContext(Dispatchers.IO) {
                         decodeWebmFirstFrame(base64)
                     }
                     if (lottie.tag == fileName && bitmap != null) {
-                        if (ImageCache.getBitmap(fileName) == null) ImageCache.put(fileName, base64, bitmap)
+                        if (ImageCache.getBitmap(ref) == null) ImageCache.put(ref, base64, bitmap)
                         lottie.setImageBitmap(bitmap)
                     } else if (lottie.tag == fileName) {
                         lottie.visibility = View.GONE
@@ -639,6 +683,68 @@ class MessageAdapter(
                     retriever.release()
                 }
             } catch (_: Exception) { null }
+        }
+
+        /**
+         * Привязывает .webm видео-стикер к WebmStickerView: материализует файл из base64
+         * в кеш и запускает циклическое воспроизведение. Первый кадр — заглушка/фоллбэк.
+         */
+        private fun bindWebmSticker(msg: Message, webm: WebmStickerView) {
+            val fileName = msg.imageFileName ?: return
+            // Контент/кадры — по общей ссылке (новый формат: после '|'; старый: имя файла),
+            // поэтому кеш и декод переиспользуются между всеми сообщениями с тем же стикером.
+            val ref = Message.stickerContentRef(fileName)
+            // Тот же стикер уже играет в этом холдере — не трогаем (иначе при обновлении списка
+            // notifyDataSetChanged перебиндивает всё и стикеры мигают/перезагружаются).
+            if (webm.isPlaying(ref)) return
+            webm.visibility = View.VISIBLE
+            webm.tag = ref
+            webm.setFallbackBitmap(ImageCache.getBitmap(ref))
+
+            val scope = loadScope ?: return
+            scope.launch {
+                // Быстрый путь: кадры уже в памяти/на диске — играем без base64/декода/temp-файла.
+                if (webm.hasFrames(ref)) {
+                    if (webm.tag == ref) webm.playCached(ref)
+                    return@launch
+                }
+
+                // Медленный путь (первый раз для этого стикера): нужен сам webm-файл.
+                val loader = getImageLoader() ?: return@launch
+                val base64 = ImageCache.getBase64(ref)
+                    ?: loader.loadBase64(ref)
+                    ?: run { if (webm.tag == ref) webm.visibility = View.GONE; return@launch }
+                if (webm.tag != ref) return@launch
+
+                val file = withContext(Dispatchers.IO) { materializeWebm(ref, base64) }
+                if (webm.tag == ref && file != null) {
+                    webm.play(file, ref)
+                }
+            }
+        }
+
+        /** Распаковывает base64 .webm во временный файл кеша (один раз) и возвращает его. */
+        private fun materializeWebm(fileName: String, base64: String): File? {
+            return try {
+                val dir = File(itemView.context.cacheDir, "webm_stickers").apply { mkdirs() }
+                val f = File(dir, md5Hex(fileName) + ".webm")
+                if (!f.exists() || f.length() == 0L) {
+                    val bytes = android.util.Base64.decode(base64, android.util.Base64.NO_WRAP)
+                    f.writeBytes(bytes)
+                    // Ограничиваем размер temp-папки (как кеш в Telegram).
+                    StickerDiskCache.trimDir(dir, 32L * 1024 * 1024, ".webm")
+                } else {
+                    // Помечаем как недавно использованный, чтобы LRU-trim (по lastModified) не
+                    // удалил файл, который прямо сейчас декодируется другим стикером.
+                    try { f.setLastModified(System.currentTimeMillis()) } catch (_: Exception) {}
+                }
+                f
+            } catch (_: Exception) { null }
+        }
+
+        private fun md5Hex(s: String): String {
+            val d = java.security.MessageDigest.getInstance("MD5").digest(s.toByteArray())
+            return d.joinToString("") { "%02x".format(it) }
         }
 
                 private fun bindCollage(msg: Message, collage: CollageLayout) {

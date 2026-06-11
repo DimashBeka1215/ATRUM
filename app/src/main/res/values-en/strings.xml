@@ -224,6 +224,9 @@
     <string name="warn_token_title">Token is invalid</string>
     <string name="warn_token_message">GitHub is rejecting your token — it may have expired or been revoked. Tap "Update token" and enter a new one — no need to recreate the chat.</string>
     <string name="btn_update_token">Update token</string>
+    <!-- GitHub rate-limit banner -->
+    <string name="rate_limit_title">Too many requests</string>
+    <string name="rate_limit_retry_in">You can send again in %1$s</string>
     <string name="dialog_update_token_title">New GitHub token</string>
 
     <string name="warn_rate_limit_title">GitHub asks to wait a moment</string>
@@ -489,6 +492,11 @@
     <string name="identity_confirmed_both">Confirmed by both</string>
     <string name="identity_confirmed_waiting">You confirmed — waiting for your contact</string>
     <string name="identity_not_confirmed">Not confirmed in person</string>
+    <!-- Mutual verification status pill -->
+    <string name="verify_status_waiting_title">You confirmed identity</string>
+    <string name="verify_status_waiting_sub">Waiting for the other side</string>
+    <string name="verify_status_both_title">Confirmed by both</string>
+    <string name="verify_status_both_sub">Identity verified on both sides</string>
 
 
     <!-- Profile Banner / Header -->
@@ -514,12 +522,6 @@
 
     <string name="settings_item_stickers">Stickers</string>
     <string name="settings_section_security">SECURITY</string>
-    <string name="settings_section_debug">DEVELOPMENT &amp; TESTS</string>
-    <string name="settings_item_debug">Debug settings</string>
-    <string name="debug_disable_secure_title">Screenshot protection</string>
-    <string name="debug_disable_secure_desc">Allow screenshots everywhere (demo only)</string>
-    <string name="debug_crash_title">Force crash</string>
-    <string name="debug_crash_desc">Trigger RuntimeException to check logs</string>
     <string name="settings_item_change_pin">Change PIN</string>
     <string name="settings_item_change_pin_desc">App lock password</string>
     <string name="settings_item_biometric">Fingerprint unlock</string>
@@ -528,6 +530,14 @@
     <string name="biometric_warn_desc">First add a fingerprint in your phone settings. Atrum never records biometrics itself.</string>
     <string name="biometric_open_settings">Open phone settings</string>
     <string name="biometric_need_pin">Set a PIN first</string>
+    <!-- First-enable choice dialog for fingerprint login -->
+    <string name="biometric_first_title">Sure you\'ll use it?</string>
+    <string name="biometric_first_body">Fingerprint unlock was added by the author mostly for himself. You can keep it, hide it for now, or remove it entirely.</string>
+    <string name="biometric_first_keep">I\'ll use it</string>
+    <string name="biometric_first_hide">Hide</string>
+    <string name="biometric_first_remove">Remove forever</string>
+    <string name="biometric_hide_hint">\"Hide\" removes the row from settings. To bring it back: tap the app icon 7 times in the About screen.</string>
+    <string name="biometric_restored">Fingerprint unlock restored</string>
     <string name="biometric_prompt_title">Unlock Atrum</string>
     <string name="biometric_prompt_subtitle">Confirm with your fingerprint</string>
     <string name="biometric_prompt_cancel">Use PIN</string>
@@ -552,6 +562,7 @@
     <string name="sticker_settings_token_hint_desc">Required to load your packs from Telegram</string>
     <string name="sticker_settings_token_save">SAVE</string>
     <string name="sticker_settings_token_saved">Token saved</string>
+    <string name="sticker_settings_get_token">Get a token from @BotFather</string>
     <string name="sticker_settings_packs_section">MY STICKERS</string>
     <string name="sticker_add_pack_title">Add Pack</string>
     <string name="sticker_add_pack_btn">Add</string>
@@ -573,6 +584,13 @@
     <string name="sticker_empty_title">No stickers yet</string>
     <string name="sticker_empty_hint">Add a sticker pack in settings</string>
     <string name="sticker_loading">Loading…</string>
+    <string name="sticker_loading_count">%1$d / %2$d</string>
+    <string name="sticker_rename_title">Rename pack</string>
+    <string name="sticker_rename_hint">The new name is visible only to you.</string>
+    <string name="sticker_rename_save">Save</string>
+    <string name="sticker_rename_cd">Rename pack</string>
+    <string name="msg_preview_sticker">Sticker</string>
+    <string name="msg_preview_photo">Photo</string>
     <string name="sticker_pack_label_default">Stickers</string>
     <string name="sticker_add_pack_cd">Add pack</string>
     <string name="sticker_help_cd">Help</string>
@@ -604,4 +622,61 @@
     <string name="search_hint">Search</string>
     <string name="search_empty">No chats found</string>
     <string name="cd_search">Search chats</string>
+    <string name="sticker_settings_help">Help</string>
+    <string name="sticker_guide_close">Close</string>
+    <string name="sticker_guide_step">STEP</string>
+    <string name="sticker_guide_search">Search: BotFather</string>
+    <string name="sticker_guide_official">official bot · blue check</string>
+    <string name="sticker_guide_bf_name">What should we call the bot?</string>
+    <string name="sticker_guide_botname">My stickers</string>
+    <string name="sticker_guide_bf_user">Now a username — it must end in \'bot\'.</string>
+    <string name="sticker_guide_token_line">Token to access the API:</string>
+    <string name="sticker_guide_keep">Tap to copy. Keep it like a password.</string>
+    <string name="sticker_guide_copied">Copied</string>
+    <string name="sticker_guide_loading">Downloading… 14 / 20</string>
+    <string name="sticker_guide_done">Done — pack added</string>
+    <string name="sticker_guide_s1_t">Open @BotFather</string>
+    <string name="sticker_guide_s1_d">Find the bot with a blue check in search — it creates bots.</string>
+    <string name="sticker_guide_s2_t">/newbot → name → username</string>
+    <string name="sticker_guide_s2_d">Send /newbot, set a name and a username (ending in \'bot\').</string>
+    <string name="sticker_guide_s3_t">Copy the token</string>
+    <string name="sticker_guide_s3_d">BotFather sends a token 7123456789:AAH… — tap to copy.</string>
+    <string name="sticker_guide_s4_t">Paste the token in settings</string>
+    <string name="sticker_guide_s4_d">Sticker settings → \'Bot token\' field → paste → Save.</string>
+    <string name="sticker_guide_s5_t">Copy the pack link</string>
+    <string name="sticker_guide_s5_d">Long-press a sticker → View Sticker Set → ⋯ → Copy Link.</string>
+    <string name="sticker_guide_s6_t">Add the pack by link</string>
+    <string name="sticker_guide_s6_d">\'Add pack\' → paste t.me/addstickers/… → download → done.</string>
+    <string name="about_github_title">GitHub</string>
+    <string name="about_telegram_title">Telegram</string>
+    <string name="btn_apply">Apply</string>
+    <string name="cc_invite_only_title">How to connect to the chat</string>
+    <string name="cc_invite_only_text">Your partner will get an invite code via «Share invite». The password is set automatically. To set your own password, use Advanced mode.</string>
+    <string name="chat_ui_classic">Classic</string>
+    <string name="chat_ui_glass">Atmospheric Glass</string>
+    <string name="chat_ui_glass_needs_wallpaper">Atmospheric Glass requires a wallpaper. Set one in Chat Wallpaper first.</string>
+    <string name="donate_boosty">Boosty</string>
+    <string name="donate_buymeacoffee">Buy Me a Coffee</string>
+    <string name="donate_donationalerts">DonationAlerts</string>
+    <string name="intro_donate_title">Support the Project</string>
+    <string name="intro_donate_subtitle">Atrum is built by one person, with no funding or ads. If you enjoy the app, please consider supporting its development — every donation, big or small, keeps this project alive.\n\nYou can donate anytime via Settings → Support.</string>
+    <string name="mock_chat_name">Alex</string>
+    <string name="mock_chat_status">online</string>
+    <string name="mock_msg_other">Hey, how\'s it going?</string>
+    <string name="mock_msg_self">All good, thanks! 👍</string>
+    <string name="mock_msg_time">14:32 ✓✓</string>
+    <string name="settings_display_name_label">Your name</string>
+    <string name="settings_item_chat_ui_style">Chat Interface</string>
+    <string name="settings_item_theme">Theme</string>
+    <string name="settings_section_appearance">APPEARANCE</string>
+    <string name="settings_section_display">DISPLAY</string>
+    <string name="settings_section_more">MORE</string>
+    <string name="settings_tag_hint">@tag</string>
+    <string name="transparency_bubble_other">Partner messages</string>
+    <string name="transparency_bubble_self">My messages</string>
+    <string name="transparency_custom">Custom</string>
+    <string name="transparency_default">Default</string>
+    <string name="transparency_title">Transparency</string>
+    <string name="transparency_ui">Interface (header, input)</string>
+    <string name="wallpaper_preview_adjust">Preview &amp; Adjust</string>
 </resources>

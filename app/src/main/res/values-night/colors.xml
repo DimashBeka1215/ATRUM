@@ -53,4 +53,6 @@
     <color name="error">#FF5252</color>
     <color name="warning">#FFB454</color>
     <color name="warning_muted">#D49E5D</color>
+    <!-- Тёмный текст/иконка поверх сплошной жёлтой плашки — янтарный фон одинаков в обеих темах. -->
+    <color name="warning_on">#412402</color>
 </resources>

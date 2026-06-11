@@ -35,6 +35,13 @@ class StickerRepository(private val context: Context) {
     private val rootDir: File
         get() = File(context.filesDir, StickerConfig.STICKER_DIR).also { it.mkdirs() }
 
+    companion object {
+        // Кеш списка паков, общий для всех экземпляров репозитория (один набор на диске).
+        @Volatile private var packsCache: List<StickerPack>? = null
+        /** Сбросить кеш паков — после любого изменения на диске (add/remove/rename). */
+        fun invalidatePacksCache() { packsCache = null }
+    }
+
     // ── Публичное API ────────────────────────────────────────────────────────
 
     /**
@@ -42,11 +49,16 @@ class StickerRepository(private val context: Context) {
      * Читает meta.json из каждой папки в rootDir.
      */
     suspend fun loadLocalPacks(): List<StickerPack> = withContext(Dispatchers.IO) {
-        rootDir.listFiles()
+        // Кеш на уровне процесса: подсказки по эмодзи зовут это на каждое нажатие, а раньше
+        // каждый раз читались все meta.json с диска. Инвалидация — при add/remove/rename.
+        packsCache?.let { return@withContext it }
+        val loaded = rootDir.listFiles()
             ?.filter { it.isDirectory }
             ?.sortedByDescending { it.lastModified() }
             ?.mapNotNull { dir -> readMeta(dir) }
             ?: emptyList()
+        packsCache = loaded
+        loaded
     }
 
     /**
@@ -123,6 +135,7 @@ class StickerRepository(private val context: Context) {
             thumbPath = thumbPath
         )
         writeMeta(packDir, pack)
+        invalidatePacksCache()
         pack
     }
 
@@ -131,6 +144,20 @@ class StickerRepository(private val context: Context) {
      */
     suspend fun removePack(packName: String) = withContext(Dispatchers.IO) {
         File(rootDir, packName).deleteRecursively()
+        invalidatePacksCache()
+    }
+
+    /**
+     * Переименовывает пак — меняет ТОЛЬКО отображаемое название (title в meta.json).
+     * Техническое имя пака и папка на диске не трогаются.
+     */
+    suspend fun renamePack(packName: String, newTitle: String) = withContext(Dispatchers.IO) {
+        val clean = newTitle.trim().take(64)
+        if (clean.isEmpty()) return@withContext
+        val packDir = File(rootDir, packName)
+        val pack = readMeta(packDir) ?: return@withContext
+        writeMeta(packDir, pack.copy(title = clean))
+        invalidatePacksCache()
     }
 
 
@@ -143,7 +170,10 @@ class StickerRepository(private val context: Context) {
      *
      * Возвращает null если файл недоступен или конвертация не удалась.
      */
-    suspend fun renderFirstFrame(sticker: Sticker): android.graphics.Bitmap? = withContext(Dispatchers.IO) {
+    suspend fun renderFirstFrame(
+        sticker: Sticker,
+        maxSize: Int = 0
+    ): android.graphics.Bitmap? = withContext(Dispatchers.IO) {
         val path = sticker.localPath ?: return@withContext null
         val file = File(path)
         if (!file.exists()) return@withContext null
@@ -163,13 +193,15 @@ class StickerRepository(private val context: Context) {
                         composition = comp
                         frame = 0
                     }
-                    val w = comp.bounds.width().takeIf { it > 0 } ?: 512
-                    val h = comp.bounds.height().takeIf { it > 0 } ?: 512
+                    val bw = comp.bounds.width().takeIf { it > 0 } ?: 512
+                    val bh = comp.bounds.height().takeIf { it > 0 } ?: 512
+                    // Под превью рендерим сразу в нужный размер — без 512²-аллокации.
+                    val (w, h) = scaledDims(bw, bh, maxSize)
                     val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
                     val canvas = android.graphics.Canvas(bmp)
                     drawable.setBounds(0, 0, w, h)
                     drawable.draw(canvas)
-                    bmp
+                    return@withContext bmp  // уже нужного размера
                 }
                 StickerType.VIDEO -> {
                     val retriever = android.media.MediaMetadataRetriever()
@@ -180,8 +212,49 @@ class StickerRepository(private val context: Context) {
                         retriever.release()
                     }
                 }
-            }
+            }?.let { bmp -> if (maxSize > 0) downscale(bmp, maxSize) else bmp }
         } catch (_: Exception) { null }
+    }
+
+    /** Считает целевые размеры под maxSize (0 = без ограничения, исходный размер). */
+    private fun scaledDims(w: Int, h: Int, maxSize: Int): Pair<Int, Int> {
+        if (maxSize <= 0) return w to h
+        val m = maxOf(w, h)
+        if (m <= maxSize) return w to h
+        val s = maxSize.toFloat() / m
+        return (w * s).toInt().coerceAtLeast(1) to (h * s).toInt().coerceAtLeast(1)
+    }
+
+    /** Уменьшает bitmap до maxSize по большей стороне (если больше). Освобождает исходник. */
+    private fun downscale(src: android.graphics.Bitmap, maxSize: Int): android.graphics.Bitmap {
+        val (w, h) = scaledDims(src.width, src.height, maxSize)
+        if (w == src.width && h == src.height) return src
+        val scaled = android.graphics.Bitmap.createScaledBitmap(src, w, h, true)
+        if (scaled !== src) src.recycle()
+        return scaled
+    }
+
+    /**
+     * Стикеры-подсказки по введённому эмодзи (как в Telegram).
+     * Совпадение по сохранённому полю emoji: либо введённый текст содержит emoji стикера,
+     * либо наоборот (на случай слитных мульти-эмодзи). Дедуп по localPath, с лимитом.
+     */
+    suspend fun stickersForEmoji(typed: String, limit: Int = 60): List<Sticker> = withContext(Dispatchers.IO) {
+        val q = typed.trim()
+        if (q.isEmpty()) return@withContext emptyList()
+        val seen = HashSet<String>()
+        val out = ArrayList<Sticker>()
+        for (pack in loadLocalPacks()) {
+            for (s in pack.stickers) {
+                val path = s.localPath ?: continue
+                if (s.emoji.isEmpty()) continue
+                if ((q.contains(s.emoji) || s.emoji.contains(q)) && seen.add(path)) {
+                    out.add(s)
+                    if (out.size >= limit) return@withContext out
+                }
+            }
+        }
+        out
     }
 
     // ── Внутренние методы ────────────────────────────────────────────────────
@@ -219,23 +292,29 @@ class StickerRepository(private val context: Context) {
             .getJSONObject("result")
             .getString("file_path")
 
-        // Шаг 2: скачиваем байты
+        // Шаг 2: скачиваем байты. Response ОБЯЗАТЕЛЬНО закрываем (.use), иначе на ошибочных
+        // ветках соединение течёт. В тексте ошибки НЕ используем URL — он содержит bot-токен.
         val downloadUrl = "${StickerConfig.fileBase(context)}/$filePath"
         val req  = Request.Builder().url(downloadUrl).build()
-        val resp = http.newCall(req).execute()
-        if (!resp.isSuccessful) throw StickerException("HTTP ${resp.code} при скачивании стикера")
-
-        val bytes = resp.body?.bytes() ?: throw StickerException("Пустой ответ при скачивании")
-        if (bytes.size > StickerConfig.MAX_STICKER_BYTES) return // слишком большой — пропускаем
-        dest.writeBytes(bytes)
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw StickerException("HTTP ${resp.code} при скачивании стикера")
+            val bytes = resp.body?.bytes() ?: throw StickerException("Пустой ответ при скачивании")
+            if (bytes.size > StickerConfig.MAX_STICKER_BYTES) {
+                android.util.Log.w("StickerRepo", "Стикер $fileId пропущен: ${bytes.size} Б > лимита")
+                return // слишком большой — пропускаем
+            }
+            dest.writeBytes(bytes)
+        }
     }
 
-    /** Простой GET-запрос, возвращает тело как строку. */
+    /** Простой GET-запрос, возвращает тело как строку. Response закрывается через .use. */
     private fun httpGet(url: String): String {
         val req  = Request.Builder().url(url).build()
-        val resp = http.newCall(req).execute()
-        if (!resp.isSuccessful) throw StickerException("HTTP ${resp.code}: $url")
-        return resp.body?.string() ?: throw StickerException("Пустой ответ: $url")
+        // В сообщениях ошибок НЕ передаём url — он содержит bot-токен (…/bot<token>/…).
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw StickerException("HTTP ${resp.code}")
+            return resp.body?.string() ?: throw StickerException("Пустой ответ от Telegram API")
+        }
     }
 
     /** Расширение файла по типу стикера. */

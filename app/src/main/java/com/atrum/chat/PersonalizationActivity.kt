@@ -56,8 +56,20 @@ class PersonalizationActivity : SecureActivity() {
         }
     }
 
+    /** true только у того экземпляра Activity, который реально читает App.screenshot для reveal. */
+    private var screenshotConsumed = false
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Страховка: если reveal-анимацию прервали до завершения, не оставляем
+        // полноэкранный Bitmap висеть в статике App.screenshot. Чистим только у читающего
+        // экземпляра — у установившего (до recreate) флаг false, иначе сломали бы анимацию.
+        if (screenshotConsumed) App.screenshot = null
+    }
+
     private fun animateReveal() {
         val screenshot = App.screenshot ?: return
+        screenshotConsumed = true
         val cx = App.centerX
         val cy = App.centerY
 

@@ -153,6 +153,11 @@
             android:windowSoftInputMode="adjustResize" />
 
         <activity
+            android:name=".stickers.StickerGuideActivity"
+            android:exported="false"
+            android:theme="@style/Theme.GithubChat" />
+
+        <activity
             android:name=".UpdateActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />

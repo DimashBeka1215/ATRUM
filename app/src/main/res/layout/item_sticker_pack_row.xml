@@ -41,6 +41,16 @@
     </LinearLayout>
 
     <ImageButton
+        android:id="@+id/btnRenamePack"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:src="@drawable/ic_pencil"
+        android:background="@drawable/bg_icon_button"
+        android:tint="@color/accent"
+        android:layout_marginEnd="2dp"
+        android:contentDescription="@string/sticker_rename_cd" />
+
+    <ImageButton
         android:id="@+id/btnDeletePack"
         android:layout_width="40dp"
         android:layout_height="40dp"

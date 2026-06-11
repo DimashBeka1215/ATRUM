@@ -390,6 +390,7 @@ class ChatsListActivity : SecureActivity() {
                     val previewBody = when {
                         parsed.isImage && parsed.text.isBlank() -> "📷 Фото"
                         parsed.isImage -> "📷 ${parsed.text}"
+                        parsed.isSticker -> getString(R.string.msg_preview_sticker)
                         parsed.isReply -> "↪ ${parsed.text}"
                         else -> parsed.text
                     }

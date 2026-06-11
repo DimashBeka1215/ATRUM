@@ -62,6 +62,7 @@
 
             <!-- APP LOGO -->
             <FrameLayout
+                android:id="@+id/aboutAppLogo"
                 android:layout_width="88dp"
                 android:layout_height="88dp"
                 android:background="@drawable/bg_about_app_logo"

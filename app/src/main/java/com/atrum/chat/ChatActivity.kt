@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.atrum.chat.data.AppDatabase
@@ -23,7 +24,9 @@ import com.atrum.chat.transport.ChatTransport
 import com.atrum.chat.transport.TransportFactory
 import android.text.Editable
 import android.text.TextWatcher
+import com.atrum.chat.stickers.StickerAdapter
 import com.atrum.chat.stickers.StickerPanelController
+import com.atrum.chat.stickers.StickerRepository
 import android.view.animation.DecelerateInterpolator
 import androidx.core.content.ContextCompat
 import android.content.res.Configuration
@@ -154,6 +157,9 @@ class ChatActivity : SecureActivity() {
     /** Корутина обратного отсчёта при блокировке (обновляет hint поля ввода). */
     private var countdownJob: Job? = null
 
+    /** Корутина обратного отсчёта жёлтой плашки лимита GitHub. */
+    private var rateLimitJob: Job? = null
+
     /** Оригинальный hint поля ввода (восстанавливается после блокировки). */
     private var originalHint: CharSequence = ""
 
@@ -222,6 +228,11 @@ class ChatActivity : SecureActivity() {
 
     /** Контроллер панели стикеров. */
     private var stickerPanel: StickerPanelController? = null
+
+    // Подсказки стикеров по эмодзи (панель над полем ввода)
+    private var suggestionAdapter: StickerAdapter? = null
+    private var suggestJob: kotlinx.coroutines.Job? = null
+    private val suggestRepo by lazy { StickerRepository(this) }
 
 
     /** Pick: выбор одного или нескольких изображений из галереи (макс. 10). */
@@ -617,9 +628,13 @@ class ChatActivity : SecureActivity() {
         // посередине adapter.submit(), что предотвращает мигание при быстром потоке событий.
         lifecycleScope.launch {
             chatStore.messages.collect { messages ->
-                val pending = chatStore.pendingSnapshot()
+                // messages = compose() из ChatStore: серверные + pending БЕЗ дублей и с
+                // корректными флагами isPending. Подаём ОДНИМ списком — НЕ передаём pending
+                // отдельным аргументом, иначе подтверждённый-но-ещё-в-очереди стикер
+                // (isPending=false, но всё ещё в pendingByRaw) рендерился бы дважды
+                // (compose + pendingSnapshot) → копия, исчезающая только после перезахода.
                 currentMessages = messages.filter { !it.isPending }
-                adapter.submit(currentMessages, pending)
+                adapter.submit(messages)
                 binding.tvEmptyPlaceholder.visibility =
                     if (messages.isEmpty()) View.VISIBLE else View.GONE
                 // Авто-скролл только если уже у дна: не прерываем чтение истории.
@@ -646,6 +661,8 @@ class ChatActivity : SecureActivity() {
                 }
             },
             onMessageSent = {
+                // Сообщение ушло — лимит снят, прячем жёлтую плашку сразу.
+                runOnUiThread { hideRateLimitBanner() }
                 if (!chat.isFavorites) {
                     // Сбрасываем ETag: следующий GET обойдёт CDN-кеш и вернёт свежий контент.
                     // Это аналог ?t=Date.now() из веб-версии — cache-bust после PATCH.
@@ -704,6 +721,9 @@ class ChatActivity : SecureActivity() {
                     cm.setPrimaryClip(ClipData.newPlainText("send_error", reason))
                     Toast.makeText(this@ChatActivity, displayMsg, Toast.LENGTH_LONG).show()
                 }
+            },
+            onRateLimit = { retryAfterMs ->
+                runOnUiThread { showRateLimitBanner(retryAfterMs) }
             }
         )
 
@@ -729,8 +749,11 @@ class ChatActivity : SecureActivity() {
         ).also { it.init() }
 
         binding.btnSticker.setOnClickListener {
+            hideStickerSuggestions()
             stickerPanel?.togglePanel()
         }
+
+        setupStickerSuggestions()
 
         binding.etMessage.setOnEditorActionListener { _, _, _ ->
             sendMessage()
@@ -898,6 +921,7 @@ class ChatActivity : SecureActivity() {
     override fun onResume() {
         super.onResume()
         isInForeground = true
+        resumeVisibleStickers()
         applyWallpaper()
         if (::chat.isInitialized) {
             // Сбрасываем кэши — при возврате в чат гарантируем:
@@ -939,9 +963,47 @@ class ChatActivity : SecureActivity() {
         }
     }
 
+    /** Пауза анимаций стикеров (Lottie/webm) у видимых сообщений — при уходе в фон. */
+    private fun pauseVisibleStickers() {
+        val rv = binding.rvMessages
+        for (i in 0 until rv.childCount) {
+            (rv.getChildViewHolder(rv.getChildAt(i)) as? MessageAdapter.VH)?.pauseSticker()
+        }
+    }
+
+    /** Возобновление анимаций стикеров у видимых сообщений — при возврате в чат. */
+    private fun resumeVisibleStickers() {
+        val rv = binding.rvMessages
+        for (i in 0 until rv.childCount) {
+            (rv.getChildViewHolder(rv.getChildAt(i)) as? MessageAdapter.VH)?.resumeSticker()
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Освобождаем видео-плееры webm-стикеров (ExoPlayer/GL). Без этого они продолжают
+        // крутиться в фоне и утекают между чатами -> рост памяти и OOM (в т.ч. при Argon2).
+        try { binding.rvMessages.adapter = null } catch (_: Exception) {}
+        stickerPanel?.destroy()
+        stickerPanel = null
+        suggestJob?.cancel()
+        try { binding.rvStickerSuggestions.adapter = null } catch (_: Exception) {}
+        suggestionAdapter = null
+
+        // Штатная очистка, документированная в коде, но не выполнявшаяся (onDestroy отсутствовал):
+        //  1. Зануляем эфемерный приватный X25519-ключ — forward secrecy.
+        myEphemeralPrivKey?.fill(0)
+        myEphemeralPrivKey = null
+        //  2. Чистим кеш выведенных Argon2-ключей этого чата — освобождаем память.
+        if (::transport.isInitialized) {
+            try { CryptoHelper.clearCachedKey(transport.chatId, chat.chatPassword) } catch (_: Exception) {}
+        }
+    }
+
     override fun onPause() {
         super.onPause()
         isInForeground = false
+        pauseVisibleStickers()
         // Останавливаем SyncEngine и коллектор событий
         if (::syncEngine.isInitialized) syncEngine.stop()
         syncCollectorJob?.cancel()
@@ -1290,6 +1352,7 @@ class ChatActivity : SecureActivity() {
                 last.isMultiImage  -> "📷 ${last.text}"
                 last.isImage && last.text.isBlank() -> "📷 Фото"
                 last.isImage       -> "📷 ${last.text}"
+                last.isSticker     -> getString(R.string.msg_preview_sticker)
                 last.isReply       -> "↪ ${last.text}"
                 else               -> last.text
             }
@@ -1361,21 +1424,119 @@ class ChatActivity : SecureActivity() {
         }
     }
 
+    // ── Подсказки стикеров по эмодзи ─────────────────────────────────────────
+
+    private fun setupStickerSuggestions() {
+        val adapter = StickerAdapter(emptyList()) { sticker ->
+            sendSticker(sticker)
+            binding.etMessage.setText("")
+            hideStickerSuggestions()
+        }
+        suggestionAdapter = adapter
+        binding.rvStickerSuggestions.layoutManager = GridLayoutManager(this, 5)
+        binding.rvStickerSuggestions.adapter = adapter
+    }
+
+    /** На каждый ввод: если в поле только эмодзи — показать стикеры с этим смайлом. */
+    private fun updateStickerSuggestions(text: String) {
+        val q = text.trim()
+        // Запрос подсказок — когда в поле только эмодзи/символы (нет букв и цифр).
+        val emojiOnly = q.isNotEmpty() && q.length <= 24 && q.none { it.isLetterOrDigit() }
+        if (!emojiOnly) { hideStickerSuggestions(); return }
+
+        suggestJob?.cancel()
+        suggestJob = lifecycleScope.launch {
+            val list = suggestRepo.stickersForEmoji(q)
+            // Текст мог измениться, пока шёл поиск.
+            if (binding.etMessage.text.toString().trim() != q) return@launch
+            if (list.isEmpty()) { hideStickerSuggestions(); return@launch }
+
+            suggestionAdapter?.update(list)
+            // Высота панели: 1..3 ряда по 5 в ряд (ячейка ~80dp).
+            val rows = ((list.size + 4) / 5).coerceIn(1, 3)
+            val cell = (80 * resources.displayMetrics.density).toInt()
+            binding.rvStickerSuggestions.layoutParams =
+                binding.rvStickerSuggestions.layoutParams.apply { height = rows * cell }
+            binding.rvStickerSuggestions.scrollToPosition(0)
+            binding.stickerSuggestionsContainer.visibility = View.VISIBLE
+        }
+    }
+
+    private fun hideStickerSuggestions() {
+        suggestJob?.cancel()
+        if (binding.stickerSuggestionsContainer.visibility != View.GONE) {
+            binding.stickerSuggestionsContainer.visibility = View.GONE
+            // Освобождаем стикеры скрытой панели — иначе их тикеры крутятся вхолостую.
+            suggestionAdapter?.update(emptyList())
+        }
+    }
+
     private fun sendSticker(sticker: com.atrum.chat.stickers.Sticker) {
         if (sendManager.isPunished()) return
         val now = System.currentTimeMillis()
-        
-        // Генерируем правильное имя файла с расширением (tgs/webp/webm), чтобы MessageAdapter понял тип
-        val ext = when (sticker.type) {
-            com.atrum.chat.stickers.StickerType.ANIMATED -> ".tgs"
-            com.atrum.chat.stickers.StickerType.VIDEO -> ".webm"
-            else -> ".webp"
+
+        // Расширение типа (без точки) — webm/tgs/webp. Идёт в имя стикер-сообщения,
+        // чтобы MessageAdapter понял тип без обращения к контенту.
+        val extNoDot = when (sticker.type) {
+            com.atrum.chat.stickers.StickerType.ANIMATED -> "tgs"
+            com.atrum.chat.stickers.StickerType.VIDEO -> "webm"
+            else -> "webp"
         }
-        val stickerFileName = Message.newStickerFileName().removeSuffix(".txt") + ext
 
         lifecycleScope.launch {
             try {
-                // 1. Подготовка метаданных (текстовое сообщение с именем файла стикера)
+                val stickerFile = sticker.localPath?.let { java.io.File(it) }
+                if (stickerFile == null || !stickerFile.exists()) {
+                    throw RuntimeException("Sticker file not found")
+                }
+
+                // 1. Заливаем КОНТЕНТ стикера в ОТДЕЛЬНЫЙ gist (как изображения) — чтобы
+                //    не раздувать chat.txt и не упираться в rate-limit GitHub. Повторная
+                //    отправка того же стикера переиспользует ссылку (дедуп по chat+fileId),
+                //    то есть resend полностью бесплатный по сети.
+                val b64 = withContext(Dispatchers.Default) {
+                    android.util.Base64.encodeToString(stickerFile.readBytes(), android.util.Base64.NO_WRAP)
+                }
+
+                val existingRef = prefs.getStickerContentRef(transport.chatId, sticker.fileId)
+                val contentRef: String = if (existingRef != null) existingRef else {
+                    val encryptedSticker = withContext(Dispatchers.Default) {
+                        CryptoHelper.encrypt(b64, chat.chatPassword, transport.chatId)
+                    }
+                    val uploaded = withContext(Dispatchers.IO) {
+                        transport.uploadImage(encryptedSticker, chat.chatPassword)
+                    }
+                    prefs.setStickerContentRef(transport.chatId, sticker.fileId, uploaded)
+                    uploaded
+                }
+
+                // Имя стикер-сообщения: уникальная левая часть (для reconcile) + ссылка на контент.
+                val stickerFileName = Message.stickerRefName(extNoDot, contentRef)
+                // Ключ кеша/кадров — общая ссылка на контент (стабильна между отправками).
+                val cacheKey = Message.stickerContentRef(stickerFileName)
+
+                // 2. Прогреваем кеш ДО отправки, чтобы UI подхватил мгновенно (ключ = cacheKey).
+                withContext(Dispatchers.Default) {
+                    if (extNoDot == "tgs") {
+                        try {
+                            val gzis = java.util.zip.GZIPInputStream(
+                                java.io.ByteArrayInputStream(stickerFile.readBytes()))
+                            val jsonString = gzis.bufferedReader().use { it.readText() }
+                            val comp = com.airbnb.lottie.LottieCompositionFactory
+                                .fromJsonStringSync(jsonString, cacheKey).value
+                            if (comp != null) ImageCache.putComposition(cacheKey, comp)
+                        } catch (_: Exception) {}
+                    }
+                    if (ImageCache.getBitmap(cacheKey) == null) {
+                        val preview = com.atrum.chat.stickers.StickerRepository(this@ChatActivity)
+                            .renderFirstFrame(sticker, maxSize = 256)
+                        ImageCache.put(cacheKey, b64, preview)
+                    }
+                    ImageCache.markShownConfirmation(cacheKey)
+                }
+
+                // 3. Текстовое сообщение-заголовок (с именем стикера). Шифруем один раз и
+                //    переиспользуем как отправляемую строку — иначе reconcile-by-raw не сматчит.
                 val plaintext = Message.composePlaintext(
                     senderName = prefs.myName,
                     senderUserId = prefs.myUserId,
@@ -1387,12 +1548,7 @@ class ChatActivity : SecureActivity() {
                     CryptoHelper.encrypt(plaintext, chat.chatPassword, transport.chatId)
                 }
 
-                val stickerFile = sticker.localPath?.let { java.io.File(it) }
-                if (stickerFile == null || !stickerFile.exists()) {
-                    throw RuntimeException("Sticker file not found")
-                }
-
-                // 2. Оптимистичное добавление в UI
+                // 4. Оптимистичное добавление в UI
                 val pendingMsg = Message(
                     sender = prefs.myName,
                     text = "",
@@ -1403,44 +1559,13 @@ class ChatActivity : SecureActivity() {
                     senderUserId = prefs.myUserId,
                     isPending = true
                 )
-
-                // 3. Подготовка данных для отправки и кеша (одним проходом)
-                val (encryptedMessageFinal, extraFilesFinal) = withContext(Dispatchers.Default) {
-                    val bytes = stickerFile.readBytes()
-                    val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                    
-                    // Обновляем кеш ДО отправки, чтобы UI сразу подхватил
-                    if (ext == ".tgs") {
-                        try {
-                            val gzis = java.util.zip.GZIPInputStream(java.io.ByteArrayInputStream(bytes))
-                            val jsonString = gzis.bufferedReader().use { it.readText() }
-                            val comp = com.airbnb.lottie.LottieCompositionFactory.fromJsonStringSync(jsonString, stickerFileName).value
-                            if (comp != null) ImageCache.putComposition(stickerFileName, comp)
-                        } catch (_: Exception) {}
-                    }
-                    
-                    // Рендерим превью (если нет в кеше) для мгновенного показа
-                    if (ImageCache.getBitmap(stickerFileName) == null) {
-                        val preview = com.atrum.chat.stickers.StickerRepository(this@ChatActivity).renderFirstFrame(sticker)
-                        ImageCache.put(stickerFileName, b64, preview)
-                    }
-                    ImageCache.markShownConfirmation(stickerFileName)
-
-                    val encryptedSticker = CryptoHelper.encrypt(b64, chat.chatPassword, transport.chatId)
-                    val encHeader = CryptoHelper.encrypt(plaintext, chat.chatPassword, transport.chatId)
-                    
-                    encHeader to mapOf(stickerFileName to encryptedSticker)
-                }
-
                 chatStore.addOptimistic(pendingMsg)
                 stickerPanel?.hidePanel()
 
-                // 4. Отправка ОДНИМ запросом (Batch PATCH)
+                // 5. Отправка ТОЛЬКО короткой строки-заголовка (без extraFiles — контент уже в
+                //    отдельном gist). Маленький PATCH вместо тяжёлого инлайна стикера.
                 withContext(Dispatchers.IO) {
-                    transport.appendLine(
-                        encryptedLine = encryptedMessageFinal,
-                        extraFiles = extraFilesFinal
-                    )
+                    transport.appendLine(encryptedLine = encryptedMessage)
                 }
 
                 // Cache-bust и синхронизация
@@ -1474,7 +1599,7 @@ class ChatActivity : SecureActivity() {
                 senderUserId = prefs.myUserId,
                 text = text,
                 quotedSender = reply?.sender,
-                quotedText = reply?.text,
+                quotedText = reply?.let { quoteLabel(it) },
                 timestampMs = now
             )
             val encrypted = withContext(Dispatchers.Default) {
@@ -1488,7 +1613,7 @@ class ChatActivity : SecureActivity() {
                 rawEncrypted = encrypted,
                 timestampMs = now,
                 quotedSender = reply?.sender,
-                quotedText = reply?.text,
+                quotedText = reply?.let { quoteLabel(it) },
                 senderUserId = prefs.myUserId,
                 isPending = true
             )
@@ -1537,6 +1662,67 @@ class ChatActivity : SecureActivity() {
         countdownJob = null
         binding.etMessage.hint = originalHint
         binding.btnSend.isEnabled = true
+    }
+
+    // ── Жёлтая плашка лимита GitHub ────────────────────────────────────────────
+
+    /**
+     * Показывает жёлтую плашку «Слишком много запросов» с обратным отсчётом до момента,
+     * когда снова можно отправлять. Срабатывает по коллбэку MessageSendManager.onRateLimit
+     * (RateLimitException несёт точную паузу из заголовка Retry-After). Стиль адаптируется
+     * под тёмную/светлую тему (сплошной янтарь) и glass-режим (тёмный оверлей + янтарный текст).
+     * Всё обновляется на месте, без перезахода (§1.5).
+     */
+    private fun showRateLimitBanner(durationMs: Long) {
+        if (durationMs <= 0L) { hideRateLimitBanner(); return }
+
+        val isGlass = prefs.chatUiStyle == Prefs.CHAT_UI_GLASS
+        val bannerBg = if (isGlass) R.drawable.bg_rate_limit_banner_glass
+                       else R.drawable.bg_rate_limit_banner
+        val contentColor = ContextCompat.getColor(
+            this, if (isGlass) R.color.warning else R.color.warning_on)
+
+        binding.rateLimitBanner.setBackgroundResource(bannerBg)
+        binding.ivRateLimitIcon.setColorFilter(contentColor)
+        binding.tvRateLimitTitle.setTextColor(contentColor)
+        binding.tvRateLimitMessage.setTextColor(contentColor)
+
+        if (binding.rateLimitBanner.visibility != View.VISIBLE) {
+            binding.rateLimitBanner.alpha = 0f
+            binding.rateLimitBanner.visibility = View.VISIBLE
+            binding.rateLimitBanner.animate().alpha(1f).setDuration(220L).start()
+        }
+        // Пока действует лимит — отправка приглушена и заблокирована.
+        binding.btnSend.isEnabled = false
+        binding.btnSend.alpha = 0.4f
+
+        rateLimitJob?.cancel()
+        val endMs = System.currentTimeMillis() + durationMs
+        rateLimitJob = lifecycleScope.launch {
+            while (true) {
+                val remaining = endMs - System.currentTimeMillis()
+                if (remaining <= 0) break
+                val sec = (remaining + 999) / 1000   // округляем вверх
+                val mmss = String.format(Locale.ROOT, "%d:%02d", sec / 60, sec % 60)
+                binding.tvRateLimitMessage.text = getString(R.string.rate_limit_retry_in, mmss)
+                delay(500L)
+            }
+            hideRateLimitBanner()
+        }
+    }
+
+    /** Прячет плашку лимита и возвращает кнопку отправки (если нет активной спам-блокировки). */
+    private fun hideRateLimitBanner() {
+        rateLimitJob?.cancel()
+        rateLimitJob = null
+        if (binding.rateLimitBanner.visibility == View.VISIBLE) {
+            binding.rateLimitBanner.animate().alpha(0f).setDuration(180L).withEndAction {
+                binding.rateLimitBanner.visibility = View.GONE
+            }.start()
+        }
+        binding.btnSend.alpha = 1f
+        // Не включаем отправку, если параллельно активна спам-блокировка (countdownJob).
+        if (countdownJob == null) binding.btnSend.isEnabled = true
     }
 
     // ── Forward secrecy ──────────────────────────────────────────────────────
@@ -1784,6 +1970,7 @@ class ChatActivity : SecureActivity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(s: Editable?) {
                 if (s.isNullOrEmpty()) stopTypingSignal() else onTypingDetected()
+                updateStickerSuggestions(s?.toString() ?: "")
             }
         })
     }
@@ -2177,10 +2364,18 @@ class ChatActivity : SecureActivity() {
         }
     }
 
+    /** Текст для цитаты/превью: сам текст, либо метка типа (стикер/фото) если текста нет. */
+    private fun quoteLabel(msg: Message): String = when {
+        msg.text.isNotBlank()           -> msg.text
+        msg.isSticker                   -> getString(R.string.msg_preview_sticker)
+        msg.isMultiImage || msg.isImage -> getString(R.string.msg_preview_photo)
+        else                            -> msg.text
+    }
+
     private fun startReply(msg: Message) {
         replyingTo = msg
         binding.tvReplySender.text = msg.sender.ifBlank { "?" }
-        binding.tvReplyText.text = msg.text
+        binding.tvReplyText.text = quoteLabel(msg)
         binding.replyPanel.visibility = View.VISIBLE
         binding.etMessage.requestFocus()
     }
@@ -2476,6 +2671,29 @@ class ChatActivity : SecureActivity() {
                 binding.warningBanner.setOnClickListener(null)
             }
             .start()
+    }
+
+    /**
+     * Фоновое разрешение транспорта: после быстрого старта на gistDirect() проверяем
+     * реальную доступность через TransportFactory.get() и при необходимости переключаемся
+     * (Gist -> Nostr), обновляя ImageLoader. При ошибке остаёмся на начальном GistTransport.
+     *
+     * Был утрачен при рефакторинге v2.6.5 (вызовы остались, определение пропало) —
+     * восстановлен из истории; badge подзаголовка намеренно не возвращён, т.к. subtitle
+     * теперь управляется отдельной логикой (partnerTag / статус).
+     */
+    private suspend fun resolveTransport() {
+        try {
+            val resolved = transportFactory.get()
+            val switched = resolved::class != transport::class
+            transport = resolved
+            if (switched) {
+                val newLoader = ImageLoader(transport, chat.chatPassword)
+                imageLoader = newLoader
+                if (::adapter.isInitialized) adapter.updateImageLoader(newLoader)
+            }
+        } catch (_: Exception) {
+        }
     }
 
     /**

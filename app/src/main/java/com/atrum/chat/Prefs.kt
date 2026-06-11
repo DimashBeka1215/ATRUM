@@ -137,6 +137,29 @@ class Prefs(context: Context) {
         get() = prefs.getBoolean(KEY_BIOMETRIC, false)
         set(v) = prefs.edit().putBoolean(KEY_BIOMETRIC, v).apply()
 
+    /**
+     * Пользователь при первом включении отказался от входа по отпечатку → функция удалена
+     * НАВСЕГДА: раздел в настройках скрыт, разблокировка по отпечатку отключена. Вернуть
+     * можно только переустановкой/сбросом приложения.
+     */
+    var biometricRemoved: Boolean
+        get() = prefs.getBoolean(KEY_BIOMETRIC_REMOVED, false)
+        set(v) = prefs.edit().putBoolean(KEY_BIOMETRIC_REMOVED, v).apply()
+
+    /** Диалог-выбор при первом включении отпечатка уже показан — повторно не спрашиваем. */
+    var biometricChoiceMade: Boolean
+        get() = prefs.getBoolean(KEY_BIOMETRIC_CHOICE, false)
+        set(v) = prefs.edit().putBoolean(KEY_BIOMETRIC_CHOICE, v).apply()
+
+    /**
+     * Мягкое скрытие входа по отпечатку (в отличие от biometricRemoved — обратимо).
+     * Строка пропадает из настроек, но возвращается тайным жестом: 7 тапов по иконке
+     * приложения в разделе «О приложении».
+     */
+    var biometricHidden: Boolean
+        get() = prefs.getBoolean(KEY_BIOMETRIC_HIDDEN, false)
+        set(v) = prefs.edit().putBoolean(KEY_BIOMETRIC_HIDDEN, v).apply()
+
     /** Число подряд неверных PIN. Хранится на диске — рестарт не сбрасывает троттлинг. */
     var pinFailCount: Int
         get() = prefs.getInt(KEY_PIN_FAIL, 0)
@@ -195,6 +218,19 @@ class Prefs(context: Context) {
     }
 
     /**
+     * Дедуп стикеров: ссылка на уже залитый в ОТДЕЛЬНЫЙ gist контент стикера.
+     * Ключ — чат + стикер, потому что контент шифруется паролем чата
+     * (одну и ту же ссылку нельзя переиспользовать в другом чате — там другой пароль).
+     * Благодаря этому повторная отправка того же стикера не делает новой загрузки.
+     */
+    fun getStickerContentRef(chatId: String, fileId: String): String? =
+        prefs.getString("stk_ref_${chatId}_$fileId", null)
+
+    fun setStickerContentRef(chatId: String, fileId: String, ref: String) {
+        prefs.edit().putString("stk_ref_${chatId}_$fileId", ref).apply()
+    }
+
+    /**
      * Выбранная тема: "dark" | "light" | "system".
      * По умолчанию "dark" — приложение задумано тёмным.
      */
@@ -218,13 +254,37 @@ class Prefs(context: Context) {
      * Принял ли пользователь EULA. Проверяется в IntroActivity ДО всего остального.
      * При отказе флаг НЕ сохраняется — соглашение появится снова при следующем запуске.
      */
+    // EULA и intro дублируем в обычные (незашифрованные) stablePrefs: флаги не секретны,
+    // зато переживают пересоздание encrypted-хранилища (иначе соглашение и welcome-карточки
+    // изредка всплывали заново после обновления). Читаем из обоих, пишем в оба.
     var eulaAccepted: Boolean
-        get() = prefs.getBoolean(KEY_EULA_ACCEPTED, false)
-        set(v) = prefs.edit().putBoolean(KEY_EULA_ACCEPTED, v).apply()
+        get() = readStableFlag(KEY_EULA_ACCEPTED)
+        set(v) {
+            prefs.edit().putBoolean(KEY_EULA_ACCEPTED, v).apply()
+            stablePrefs.edit().putBoolean(KEY_EULA_ACCEPTED, v).apply()
+        }
 
     var introShown: Boolean
-        get() = prefs.getBoolean(KEY_INTRO_SHOWN, false)
-        set(v) = prefs.edit().putBoolean(KEY_INTRO_SHOWN, v).apply()
+        get() = readStableFlag(KEY_INTRO_SHOWN)
+        set(v) {
+            prefs.edit().putBoolean(KEY_INTRO_SHOWN, v).apply()
+            stablePrefs.edit().putBoolean(KEY_INTRO_SHOWN, v).apply()
+        }
+
+    /**
+     * Читает «однажды-true» флаг из обоих хранилищ. Если в основном (encrypted) true, а в
+     * резервном ещё нет — копируем в резерв (backfill), чтобы флаг пережил будущий сброс
+     * encrypted-префов. Достаточно одного истинного значения в любом из хранилищ.
+     */
+    private fun readStableFlag(key: String): Boolean {
+        if (prefs.getBoolean(key, false)) {
+            if (!stablePrefs.getBoolean(key, false)) {
+                stablePrefs.edit().putBoolean(key, true).apply()
+            }
+            return true
+        }
+        return stablePrefs.getBoolean(key, false)
+    }
 
     /** Показывался ли онбординг панели стикеров. После первого показа — true. */
     var stickerOnboardingShown: Boolean
@@ -403,13 +463,6 @@ class Prefs(context: Context) {
         get() = prefs.getInt(KEY_UI_ALPHA, 100).coerceIn(10, 100)
         set(v) = prefs.edit().putInt(KEY_UI_ALPHA, v.coerceIn(10, 100)).apply()
 
-    /**
-     * [DEBUG] Отключить FLAG_SECURE во всех Activity (для скриншотов/демо).
-     */
-    var debugDisableSecureFlags: Boolean
-        get() = prefs.getBoolean(KEY_DEBUG_DISABLE_SECURE, false)
-        set(v) = prefs.edit().putBoolean(KEY_DEBUG_DISABLE_SECURE, v).apply()
-
     companion object {
         /**
          * PIN в открытом виде, общий на весь процесс. Живёт только в памяти —
@@ -432,6 +485,9 @@ class Prefs(context: Context) {
         private const val KEY_LOCAL_PWD_HASH = "local_pwd_hash"
         private const val KEY_ONBOARDED = "onboarded"
         private const val KEY_BIOMETRIC = "biometric_enabled"
+        private const val KEY_BIOMETRIC_REMOVED = "biometric_removed"
+        private const val KEY_BIOMETRIC_CHOICE = "biometric_choice_made"
+        private const val KEY_BIOMETRIC_HIDDEN = "biometric_hidden"
         private const val KEY_PIN_FAIL = "pin_fail_count"
         private const val KEY_PIN_LOCK_UNTIL = "pin_lockout_until"
         private const val KEY_IDENTITY_PRIV = "identity_priv"
@@ -451,7 +507,6 @@ class Prefs(context: Context) {
         private const val KEY_BUBBLE_ALPHA_SELF  = "bubble_alpha_self"
         private const val KEY_BUBBLE_ALPHA_OTHER = "bubble_alpha_other"
         private const val KEY_UI_ALPHA           = "ui_alpha"
-        private const val KEY_DEBUG_DISABLE_SECURE = "debug_disable_secure"
 
         const val CHAT_UI_CLASSIC = "classic"
         const val CHAT_UI_GLASS   = "glass"

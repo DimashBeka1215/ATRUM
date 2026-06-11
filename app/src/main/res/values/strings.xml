@@ -228,6 +228,9 @@
     <string name="warn_token_title">Токен недействителен</string>
     <string name="warn_token_message">GitHub не принимает токен — возможно, он истёк или был отозван. Нажми «Обновить токен» и введи новый — пересоздавать чат не нужно.</string>
     <string name="btn_update_token">Обновить токен</string>
+    <!-- Плашка лимита запросов GitHub -->
+    <string name="rate_limit_title">Слишком много запросов</string>
+    <string name="rate_limit_retry_in">Можно отправлять через %1$s</string>
     <string name="dialog_update_token_title">Новый GitHub-токен</string>
 
 
@@ -531,6 +534,11 @@
     <string name="identity_confirmed_both">Подлинность подтверждена обоими</string>
     <string name="identity_confirmed_waiting">Вы подтвердили — ждём собеседника</string>
     <string name="identity_not_confirmed">Не подтверждено лично</string>
+    <!-- Плашка взаимной сверки -->
+    <string name="verify_status_waiting_title">Вы подтвердили личность</string>
+    <string name="verify_status_waiting_sub">Ждём подтверждения собеседника</string>
+    <string name="verify_status_both_title">Подтверждено обоими</string>
+    <string name="verify_status_both_sub">Личность сверена с обеих сторон</string>
 
 
     <!-- Profile Banner / Header -->
@@ -564,6 +572,14 @@
     <string name="biometric_warn_desc">Сначала зарегистрируйте отпечаток в настройках телефона. Atrum не записывает биометрию сам.</string>
     <string name="biometric_open_settings">Открыть настройки телефона</string>
     <string name="biometric_need_pin">Сначала установите PIN-код</string>
+    <!-- Диалог-выбор при первом включении входа по отпечатку -->
+    <string name="biometric_first_title">Точно будете пользоваться?</string>
+    <string name="biometric_first_body">Вход по отпечатку автор добавил, по сути, для себя. Можно оставить, временно скрыть или убрать совсем.</string>
+    <string name="biometric_first_keep">Буду пользоваться</string>
+    <string name="biometric_first_hide">Скрыть</string>
+    <string name="biometric_first_remove">Убрать навсегда</string>
+    <string name="biometric_hide_hint">«Скрыть» убирает строку из настроек. Вернуть: 7 тапов по иконке приложения в разделе «О приложении».</string>
+    <string name="biometric_restored">Вход по отпечатку возвращён</string>
     <string name="biometric_prompt_title">Вход в Atrum</string>
     <string name="biometric_prompt_subtitle">Подтвердите отпечатком пальца</string>
     <string name="biometric_prompt_cancel">Использовать PIN</string>
@@ -573,14 +589,6 @@
     <string name="biometric_how_body">Отпечаток проверяет сама система телефона — Atrum его не видит и не хранит. Действует на один вход: при каждом открытии приложение спрашивает заново.</string>
     <string name="lock_use_pin">Войти по PIN</string>
     <string name="settings_item_credits">Благодарности</string>
-
-    <string name="settings_section_debug">DEVELOPMENT &amp; TESTS</string>
-    <string name="settings_item_debug">Debug settings</string>
-    <string name="debug_disable_secure_title">Screenshot protection</string>
-    <string name="debug_disable_secure_desc">Allow screenshots everywhere (demo only)</string>
-    <string name="debug_crash_title">Force crash</string>
-    <string name="debug_crash_desc">Trigger RuntimeException to check logs</string>
-    <string name="debug_restart_hint">Restart the app to apply changes</string>
 
     <!-- Change PIN screen -->
     <string name="dialog_old_pin_title">Текущий PIN-код</string>
@@ -596,6 +604,7 @@
     <string name="sticker_settings_token_hint_desc">Нужен для загрузки ваших паков из Telegram</string>
     <string name="sticker_settings_token_save">SAVE</string>
     <string name="sticker_settings_token_saved">Токен сохранен</string>
+    <string name="sticker_settings_get_token">Получить токен у @BotFather</string>
     <string name="sticker_settings_packs_section">МОИ СТИКЕРЫ</string>
     <string name="sticker_add_pack_title">Добавить пак</string>
     <string name="sticker_add_pack_btn">Добавить</string>
@@ -619,6 +628,13 @@
     <string name="sticker_empty_title">Стикеров пока нет</string>
     <string name="sticker_empty_hint">Добавьте стикер-пак в настройках</string>
     <string name="sticker_loading">Загрузка…</string>
+    <string name="sticker_loading_count">%1$d / %2$d</string>
+    <string name="sticker_rename_title">Переименовать пак</string>
+    <string name="sticker_rename_hint">Новое название видно только тебе.</string>
+    <string name="sticker_rename_save">Сохранить</string>
+    <string name="sticker_rename_cd">Переименовать пак</string>
+    <string name="msg_preview_sticker">Стикер</string>
+    <string name="msg_preview_photo">Фото</string>
     <string name="sticker_pack_label_default">Стикеры</string>
     <string name="sticker_add_pack_cd">Добавить пак</string>
     <string name="sticker_help_cd">Помощь</string>
@@ -650,4 +666,29 @@
     <string name="search_hint">Поиск</string>
     <string name="search_empty">Чаты не найдены</string>
     <string name="cd_search">Поиск чатов</string>
+    <string name="sticker_settings_help">Помощь</string>
+    <string name="sticker_guide_close">Закрыть</string>
+    <string name="sticker_guide_step">ШАГ</string>
+    <string name="sticker_guide_search">Поиск: BotFather</string>
+    <string name="sticker_guide_official">официальный бот · синяя галочка</string>
+    <string name="sticker_guide_bf_name">Как назовём бота?</string>
+    <string name="sticker_guide_botname">Мои стикеры</string>
+    <string name="sticker_guide_bf_user">Теперь username — он должен заканчиваться на «bot».</string>
+    <string name="sticker_guide_token_line">Токен для доступа к API:</string>
+    <string name="sticker_guide_keep">Нажми, чтобы скопировать. Храни как пароль.</string>
+    <string name="sticker_guide_copied">Скопировано</string>
+    <string name="sticker_guide_loading">Загрузка… 14 / 20</string>
+    <string name="sticker_guide_done">Готово — пак добавлен</string>
+    <string name="sticker_guide_s1_t">Открой @BotFather</string>
+    <string name="sticker_guide_s1_d">Найди в поиске бота с синей галочкой — он создаёт ботов.</string>
+    <string name="sticker_guide_s2_t">/newbot → имя → username</string>
+    <string name="sticker_guide_s2_d">Отправь /newbot, задай имя и username (на конце «bot»).</string>
+    <string name="sticker_guide_s3_t">Скопируй токен</string>
+    <string name="sticker_guide_s3_d">BotFather пришлёт токен 7123456789:AAH… — нажми, чтобы скопировать.</string>
+    <string name="sticker_guide_s4_t">Вставь токен в настройках</string>
+    <string name="sticker_guide_s4_d">Настройки стикеров → поле «Токен бота» → вставь → Сохранить.</string>
+    <string name="sticker_guide_s5_t">Скопируй ссылку на пак</string>
+    <string name="sticker_guide_s5_d">Зажми стикер → View Sticker Set → ⋯ → Copy Link.</string>
+    <string name="sticker_guide_s6_t">Добавь пак по ссылке</string>
+    <string name="sticker_guide_s6_d">«Добавить пак» → вставь t.me/addstickers/… → загрузка → готово.</string>
 </resources>
