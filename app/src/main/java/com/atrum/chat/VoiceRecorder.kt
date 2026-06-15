@@ -48,6 +48,7 @@ class VoiceRecorder(context: Context) {
     private var codec: MediaCodec? = null
     private var muxer: MediaMuxer? = null
     private var reducer: NoiseReducer? = null
+    private var dtln: DtlnDenoiser? = null
     private var worker: Thread? = null
 
     // Запасной путь.
@@ -138,7 +139,10 @@ class VoiceRecorder(context: Context) {
     // ── Продвинутый путь: AudioRecord + эффекты + AAC ───────────────────────────
     private fun startAdvanced(f: File): Boolean {
         try {
-            val sampleRate = 48_000
+            // Нейросетевой шумодав DTLN (если модели в assets) — фиксированно 16 кГц.
+            // Иначе обычный путь 48 кГц + спектральное вычитание.
+            dtln = DtlnDenoiser.load(appCtx)
+            val sampleRate = if (dtln != null) 16_000 else 48_000
             // VOICE_COMMUNICATION = аппаратный голосовой тракт связи с агрессивным
             // шумоподавлением и AEC/AGC — давит фон СИЛЬНО и независимо от того, доступен
             // ли отдельный эффект NoiseSuppressor (на части устройств его нет вообще).
@@ -165,8 +169,8 @@ class VoiceRecorder(context: Context) {
             val rec = found ?: return false
             audioRecord = rec
             attachEffects(rec.audioSessionId)
-            // Программное доп. шумоподавление (спектральное вычитание) только для моно.
-            reducer = if (channelCount == 1) NoiseReducer() else null
+            // Спектральное вычитание — только если нет нейросети и моно.
+            reducer = if (dtln == null && channelCount == 1) NoiseReducer() else null
 
             val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelCount).apply {
                 setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
@@ -254,14 +258,19 @@ class VoiceRecorder(context: Context) {
         }
 
         try {
-            val nr = reducer
+            val d = dtln
+            val r = reducer
             while (recording) {
                 val read = rec.read(pcm, 0, pcm.size)
                 if (read > 0) {
                     if (paused) continue // звук на паузе отбрасываем — файл без «дыры»
                     lastAmp = amplitudeOf(pcm, read)
-                    if (nr != null) {
-                        val processed = runCatching { nr.process(bytesToShorts(pcm, read), read / 2) }.getOrNull()
+                    val processed = when {
+                        d != null -> runCatching { d.process(bytesToShorts(pcm, read), read / 2) }.getOrNull()
+                        r != null -> runCatching { r.process(bytesToShorts(pcm, read), read / 2) }.getOrNull()
+                        else -> null
+                    }
+                    if (d != null || r != null) {
                         if (processed != null) {
                             if (processed.isNotEmpty()) feed(shortsToBytes(processed), processed.size * 2)
                         } else {
@@ -273,10 +282,12 @@ class VoiceRecorder(context: Context) {
                     drain(false)
                 }
             }
-            if (nr != null) {
-                val tail = runCatching { nr.flush() }.getOrNull()
-                if (tail != null && tail.isNotEmpty()) feed(shortsToBytes(tail), tail.size * 2)
+            val tail = when {
+                d != null -> runCatching { d.flush() }.getOrNull()
+                r != null -> runCatching { r.flush() }.getOrNull()
+                else -> null
             }
+            if (tail != null && tail.isNotEmpty()) feed(shortsToBytes(tail), tail.size * 2)
             val inIdx = enc.dequeueInputBuffer(10_000)
             if (inIdx >= 0) {
                 enc.queueInputBuffer(inIdx, 0, 0, ptsUs(), MediaCodec.BUFFER_FLAG_END_OF_STREAM)
@@ -333,6 +344,8 @@ class VoiceRecorder(context: Context) {
         runCatching { muxer?.release() }
         muxer = null
         reducer = null
+        runCatching { dtln?.close() }
+        dtln = null
     }
 
     // ── Запасной путь: MediaRecorder с голосовым источником ─────────────────────

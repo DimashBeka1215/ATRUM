@@ -39,8 +39,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 79
-        versionName = "3.9.1-beta66"
+        versionCode = 80
+        versionName = "3.10.0-beta67"
 
         // Включаем multidex чтобы не упереться в лимит 65k методов
         // когда много AndroidX/Material/Room/uCrop/browser библиотек
@@ -49,6 +49,11 @@ android {
 
     // Исключаем типичные duplicate-файлы из META-INF которые часто
     // дают конфликты при mergeDex (uCrop / kotlin libs / okhttp)
+    androidResources {
+        // .tflite модели DTLN должны лежать НЕсжатыми — иначе их нельзя memory-map.
+        noCompress += "tflite"
+    }
+
     packagingOptions {
         jniLibs {
             useLegacyPackaging = true
@@ -157,6 +162,10 @@ dependencies {
 
     // Bouncy Castle — Argon2id KDF для защищённой деривации ключа шифрования
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+
+    // TensorFlow Lite — нейросетевой шумодав DTLN (модели в assets/model_1.tflite, model_2.tflite).
+    // Без моделей в assets DtlnDenoiser.load() вернёт null → обычный путь без TFLite.
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
 
     // Lottie — анимации и стикеры
     implementation("com.airbnb.android:lottie:6.3.0")

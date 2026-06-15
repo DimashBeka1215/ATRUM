@@ -98,3 +98,7 @@
     public static int d(...);
     public static int i(...);
 }
+
+# ── TensorFlow Lite (нейросетевой шумодав DTLN) ──────────────────────────────
+-keep class org.tensorflow.lite.** { *; }
+-dontwarn org.tensorflow.lite.**
