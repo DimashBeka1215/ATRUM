@@ -63,6 +63,7 @@ class MessageWatchService : Service() {
         val myUserId = prefs.myUserId
         val aliases = prefs.nameHistory
 
+        var totalUnread = 0
         for (chat in chats) {
             if (chat.isFavorites) continue
             try {
@@ -73,33 +74,30 @@ class MessageWatchService : Service() {
                 val api = TransportFactory.forChat(applicationContext, chat.gistId, token, password, myUserId)
                 val content = api.loadContent()
                 val lines = content.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-                val total = lines.size
-
-                if (total <= chat.lastSeenLineCount) {
-                    prefs.setPushNotified(chat.gistId, 0)
-                    if (chat.unreadCount != 0) db.chatDao().updateUnread(chat.id, 0)
-                    continue
-                }
 
                 // Чужие сообщения среди новых строк (свои в счёт не идут).
-                val newLines = lines.drop(chat.lastSeenLineCount)
-                val unreadFromOthers = newLines.count { line ->
-                    val dec = CryptoHelper.decrypt(line, password, chat.gistId) ?: return@count false
-                    val parsed = Message.fromDecrypted(dec, myUserId, myName, aliases)
-                    !parsed.isSelf && parsed.sender.isNotEmpty()
-                }
-
-                // Пуш только когда чужих сообщений стало БОЛЬШЕ, чем мы уже уведомили
-                // (не спамим и не уведомляем повторно об уже показанном).
-                val lastNotified = prefs.getPushNotified(chat.gistId)
-                if (unreadFromOthers > lastNotified) {
-                    NotificationHelper.notifyNewMessage(applicationContext)
-                    prefs.setPushNotified(chat.gistId, unreadFromOthers)
+                val unreadFromOthers = if (lines.size <= chat.lastSeenLineCount) 0 else {
+                    lines.drop(chat.lastSeenLineCount).count { line ->
+                        val dec = CryptoHelper.decrypt(line, password, chat.gistId) ?: return@count false
+                        val parsed = Message.fromDecrypted(dec, myUserId, myName, aliases)
+                        !parsed.isSelf && parsed.sender.isNotEmpty()
+                    }
                 }
                 if (unreadFromOthers != chat.unreadCount) db.chatDao().updateUnread(chat.id, unreadFromOthers)
+                totalUnread += unreadFromOthers
             } catch (_: Exception) {
-                // Ошибка по одному чату не должна мешать остальным.
+                // Ошибка по одному чату не должна мешать остальным — учитываем прошлый unread.
+                totalUnread += chat.unreadCount
             }
+        }
+
+        // Одно уведомление с растущим числом. Звеним только когда сумма ВЫРОСЛА
+        // (пришло новое); при чтении — обновляем число тихо или убираем карточку.
+        val last = prefs.pushNotifiedTotal
+        when {
+            totalUnread == 0 -> if (last != 0) { NotificationHelper.cancelMessages(applicationContext); prefs.pushNotifiedTotal = 0 }
+            totalUnread > last -> { NotificationHelper.notifyNewMessage(applicationContext, totalUnread, alert = true); prefs.pushNotifiedTotal = totalUnread }
+            totalUnread != last -> { NotificationHelper.notifyNewMessage(applicationContext, totalUnread, alert = false); prefs.pushNotifiedTotal = totalUnread }
         }
     }
 

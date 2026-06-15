@@ -142,10 +142,10 @@ class Prefs(context: Context) {
         get() = prefs.getBoolean(KEY_PUSH_ENABLED, false)
         set(v) = prefs.edit().putBoolean(KEY_PUSH_ENABLED, v).apply()
 
-    /** Сколько чужих сообщений по чату мы уже отметили пушем (анти-повтор). */
-    fun getPushNotified(gistId: String): Int = prefs.getInt("push_notified_${'$'}gistId", 0)
-    fun setPushNotified(gistId: String, n: Int) =
-        prefs.edit().putInt("push_notified_${'$'}gistId", n).apply()
+    /** Суммарное число непрочитанных, о котором уже показан пуш (анти-повтор/звон). */
+    var pushNotifiedTotal: Int
+        get() = prefs.getInt(KEY_PUSH_TOTAL, 0)
+        set(v) = prefs.edit().putInt(KEY_PUSH_TOTAL, v).apply()
 
     /**
      * Пользователь при первом включении отказался от входа по отпечатку → функция удалена
@@ -496,6 +496,7 @@ class Prefs(context: Context) {
         private const val KEY_ONBOARDED = "onboarded"
         private const val KEY_BIOMETRIC = "biometric_enabled"
         private const val KEY_PUSH_ENABLED = "push_enabled"
+        private const val KEY_PUSH_TOTAL = "push_notified_total"
         private const val KEY_BIOMETRIC_REMOVED = "biometric_removed"
         private const val KEY_BIOMETRIC_CHOICE = "biometric_choice_made"
         private const val KEY_BIOMETRIC_HIDDEN = "biometric_hidden"

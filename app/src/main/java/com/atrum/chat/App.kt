@@ -67,6 +67,10 @@ class App : Application() {
             override fun onActivityStarted(activity: Activity) {
                 startedCount++
                 inForeground = true
+                // Пользователь открыл приложение — убираем пуш о непрочитанных и
+                // сбрасываем счётчик (если останутся непрочитанные — пуш вернётся в фоне).
+                NotificationHelper.cancelMessages(activity)
+                prefs.pushNotifiedTotal = 0
             }
             override fun onActivityStopped(activity: Activity) {
                 startedCount--

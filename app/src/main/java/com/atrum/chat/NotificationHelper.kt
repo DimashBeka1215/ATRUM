@@ -74,16 +74,34 @@ object NotificationHelper {
             .build()
     }
 
-    /** Анонимное «У вас новое сообщение.» Без имени, без текста, БЕЗ contentIntent. */
-    fun notifyNewMessage(ctx: Context) {
+    /** Порог отображения: больше — показываем «90+». */
+    private const val OVERFLOW = 90
+
+    /**
+     * Одно уведомление о непрочитанных с РАСТУЩИМ числом: «У вас 5 сообщений» → «6» → «90+».
+     * Имени/текста сообщений нет, contentIntent НЕТ (нажатие не открывает чат).
+     * Общий [MSG_ID] → лента не забивается: число обновляется в одной карточке.
+     *
+     * @param count суммарно непрочитанных от собеседников
+     * @param alert true — со звуком (пришло новое); false — тихое обновление числа
+     */
+    fun notifyNewMessage(ctx: Context, count: Int, alert: Boolean) {
+        if (count <= 0) { cancelMessages(ctx); return }
         ensureChannels(ctx)
         if (!NotificationManagerCompat.from(ctx).areNotificationsEnabled()) return
+        val text = if (count > OVERFLOW)
+            ctx.getString(R.string.push_messages_overflow)
+        else
+            ctx.resources.getQuantityString(R.plurals.push_new_messages, count, count)
         val n = NotificationCompat.Builder(ctx, CH_MESSAGES)
             .setSmallIcon(R.drawable.ic_bell)
             .setContentTitle(ctx.getString(R.string.app_name))
-            .setContentText(ctx.getString(R.string.push_new_message))
+            .setContentText(text)
+            .setNumber(if (count > OVERFLOW) OVERFLOW else count)
             .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setOnlyAlertOnce(!alert)
+            .setSilent(!alert)
+            .setPriority(if (alert) NotificationCompat.PRIORITY_DEFAULT else NotificationCompat.PRIORITY_LOW)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             // Намеренно НЕ задаём setContentIntent → нажатие не открывает чат.
             .build()
@@ -92,5 +110,10 @@ object NotificationHelper {
         } catch (_: SecurityException) {
             // Нет разрешения POST_NOTIFICATIONS — молча выходим.
         }
+    }
+
+    /** Убирает уведомление о непрочитанных (всё прочитано / открыли приложение). */
+    fun cancelMessages(ctx: Context) {
+        NotificationManagerCompat.from(ctx).cancel(MSG_ID)
     }
 }

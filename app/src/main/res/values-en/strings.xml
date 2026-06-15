@@ -496,6 +496,11 @@
     <string name="settings_item_push">Push notifications</string>
     <string name="settings_item_push_desc">Background check for new messages</string>
     <string name="push_new_message">You have a new message.</string>
+    <string name="push_messages_overflow">You have 90+ messages</string>
+    <plurals name="push_new_messages">
+        <item quantity="one">You have %d message</item>
+        <item quantity="other">You have %d messages</item>
+    </plurals>
     <string name="push_service_running">Checking for messages</string>
     <string name="push_channel_messages">New messages</string>
     <string name="push_channel_messages_desc">Notifications about new messages</string>
