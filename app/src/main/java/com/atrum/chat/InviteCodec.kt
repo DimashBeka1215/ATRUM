@@ -124,23 +124,33 @@ object InviteCodec {
         val nonce = blob.copyOfRange(SALT_LEN, SALT_LEN + NONCE_LEN)
         val ciphertext = blob.copyOfRange(SALT_LEN + NONCE_LEN, blob.size)
 
-        // v3 — Argon2id
-        val v3 = tryGcmDecrypt(deriveKeyArgon2(pin, salt), nonce, ciphertext)
-        if (v3 != null) {
-            val parts = v3.split(SEP)
-            if (parts.size >= 5 && parts[0] == VERSION) {
-                val expiry = parts[4].toLongOrNull() ?: 0L
-                if (System.currentTimeMillis() > expiry) throw ExpiredException()
-                return validated(parts[1], parts[2], parts[3])
-            }
-        }
+        // PIN-кандидаты. Сторона шеринга авто-капсит код (textCapCharacters) и генератор
+        // даёт ТОЛЬКО заглавные; сторона ввода — без авто-капса, поэтому получатель мог
+        // набрать в другом регистре. Пробуем как ввели И в верхнем регистре (+trim).
+        // Чисто аддитивно: рабочие инвайты возвращаются на первом же кандидате.
+        val pinCandidates = linkedSetOf(pin.trim(), pin.trim().uppercase(java.util.Locale.ROOT))
 
-        // v2 — PBKDF2 (обратная совместимость)
-        val v2 = tryGcmDecrypt(deriveKeyPbkdf2(pin, salt), nonce, ciphertext)
-        if (v2 != null) {
-            val parts = v2.split(SEP)
-            if (parts.size >= 4 && parts[0] == VERSION_PBKDF2) {
-                return validated(parts[1], parts[2], parts[3])
+        for (candidate in pinCandidates) {
+            if (candidate.isEmpty()) continue
+
+            // v3 — Argon2id
+            val v3 = tryGcmDecrypt(deriveKeyArgon2(candidate, salt), nonce, ciphertext)
+            if (v3 != null) {
+                val parts = v3.split(SEP)
+                if (parts.size >= 5 && parts[0] == VERSION) {
+                    val expiry = parts[4].toLongOrNull() ?: 0L
+                    if (System.currentTimeMillis() > expiry) throw ExpiredException()
+                    return validated(parts[1], parts[2], parts[3])
+                }
+            }
+
+            // v2 — PBKDF2 (обратная совместимость)
+            val v2 = tryGcmDecrypt(deriveKeyPbkdf2(candidate, salt), nonce, ciphertext)
+            if (v2 != null) {
+                val parts = v2.split(SEP)
+                if (parts.size >= 4 && parts[0] == VERSION_PBKDF2) {
+                    return validated(parts[1], parts[2], parts[3])
+                }
             }
         }
 
