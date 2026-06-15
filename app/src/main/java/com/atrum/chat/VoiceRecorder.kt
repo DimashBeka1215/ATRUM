@@ -112,21 +112,30 @@ class VoiceRecorder(context: Context) {
     private fun startAdvanced(f: File): Boolean {
         try {
             val sampleRate = 48_000
-            var channelMask = AudioFormat.CHANNEL_IN_STEREO
-            var channelCount = 2
-            var minBuf = AudioRecord.getMinBufferSize(sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT)
-            if (minBuf <= 0) {
-                channelMask = AudioFormat.CHANNEL_IN_MONO; channelCount = 1
-                minBuf = AudioRecord.getMinBufferSize(sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT)
-            }
-            if (minBuf <= 0) return false
-            val bufSize = maxOf(minBuf * 2, 8192)
-
-            val rec = AudioRecord(
-                MediaRecorder.AudioSource.MIC, sampleRate, channelMask,
-                AudioFormat.ENCODING_PCM_16BIT, bufSize
+            // VOICE_COMMUNICATION = аппаратный голосовой тракт связи с агрессивным
+            // шумоподавлением и AEC/AGC — давит фон СИЛЬНО и независимо от того, доступен
+            // ли отдельный эффект NoiseSuppressor (на части устройств его нет вообще).
+            // Тракт моно: стерео сознательно уступаем ради максимального шумодава.
+            val configs = listOf(
+                Triple(MediaRecorder.AudioSource.VOICE_COMMUNICATION, AudioFormat.CHANNEL_IN_MONO, 1),
+                Triple(MediaRecorder.AudioSource.MIC, AudioFormat.CHANNEL_IN_MONO, 1)
             )
-            if (rec.state != AudioRecord.STATE_INITIALIZED) { runCatching { rec.release() }; return false }
+            var found: AudioRecord? = null
+            var channelCount = 1
+            var bufSize = 0
+            for ((source, mask, ch) in configs) {
+                val minBuf = AudioRecord.getMinBufferSize(sampleRate, mask, AudioFormat.ENCODING_PCM_16BIT)
+                if (minBuf <= 0) continue
+                val bs = maxOf(minBuf * 2, 8192)
+                val r = try {
+                    AudioRecord(source, sampleRate, mask, AudioFormat.ENCODING_PCM_16BIT, bs)
+                } catch (_: Throwable) { null }
+                if (r != null && r.state == AudioRecord.STATE_INITIALIZED) {
+                    found = r; channelCount = ch; bufSize = bs; break
+                }
+                runCatching { r?.release() }
+            }
+            val rec = found ?: return false
             audioRecord = rec
             attachEffects(rec.audioSessionId)
 
