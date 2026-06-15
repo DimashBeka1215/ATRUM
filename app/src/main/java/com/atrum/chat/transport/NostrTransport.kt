@@ -10,6 +10,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -307,6 +309,43 @@ class NostrTransport(
             .filter { ev -> ev.tags.none { t -> t.firstOrNull() == "file" } }
             .firstOrNull { it.content.trim() == content.trim() }
 
+    /** Scope потоковых подписок этого транспорта. */
+    private val watchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Фильтр стрима: только НОВЫЕ kind:1 сообщения этого канала (since=сейчас). */
+    private fun streamFilter(sinceSec: Long): JSONObject = JSONObject().apply {
+        put("kinds", JSONArray().put(1))
+        put("#t", JSONArray().put(channelId))
+        put("since", sinceSec)
+    }
+
+    override fun watchMessages(onNew: () -> Unit): AutoCloseable {
+        val subId = "atrumw_$channelId"
+        val sinceSec = System.currentTimeMillis() / 1000
+        val onEvent: (NostrEvent) -> Unit = { ev ->
+            if (ev.kind == 1) {
+                NostrMessageStore.merge(channelId, listOf(ev)) // сразу в долговечный стор
+                onNew()
+            }
+        }
+        // Сторож: держим подписку открытой на всех реле; после реконнекта (drop()
+        // снимает subs) переоткрываем. Реле НЕ опрашиваем — оно само шлёт события.
+        val job = watchScope.launch {
+            while (isActive) {
+                for (url in RELAYS) {
+                    if (!NostrRelayPool.hasSub(url, subId, useTor)) {
+                        runCatching { NostrRelayPool.subscribe(url, subId, streamFilter(sinceSec), useTor, onEvent) }
+                    }
+                }
+                delay(RESUBSCRIBE_MS)
+            }
+        }
+        return AutoCloseable {
+            job.cancel()
+            for (url in RELAYS) runCatching { NostrRelayPool.unsubscribe(url, subId, useTor) }
+        }
+    }
+
     private fun chatFilter(): JSONObject = JSONObject().apply {
         // kind:1 — сообщения (хранятся), kind FILE_KIND — файлы (replaceable). Один запрос на всё.
         put("kinds", JSONArray().put(1).put(FILE_KIND))
@@ -395,6 +434,8 @@ class NostrTransport(
         private const val SOFT_READ_DEADLINE_MS = 8_000L
         /** Для Tor дедлайн чтения больше: построение цепочки + round-trip медленнее. */
         private const val SOFT_READ_DEADLINE_TOR_MS = 15_000L
+        /** Как часто сторож проверяет, что стрим-подписка жива (переоткрыть после обрыва). */
+        private const val RESUBSCRIBE_MS = 30_000L
 
         /** LRU неизменяемых медиа-файлов (чанки/манифесты img_/stk_) — повторное чтение из памяти. */
         private const val MEDIA_CACHE_MAX_CHARS = 8 * 1024 * 1024

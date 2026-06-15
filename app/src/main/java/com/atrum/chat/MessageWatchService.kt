@@ -8,6 +8,8 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.content.ContextCompat
 import com.atrum.chat.data.AppDatabase
+import com.atrum.chat.transport.ChatTransport
+import com.atrum.chat.transport.NostrMessageStore
 import com.atrum.chat.transport.TransportFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -16,20 +18,31 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Лёгкий foreground-сервис: пока приложение свёрнуто, периодически опрашивает реле
- * и шлёт АНОНИМНЫЙ пуш «У вас новое сообщение.» при появлении чужого сообщения.
+ * Лёгкий foreground-сервис пушей.
  *
- * Сетевые запросы — ТОЛЬКО через ChatTransport (TransportFactory), как требует
- * §1 синхронизации. Когда любой экран на переднем плане ([App.inForeground]) —
- * сервис НЕ опрашивает сеть: этим занимаются ChatActivity/ChatsListActivity.
- * Так не возникает второй конкурирующий цикл и не упираемся в rate-limit реле.
+ * Минимальная задержка БЕЗ частого опроса реле: для каждого чата открывается
+ * ПОТОКОВАЯ подписка ([ChatTransport.watchMessages]) — реле само присылает новое
+ * сообщение в момент отправки. Тогда пересчёт непрочитанных идёт ЛОКАЛЬНО из
+ * [NostrMessageStore] (без сети) и показывается анонимный пуш с числом.
+ *
+ * Сеть трогаем редко: раз в [FALLBACK_MS] делаем фоновую сверку (catch-up) на
+ * случай пропущенных событий/реконнекта. Всё — через ChatTransport (§1).
+ * Пуши показываются только когда приложение свёрнуто ([App.inForeground]).
  */
 class MessageWatchService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var loopJob: Job? = null
+    @Volatile private var recomputeJob: Job? = null
+
+    private val transports = ConcurrentHashMap<Long, ChatTransport>()
+    private val watches = ConcurrentHashMap<Long, AutoCloseable>()
+
+    private val prefs by lazy { Prefs(applicationContext) }
+    private val db by lazy { AppDatabase.get(applicationContext) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -45,54 +58,88 @@ class MessageWatchService : Service() {
     }
 
     private suspend fun loop() {
-        val prefs = Prefs(applicationContext)
-        val db = AppDatabase.get(applicationContext)
         while (true) {
             try {
-                if (prefs.pushEnabled && !App.inForeground) checkChats(prefs, db)
+                if (prefs.pushEnabled) {
+                    ensureWatches()          // открыть стрим-подписки на новые чаты
+                    networkSync()            // редкая фоновая сверка (catch-up)
+                    recomputeAndNotify()     // пересчёт из локального стора
+                }
             } catch (_: Throwable) {
-                // Фоновый цикл не должен падать — следующая итерация попробует снова.
+                // Фоновый цикл не должен падать.
             }
-            delay(POLL_MS)
+            delay(FALLBACK_MS)
         }
     }
 
-    private suspend fun checkChats(prefs: Prefs, db: AppDatabase) {
-        val chats = db.chatDao().getAll()
+    /** Открывает потоковую подписку на каждый чат, у которого её ещё нет. */
+    private suspend fun ensureWatches() {
+        val myUserId = prefs.myUserId
+        for (chat in db.chatDao().getAll()) {
+            if (chat.isFavorites) continue
+            if (watches.containsKey(chat.id)) continue
+            val token = prefs.getChatToken(chat.gistId).takeIf { it.isNotEmpty() }
+                ?: @Suppress("DEPRECATION") chat.gistToken
+            val password = prefs.getChatPassword(chat.gistId).takeIf { it.isNotEmpty() }
+                ?: @Suppress("DEPRECATION") chat.chatPassword
+            val t = TransportFactory.forChat(applicationContext, chat.gistId, token, password, myUserId)
+            transports[chat.id] = t
+            watches[chat.id] = t.watchMessages { onStreamEvent() }
+        }
+    }
+
+    /** Реле прислало новое событие → быстрый локальный пересчёт (с debounce). */
+    private fun onStreamEvent() {
+        if (!prefs.pushEnabled) return
+        recomputeJob?.cancel()
+        recomputeJob = scope.launch {
+            delay(400) // склеиваем всплеск событий в один пересчёт
+            runCatching { recomputeAndNotify() }
+        }
+    }
+
+    /** Редкая сетевая сверка: подтягивает историю в стор (через ChatTransport). */
+    private suspend fun networkSync() {
+        for ((id, t) in transports) {
+            if (db.chatDao().getById(id)?.isFavorites != false) continue
+            try { t.loadContent() } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Пересчёт непрочитанных ЛОКАЛЬНО из [NostrMessageStore] (без сети) и анонимный
+     * пуш с суммарным числом. Звеним только когда сумма выросла.
+     */
+    private suspend fun recomputeAndNotify() {
         val myName = prefs.myName
         val myUserId = prefs.myUserId
         val aliases = prefs.nameHistory
 
         var totalUnread = 0
-        for (chat in chats) {
+        for (chat in db.chatDao().getAll()) {
             if (chat.isFavorites) continue
+            val t = transports[chat.id] ?: continue
             try {
-                val token = prefs.getChatToken(chat.gistId).takeIf { it.isNotEmpty() }
-                    ?: @Suppress("DEPRECATION") chat.gistToken
                 val password = prefs.getChatPassword(chat.gistId).takeIf { it.isNotEmpty() }
                     ?: @Suppress("DEPRECATION") chat.chatPassword
-                val api = TransportFactory.forChat(applicationContext, chat.gistId, token, password, myUserId)
-                val content = api.loadContent()
+                val content = NostrMessageStore.render(t.chatId)
                 val lines = content.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-
-                // Чужие сообщения среди новых строк (свои в счёт не идут).
-                val unreadFromOthers = if (lines.size <= chat.lastSeenLineCount) 0 else {
+                val unread = if (lines.size <= chat.lastSeenLineCount) 0 else {
                     lines.drop(chat.lastSeenLineCount).count { line ->
                         val dec = CryptoHelper.decrypt(line, password, chat.gistId) ?: return@count false
                         val parsed = Message.fromDecrypted(dec, myUserId, myName, aliases)
                         !parsed.isSelf && parsed.sender.isNotEmpty()
                     }
                 }
-                if (unreadFromOthers != chat.unreadCount) db.chatDao().updateUnread(chat.id, unreadFromOthers)
-                totalUnread += unreadFromOthers
+                if (unread != chat.unreadCount) db.chatDao().updateUnread(chat.id, unread)
+                totalUnread += unread
             } catch (_: Exception) {
-                // Ошибка по одному чату не должна мешать остальным — учитываем прошлый unread.
                 totalUnread += chat.unreadCount
             }
         }
 
-        // Одно уведомление с растущим числом. Звеним только когда сумма ВЫРОСЛА
-        // (пришло новое); при чтении — обновляем число тихо или убираем карточку.
+        if (App.inForeground) return // приложение открыто — пуш не нужен
+
         val last = prefs.pushNotifiedTotal
         when {
             totalUnread == 0 -> if (last != 0) { NotificationHelper.cancelMessages(applicationContext); prefs.pushNotifiedTotal = 0 }
@@ -103,17 +150,19 @@ class MessageWatchService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        watches.values.forEach { runCatching { it.close() } }
+        watches.clear()
+        transports.clear()
         scope.cancel()
         loopJob = null
     }
 
     companion object {
-        /** Реже, чем поллинг открытого чата (~1.5с): фон — экономнее по сети и батарее. */
-        private const val POLL_MS = 20_000L
+        /** Редкая фоновая сверка: стрим даёт реалтайм, сеть трогаем нечасто. */
+        private const val FALLBACK_MS = 90_000L
 
         fun start(ctx: Context) {
             if (!Prefs(ctx).pushEnabled) return
-            // Старт FGS из фона на Android 12+ может бросать исключение — не роняем процесс.
             runCatching {
                 ContextCompat.startForegroundService(ctx, Intent(ctx, MessageWatchService::class.java))
             }

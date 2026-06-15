@@ -86,6 +86,14 @@ object NostrRelayPool {
     suspend fun publish(url: String, event: NostrEvent, useTor: Boolean, timeoutMs: Long = 20_000L) =
         conn(url, useTor).publish(event, timeoutMs)
 
+    /** Открывает потоковую подписку к реле (REQ остаётся открытым). */
+    suspend fun subscribe(url: String, subId: String, filter: org.json.JSONObject, useTor: Boolean, onEvent: (NostrEvent) -> Unit) =
+        conn(url, useTor).subscribe(subId, filter, onEvent)
+
+    fun unsubscribe(url: String, subId: String, useTor: Boolean) = conn(url, useTor).unsubscribe(subId)
+
+    fun hasSub(url: String, subId: String, useTor: Boolean): Boolean = conn(url, useTor).hasSub(subId)
+
     /** Закрывает все соединения (вызывать при выходе из чата/приложения, опционально). */
     fun shutdown() {
         conns.values.forEach { it.close() }
@@ -100,7 +108,7 @@ private class RelayConn(private val url: String, private val client: OkHttpClien
     private val connectMutex = Mutex()
     private val seq = AtomicLong(0)
 
-    private class Sub {
+    private class Sub(val onEvent: ((NostrEvent) -> Unit)? = null) {
         val events = mutableListOf<NostrEvent>()
         val eose = CompletableDeferred<Unit>()
     }
@@ -147,8 +155,9 @@ private class RelayConn(private val url: String, private val client: OkHttpClien
             when (arr.optString(0)) {
                 "EVENT" -> {
                     val sub = subs[arr.optString(1)] ?: return
-                    NostrEvent.fromJson(arr.getJSONObject(2))?.let {
-                        synchronized(sub.events) { sub.events.add(it) }
+                    NostrEvent.fromJson(arr.getJSONObject(2))?.let { ev ->
+                        val cb = sub.onEvent
+                        if (cb != null) cb(ev) else synchronized(sub.events) { sub.events.add(ev) }
                     }
                 }
                 "EOSE" -> subs[arr.optString(1)]?.eose?.complete(Unit)
@@ -190,6 +199,23 @@ private class RelayConn(private val url: String, private val client: OkHttpClien
                 subs.remove(subId)
             }
         }
+
+    /** Потоковая подписка: REQ остаётся ОТКРЫТЫМ, реле само шлёт новые EVENT в onEvent. */
+    suspend fun subscribe(subId: String, filter: org.json.JSONObject, onEvent: (NostrEvent) -> Unit): Unit =
+        withContext(Dispatchers.IO) {
+            val sock = socket()
+            subs[subId] = Sub(onEvent)
+            val req = JSONArray().apply { put("REQ"); put(subId); put(filter) }.toString()
+            if (!sock.send(req)) { subs.remove(subId); throw RuntimeException("ws send failed") }
+        }
+
+    fun unsubscribe(subId: String) {
+        subs.remove(subId)
+        try { ws?.send(JSONArray().apply { put("CLOSE"); put(subId) }.toString()) } catch (_: Exception) {}
+    }
+
+    /** true если подписка ещё жива (реконнект через drop() её снимает → нужно переоткрыть). */
+    fun hasSub(subId: String): Boolean = subs.containsKey(subId)
 
     suspend fun publish(event: NostrEvent, timeoutMs: Long): Unit = withContext(Dispatchers.IO) {
         val sock = socket()
