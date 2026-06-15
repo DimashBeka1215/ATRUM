@@ -8,6 +8,11 @@ import android.net.Uri
 import android.os.Bundle
 import android.util.Base64
 import android.view.View
+import android.Manifest
+import android.view.MotionEvent
+import android.view.HapticFeedbackConstants
+import android.annotation.SuppressLint
+import java.io.File
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -50,6 +55,17 @@ class ChatActivity : SecureActivity() {
     private lateinit var binding: ActivityChatBinding
     private lateinit var prefs: Prefs
     private lateinit var db: AppDatabase
+    private val voiceRecorder by lazy { VoiceRecorder(this) }
+    private var voiceUiJob: Job? = null
+    private var recordCancelled = false
+    private var recordStartX = 0f
+    private val cancelThresholdPx by lazy { 120f * resources.displayMetrics.density }
+    private val requestAudioPerm = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) Toast.makeText(this, R.string.voice_need_mic, Toast.LENGTH_SHORT).show()
+    }
+
     private lateinit var transport: ChatTransport
     private lateinit var transportFactory: TransportFactory
     private lateinit var chat: Chat
@@ -760,6 +776,7 @@ class ChatActivity : SecureActivity() {
             binding.btnMore.visibility = View.GONE
         }
         binding.btnSend.setOnClickListener { sendMessage() }
+        setupVoiceInput()
         binding.btnAttach.setOnClickListener { pickImages.launch("image/*") }
         binding.btnCancelReply.setOnClickListener { clearReply() }
 
@@ -1697,6 +1714,157 @@ class ChatActivity : SecureActivity() {
         binding.btnSend.isEnabled = true
     }
 
+    // ── Голосовые сообщения ────────────────────────────────────────────────────
+
+    /** Пустое поле → кнопка микрофона; есть текст → кнопка отправки. */
+    private fun updateSendVoiceButtons(text: String) {
+        val hasText = text.trim().isNotEmpty()
+        binding.btnSend.visibility = if (hasText) View.VISIBLE else View.GONE
+        binding.btnVoice.visibility = if (hasText) View.GONE else View.VISIBLE
+    }
+
+    private fun hasAudioPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupVoiceInput() {
+        updateSendVoiceButtons(binding.etMessage.text.toString())
+        binding.btnVoice.setOnTouchListener { _, ev ->
+            when (ev.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    recordStartX = ev.rawX
+                    recordCancelled = false
+                    if (!hasAudioPermission()) {
+                        requestAudioPerm.launch(Manifest.permission.RECORD_AUDIO)
+                        return@setOnTouchListener true
+                    }
+                    if (sendManager.isPunished()) return@setOnTouchListener true
+                    beginVoiceRecording()
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (voiceRecorder.isRecording) {
+                        val dx = ev.rawX - recordStartX
+                        if (dx < -cancelThresholdPx) {
+                            recordCancelled = true
+                            binding.tvRecHint.setText(R.string.voice_release_to_cancel)
+                            binding.tvRecHint.setTextColor(ContextCompat.getColor(this, R.color.error))
+                        } else {
+                            recordCancelled = false
+                            binding.tvRecHint.setText(R.string.voice_slide_to_cancel)
+                            binding.tvRecHint.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+                        }
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (voiceRecorder.isRecording) {
+                        finishVoiceRecording(cancel = recordCancelled || ev.action == MotionEvent.ACTION_CANCEL)
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun beginVoiceRecording() {
+        if (!voiceRecorder.start()) {
+            Toast.makeText(this, R.string.voice_record_failed, Toast.LENGTH_SHORT).show()
+            return
+        }
+        binding.btnVoice.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        binding.btnAttach.visibility = View.GONE
+        binding.btnSticker.visibility = View.GONE
+        binding.etMessage.visibility = View.GONE
+        binding.recordingRow.visibility = View.VISIBLE
+        binding.tvRecTime.text = "0:00"
+        binding.tvRecHint.setText(R.string.voice_slide_to_cancel)
+        binding.tvRecHint.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+        voiceUiJob?.cancel()
+        voiceUiJob = lifecycleScope.launch {
+            while (voiceRecorder.isRecording) {
+                val ms = voiceRecorder.elapsedMs()
+                val sec = (ms / 1000).toInt()
+                binding.tvRecTime.text = String.format(Locale.ROOT, "%d:%02d", sec / 60, sec % 60)
+                if (ms >= MAX_VOICE_MS) { finishVoiceRecording(cancel = false); break }
+                delay(200L)
+            }
+        }
+    }
+
+    private fun restoreInputAfterRecording() {
+        binding.recordingRow.visibility = View.GONE
+        binding.btnAttach.visibility = View.VISIBLE
+        binding.btnSticker.visibility = View.VISIBLE
+        binding.etMessage.visibility = View.VISIBLE
+        binding.tvRecTime.text = "0:00"
+    }
+
+    private fun finishVoiceRecording(cancel: Boolean) {
+        voiceUiJob?.cancel(); voiceUiJob = null
+        restoreInputAfterRecording()
+        if (cancel) { voiceRecorder.cancel(); return }
+        val result = voiceRecorder.stop(minMs = 700L)
+        if (result == null) {
+            Toast.makeText(this, R.string.voice_too_short, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val (file, durMs) = result
+        sendVoice(file, ((durMs + 500L) / 1000L).toInt().coerceAtLeast(1))
+    }
+
+    private fun sendVoice(file: File, durationSec: Int) {
+        if (sendManager.isPunished()) return
+        val now = System.currentTimeMillis()
+        lifecycleScope.launch {
+            try {
+                val b64 = withContext(Dispatchers.Default) {
+                    Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
+                }
+                val encryptedContent = withContext(Dispatchers.Default) {
+                    CryptoHelper.encrypt(b64, chat.chatPassword, chat.gistId)
+                }
+                val contentRef = withContext(Dispatchers.IO) {
+                    transport.uploadImage(encryptedContent, chat.chatPassword)
+                }
+                val plaintext = Message.composePlaintext(
+                    senderName = prefs.myName,
+                    senderUserId = prefs.myUserId,
+                    text = "",
+                    voiceFileName = contentRef,
+                    voiceDurationSec = durationSec,
+                    timestampMs = now
+                )
+                val encryptedMessage = withContext(Dispatchers.Default) {
+                    CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.gistId)
+                }
+                val pendingMsg = Message(
+                    sender = prefs.myName,
+                    text = "",
+                    isSelf = true,
+                    rawEncrypted = encryptedMessage,
+                    timestampMs = now,
+                    voiceFileName = contentRef,
+                    voiceDurationSec = durationSec,
+                    senderUserId = prefs.myUserId,
+                    isPending = true
+                )
+                chatStore.addOptimistic(pendingMsg)
+                withContext(Dispatchers.IO) { transport.appendLine(encryptedLine = encryptedMessage) }
+                chatStore.confirmSent(encryptedMessage)
+                syncEngine.forceSync(delayMs = 0L)
+                stopTypingSignal()
+                runCatching { file.delete() }
+            } catch (e: Exception) {
+                Toast.makeText(this@ChatActivity,
+                    getString(R.string.error_send) + "\n" + (e.message?.take(120) ?: "unknown"),
+                    Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     // ── Жёлтая плашка лимита GitHub ────────────────────────────────────────────
 
     /**
@@ -1988,6 +2156,7 @@ class ChatActivity : SecureActivity() {
             override fun afterTextChanged(s: Editable?) {
                 if (s.isNullOrEmpty()) stopTypingSignal() else onTypingDetected()
                 updateStickerSuggestions(s?.toString() ?: "")
+                updateSendVoiceButtons(s?.toString() ?: "")
             }
         })
     }
@@ -2944,6 +3113,8 @@ class ChatActivity : SecureActivity() {
         // ── Media ─────────────────────────────────────────────────────────────
         /** Максимальное количество фото в коллаже за одну отправку. */
         const val MAX_COLLAGE_IMAGES = 10
+        /** Максимальная длительность голосового (5 минут). */
+        private const val MAX_VOICE_MS = 5 * 60 * 1000L
         /** Максимальное количество одновременных загрузок изображений. */
         const val MAX_CONCURRENT = 3
     }

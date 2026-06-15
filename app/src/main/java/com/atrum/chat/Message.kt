@@ -36,6 +36,10 @@ data class Message(
     val aspectRatios: List<Float>? = null,
     val senderUserId: String? = null,
     val forwardedSender: String? = null,
+    /** Ссылка на контент голосового (img_.../gist:...) — null если не голосовое. */
+    val voiceFileName: String? = null,
+    /** Длительность голосового в секундах. */
+    val voiceDurationSec: Int = 0,
     /**
      * true = сообщение ещё не подтверждено сервером (отображается с иконкой часов).
      * Никогда не сохраняется в gist — только в памяти адаптера.
@@ -45,6 +49,8 @@ data class Message(
     val isReply: Boolean get() = quotedSender != null
     /** Стабильный уникальный ключ сообщения для режима выбора. */
     val msgId: String get() = if (rawEncrypted.isNotBlank()) rawEncrypted.take(40) else "${senderUserId}_$timestampMs"
+    /** true если это голосовое сообщение. */
+    val isVoice: Boolean get() = voiceFileName != null
     /** true если это анимированный стикер (.tgs файл) */
     val isSticker: Boolean get() = imageFileName?.startsWith(STK_FILENAME_PREFIX) == true
     val isImage: Boolean get() = imageBase64 != null || (imageFileName != null && !isSticker) || imageFileNames != null
@@ -66,6 +72,8 @@ data class Message(
         private const val GIST_REF_PREFIX = "gist:"
         /** Префикс коллажа из нескольких изображений. */
         private const val MULTI_PREFIX = "MULTI:"
+        /** Префикс голосового: VOICE:<секунды>|<ссылка_на_контент> в DC1-канале. */
+        private const val VOICE_PREFIX = "VOICE:"
 
         /**
          * Разделитель в новом формате имени стикера: "stk_<ts>_<rand>.<ext>|<contentRef>".
@@ -178,6 +186,23 @@ data class Message(
                 val caption = if (parts.size == 2) parts[1] else ""
 
                 return when {
+                    // ── Голосовое ───────────────────────────────────────────
+                    ref.startsWith(VOICE_PREFIX) -> {
+                        val rest = ref.removePrefix(VOICE_PREFIX)
+                        val sep = rest.indexOf('|')
+                        val dur = (if (sep > 0) rest.substring(0, sep) else "").toIntOrNull() ?: 0
+                        val contentRef = if (sep >= 0) rest.substring(sep + 1) else rest
+                        Message(
+                            sender = sender,
+                            text = caption,
+                            isSelf = isSelf,
+                            rawEncrypted = raw,
+                            timestampMs = timestamp,
+                            voiceFileName = contentRef,
+                            voiceDurationSec = dur,
+                            senderUserId = parsedUserId
+                        )
+                    }
                     // ── Коллаж ──────────────────────────────────────────────
                     ref.startsWith(MULTI_PREFIX) -> {
                         val entries = ref.removePrefix(MULTI_PREFIX).split("|")
@@ -258,6 +283,8 @@ data class Message(
             imageFileName: String? = null,
             imageFileNames: List<String>? = null,
             aspectRatios: List<Float>? = null,
+            voiceFileName: String? = null,
+            voiceDurationSec: Int = 0,
             timestampMs: Long = System.currentTimeMillis()
         ): String {
             val tsPrefix = "$US$timestampMs$US"
@@ -267,6 +294,10 @@ data class Message(
                 .replace(SOH, ' ').replace(STX, ' ').replace(DC1, ' ')
 
             return when {
+                // ── Голосовое ───────────────────────────────────────────────
+                voiceFileName != null -> {
+                    "$tsPrefix$uidPrefix$cleanSender: $DC1$VOICE_PREFIX$voiceDurationSec|$voiceFileName"
+                }
                 // ── Коллаж ──────────────────────────────────────────────────
                 imageFileNames != null && imageFileNames.isNotEmpty() -> {
                     val multiContent = imageFileNames.mapIndexed { i, name ->

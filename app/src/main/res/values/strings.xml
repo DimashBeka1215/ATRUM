@@ -622,6 +622,14 @@
     <string name="sticker_rename_save">Сохранить</string>
     <string name="sticker_rename_cd">Переименовать пак</string>
     <string name="msg_preview_sticker">Стикер</string>
+    <string name="msg_preview_voice">Голосовое сообщение</string>
+    <string name="voice_record_cd">Записать голосовое</string>
+    <string name="cd_voice_play">Воспроизвести голосовое</string>
+    <string name="voice_slide_to_cancel">смахните влево для отмены</string>
+    <string name="voice_release_to_cancel">отпустите для отмены</string>
+    <string name="voice_need_mic">Нужен доступ к микрофону</string>
+    <string name="voice_record_failed">Не удалось начать запись</string>
+    <string name="voice_too_short">Слишком коротко</string>
     <string name="msg_preview_photo">Фото</string>
     <string name="sticker_pack_label_default">Стикеры</string>
     <string name="sticker_add_pack_cd">Добавить пак</string>

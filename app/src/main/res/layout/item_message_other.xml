@@ -127,6 +127,46 @@
             android:visibility="gone"
             android:layout_marginBottom="4dp"/>
 
+        <!-- Голосовое сообщение -->
+        <LinearLayout
+            android:id="@+id/voice_container"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:minWidth="190dp"
+            android:paddingVertical="2dp"
+            android:layout_marginBottom="2dp"
+            android:visibility="gone">
+            <ImageButton
+                android:id="@+id/btn_voice_play"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_play"
+                android:background="@drawable/bg_voice_circle_accent"
+                android:scaleType="centerInside"
+                android:padding="9dp"
+                android:contentDescription="@string/cd_voice_play"
+                app:tint="@color/white" />
+            <ProgressBar
+                android:id="@+id/voice_progress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="10dp"
+                android:max="100"
+                android:progress="0"
+                android:progressTint="@color/accent"
+                android:progressBackgroundTint="@color/border" />
+            <TextView
+                android:id="@+id/tv_voice_dur"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+        </LinearLayout>
+
         <TextView
             android:id="@+id/tv_text"
             android:layout_width="wrap_content"

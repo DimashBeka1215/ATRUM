@@ -279,6 +279,10 @@ class MessageAdapter(
         private val collageView: CollageLayout? = itemView.findViewById(R.id.collage_layout)
         private val lottieView: LottieAnimationView? = itemView.findViewById(R.id.lottie_sticker)
         private val webmView: WebmStickerView? = itemView.findViewById(R.id.webm_sticker)
+        private val voiceContainer: View? = itemView.findViewById(R.id.voice_container)
+        private val voicePlayBtn: ImageView? = itemView.findViewById(R.id.btn_voice_play)
+        private val voiceProgress: android.widget.ProgressBar? = itemView.findViewById(R.id.voice_progress)
+        private val voiceDur: TextView? = itemView.findViewById(R.id.tv_voice_dur)
         private val tickView: ImageView? = itemView.findViewById(R.id.iv_tick)
         /** The rounded bubble container — background changes between classic and glass modes. */
         private val bubbleContainer: View? = itemView.findViewById(R.id.bubble_container)
@@ -326,8 +330,16 @@ class MessageAdapter(
                 }
             }
 
-            // ── Картинка / коллаж / стикер ───────────────────────────────────
+            // ── Картинка / коллаж / стикер / голосовое ───────────────────────
+            voiceContainer?.visibility = View.GONE
             when {
+                msg.isVoice && voiceContainer != null -> {
+                    imageView?.visibility = View.GONE; imageView?.tag = null
+                    collageView?.let { it.visibility = View.GONE; it.removeAllViews() }
+                    lottieView?.let { it.visibility = View.GONE; it.cancelAnimation() }
+                    webmView?.let { it.visibility = View.GONE; it.release() }
+                    bindVoice(msg)
+                }
                 msg.isSticker && (lottieView != null || webmView != null) -> {
                     imageView?.visibility = View.GONE
                     imageView?.tag = null
@@ -553,6 +565,68 @@ class MessageAdapter(
          * Загружает стикер (STATIC .webp, ANIMATED .tgs или VIDEO .webm) и отображает его.
          * STATIC отображается как Bitmap, ANIMATED через Lottie, VIDEO как первый кадр (Bitmap).
          */
+        private fun voiceTime(totalMs: Int): String {
+            val s = totalMs / 1000
+            return "%d:%02d".format(s / 60, s % 60)
+        }
+
+        private suspend fun loadVoiceFile(loader: ImageLoader, ref: String): File? {
+            val dir = File(itemView.context.cacheDir, "voice_play").apply { mkdirs() }
+            val f = File(dir, "v_" + Integer.toHexString(ref.hashCode()) + ".m4a")
+            if (f.exists() && f.length() > 0) return f
+            val bytes = loader.loadRawBytes(ref) ?: return null
+            return try { f.writeBytes(bytes); f } catch (_: Exception) { null }
+        }
+
+        private fun bindVoice(msg: Message) {
+            val container = voiceContainer ?: return
+            val playBtn = voicePlayBtn ?: return
+            container.visibility = View.VISIBLE
+            val key = msg.msgId
+            val ref = msg.voiceFileName ?: return
+            val totalSec = msg.voiceDurationSec
+            playBtn.tag = key
+
+            val progressCb: (String, Int, Int) -> Unit = { k, pos, dur ->
+                if (playBtn.tag == k) {
+                    voiceProgress?.progress = if (dur > 0) (pos.toLong() * 100 / dur).toInt() else 0
+                    voiceDur?.text = voiceTime(pos)
+                }
+            }
+            val completeCb: (String) -> Unit = { k ->
+                if (playBtn.tag == k) {
+                    playBtn.setImageResource(R.drawable.ic_play)
+                    voiceProgress?.progress = 0
+                    voiceDur?.text = voiceTime(totalSec * 1000)
+                }
+            }
+
+            if (VoicePlayer.currentKey == key) {
+                playBtn.setImageResource(R.drawable.ic_pause)
+                VoicePlayer.rebind(key, progressCb, completeCb)
+            } else {
+                playBtn.setImageResource(R.drawable.ic_play)
+                voiceProgress?.progress = 0
+                voiceDur?.text = voiceTime(totalSec * 1000)
+            }
+
+            playBtn.setOnClickListener {
+                val loader = getImageLoader() ?: return@setOnClickListener
+                val scope = loadScope ?: return@setOnClickListener
+                if (VoicePlayer.isPlaying(key)) {
+                    VoicePlayer.pause()
+                    playBtn.setImageResource(R.drawable.ic_play)
+                    return@setOnClickListener
+                }
+                scope.launch {
+                    val file = withContext(Dispatchers.IO) { loadVoiceFile(loader, ref) }
+                    if (file == null || playBtn.tag != key) return@launch
+                    playBtn.setImageResource(R.drawable.ic_pause)
+                    VoicePlayer.toggle(key, file, progressCb, completeCb)
+                }
+            }
+        }
+
         private fun bindSticker(msg: Message, lottie: LottieAnimationView) {
             val fileName = msg.imageFileName ?: return
             // Контент стикера и его кеш — по общей ссылке (новый формат: часть после '|';

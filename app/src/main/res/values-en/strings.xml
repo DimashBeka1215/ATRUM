@@ -576,6 +576,14 @@
     <string name="sticker_rename_save">Save</string>
     <string name="sticker_rename_cd">Rename pack</string>
     <string name="msg_preview_sticker">Sticker</string>
+    <string name="msg_preview_voice">Voice message</string>
+    <string name="voice_record_cd">Record voice message</string>
+    <string name="cd_voice_play">Play voice message</string>
+    <string name="voice_slide_to_cancel">slide left to cancel</string>
+    <string name="voice_release_to_cancel">release to cancel</string>
+    <string name="voice_need_mic">Microphone access required</string>
+    <string name="voice_record_failed">Could not start recording</string>
+    <string name="voice_too_short">Too short</string>
     <string name="msg_preview_photo">Photo</string>
     <string name="sticker_pack_label_default">Stickers</string>
     <string name="sticker_add_pack_cd">Add pack</string>
