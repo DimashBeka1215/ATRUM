@@ -492,6 +492,16 @@
     <string name="header_content_rules">Header must not contain explicit content, violence, or prohibited material.</string>
 
     <string name="settings_item_stickers">Stickers</string>
+    <!-- Push notifications -->
+    <string name="settings_item_push">Push notifications</string>
+    <string name="settings_item_push_desc">Background check for new messages</string>
+    <string name="push_new_message">You have a new message.</string>
+    <string name="push_service_running">Checking for messages</string>
+    <string name="push_channel_messages">New messages</string>
+    <string name="push_channel_messages_desc">Notifications about new messages</string>
+    <string name="push_channel_service">Background activity</string>
+    <string name="push_channel_service_desc">Persistent notification while the app checks for messages</string>
+    <string name="push_need_permission">Notification permission is required for push</string>
     <string name="settings_section_security">SECURITY</string>
     <string name="settings_item_change_pin">Change PIN</string>
     <string name="settings_item_change_pin_desc">App lock password</string>

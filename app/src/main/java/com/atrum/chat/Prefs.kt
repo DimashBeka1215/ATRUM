@@ -137,6 +137,16 @@ class Prefs(context: Context) {
         get() = prefs.getBoolean(KEY_BIOMETRIC, false)
         set(v) = prefs.edit().putBoolean(KEY_BIOMETRIC, v).apply()
 
+    /** Push-уведомления о новых сообщениях (фоновый сервис). По умолчанию выкл. */
+    var pushEnabled: Boolean
+        get() = prefs.getBoolean(KEY_PUSH_ENABLED, false)
+        set(v) = prefs.edit().putBoolean(KEY_PUSH_ENABLED, v).apply()
+
+    /** Сколько чужих сообщений по чату мы уже отметили пушем (анти-повтор). */
+    fun getPushNotified(gistId: String): Int = prefs.getInt("push_notified_${'$'}gistId", 0)
+    fun setPushNotified(gistId: String, n: Int) =
+        prefs.edit().putInt("push_notified_${'$'}gistId", n).apply()
+
     /**
      * Пользователь при первом включении отказался от входа по отпечатку → функция удалена
      * НАВСЕГДА: раздел в настройках скрыт, разблокировка по отпечатку отключена. Вернуть
@@ -485,6 +495,7 @@ class Prefs(context: Context) {
         private const val KEY_LOCAL_PWD_HASH = "local_pwd_hash"
         private const val KEY_ONBOARDED = "onboarded"
         private const val KEY_BIOMETRIC = "biometric_enabled"
+        private const val KEY_PUSH_ENABLED = "push_enabled"
         private const val KEY_BIOMETRIC_REMOVED = "biometric_removed"
         private const val KEY_BIOMETRIC_CHOICE = "biometric_choice_made"
         private const val KEY_BIOMETRIC_HIDDEN = "biometric_hidden"

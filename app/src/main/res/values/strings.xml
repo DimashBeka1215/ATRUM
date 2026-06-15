@@ -534,6 +534,16 @@
     <string name="header_content_rules">Шапка не должна содержать откровенный контент, насилие или запрещённые материалы.</string>
 
     <string name="settings_item_stickers">Стикеры</string>
+    <!-- Push-уведомления -->
+    <string name="settings_item_push">Push-уведомления</string>
+    <string name="settings_item_push_desc">Фоновая проверка новых сообщений</string>
+    <string name="push_new_message">У вас новое сообщение.</string>
+    <string name="push_service_running">Проверка сообщений активна</string>
+    <string name="push_channel_messages">Новые сообщения</string>
+    <string name="push_channel_messages_desc">Уведомления о новых сообщениях</string>
+    <string name="push_channel_service">Фоновая работа</string>
+    <string name="push_channel_service_desc">Постоянное уведомление, пока приложение проверяет сообщения</string>
+    <string name="push_need_permission">Для пушей нужно разрешение на уведомления</string>
     <string name="settings_section_security">БЕЗОПАСНОСТЬ</string>
     <string name="settings_item_change_pin">Изменить PIN-код</string>
     <string name="settings_item_change_pin_desc">Пароль для входа в приложение</string>

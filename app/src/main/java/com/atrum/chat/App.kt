@@ -51,6 +51,7 @@ class App : Application() {
         // Migrate chat secrets from plaintext Room DB to EncryptedSharedPreferences
         // before the DB migration zeroes them out (MIGRATION_9_10).
         migrateChatSecretsToPrefs(prefs)
+        if (prefs.pushEnabled) MessageWatchService.start(this)
         AppCompatDelegate.setDefaultNightMode(modeFromTheme(prefs.appTheme))
         val lang = prefs.appLanguage
         AppCompatDelegate.setApplicationLocales(
@@ -65,11 +66,13 @@ class App : Application() {
             private var startedCount = 0
             override fun onActivityStarted(activity: Activity) {
                 startedCount++
+                inForeground = true
             }
             override fun onActivityStopped(activity: Activity) {
                 startedCount--
                 if (startedCount <= 0) {
                     startedCount = 0
+                    inForeground = false
                     if (!activity.isChangingConfigurations && prefs.hasLocalPassword()) {
                         AppLock.locked = true
                     }
@@ -84,6 +87,10 @@ class App : Application() {
     }
 
     companion object {
+        /** true пока хотя бы один экран на переднем плане. Фоновый сервис пушей по
+         *  этому флагу НЕ опрашивает сеть, пока приложение открыто. */
+        @Volatile var inForeground: Boolean = false
+
         /** Transition state for smooth circular reveal theme switching. */
         var screenshot: Bitmap? = null
         var centerX: Int = 0

@@ -34,6 +34,16 @@ class SettingsActivity : SecureActivity() {
         ActivityResultContracts.GetContent()
     ) { uri: Uri? -> if (uri != null) startCrop(uri) }
 
+    private val requestNotifPerm = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) enablePush()
+        else {
+            binding.switchPush.isChecked = false
+            Toast.makeText(this, R.string.push_need_permission, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private val cropImage = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -78,6 +88,9 @@ class SettingsActivity : SecureActivity() {
                 Toast.makeText(this, R.string.biometric_open_settings, Toast.LENGTH_SHORT).show()
             }
         }
+
+        binding.switchPush.isChecked = prefs.pushEnabled
+        binding.itemNotifications.setOnClickListener { togglePush() }
 
         binding.itemStickers.setOnClickListener {
             startActivity(Intent(this, StickerSettingsActivity::class.java))
@@ -130,6 +143,31 @@ class SettingsActivity : SecureActivity() {
         if (BiometricHelper.canUse(this)) {
             binding.warnBiometric.visibility = View.GONE
         }
+    }
+
+    /** Включает/выключает push-уведомления и фоновый сервис. */
+    private fun togglePush() {
+        if (binding.switchPush.isChecked) {
+            prefs.pushEnabled = false
+            binding.switchPush.isChecked = false
+            MessageWatchService.stop(this)
+            return
+        }
+        // Android 13+ требует runtime-разрешение на показ уведомлений.
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestNotifPerm.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            enablePush()
+        }
+    }
+
+    private fun enablePush() {
+        prefs.pushEnabled = true
+        binding.switchPush.isChecked = true
+        MessageWatchService.start(this)
     }
 
     private fun toggleBiometric() {
