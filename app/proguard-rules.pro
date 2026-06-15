@@ -38,6 +38,15 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.openjsse.**
 
+# ── kmp-tor (встроенный Tor) ─────────────────────────────────────────────────
+# Desktop-JVM классы отсутствуют на Android — глушим предупреждения R8.
+-dontwarn java.lang.management.ManagementFactory
+-dontwarn java.lang.management.RuntimeMXBean
+-dontwarn java.lang.management.**
+# kmp-tor грузит нативный бинарь tor и работает через JNI/reflection — сохраняем классы.
+-keep class io.matthewnelson.** { *; }
+-dontwarn io.matthewnelson.**
+
 # ── AndroidX Security (EncryptedSharedPreferences) ───────────────────────────
 -keep class androidx.security.crypto.** { *; }
 -dontwarn androidx.security.crypto.**
@@ -75,17 +84,4 @@
 }
 
 # ── Сериализация через Parcelable/Serializable ────────────────────────────────
--keepclassmembers class * implements java.io.Serializable {
-    private static final java.io.ObjectStreamField[] serialPersistentFields;
-    private void writeObject(java.io.ObjectOutputStream);
-    private void readObject(java.io.ObjectInputStream);
-    java.lang.Object writeReplace();
-    java.lang.Object readResolve();
-}
-
-# ── Удаление логов в release-сборке ──────────────────────────────────────────
--assumenosideeffects class android.util.Log {
-    public static int v(...);
-    public static int d(...);
-    public static int i(...);
-}
+-keepclass

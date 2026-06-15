@@ -2,6 +2,7 @@ package com.atrum.chat
 
 import com.atrum.chat.transport.AllGistData
 import com.atrum.chat.transport.ChatTransport
+import com.atrum.chat.transport.NostrTransport
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -44,12 +45,19 @@ class SyncEngine(private val transport: ChatTransport) {
 
     @Volatile private var rateLimitUntilMs = 0L
     @Volatile private var forceSyncAtMs    = Long.MAX_VALUE
-    @Volatile private var currentIntervalMs = ACTIVE_INTERVAL_MS
+    /**
+     * Активный интервал зависит от транспорта: для Nostr — быстрый (своя сеть,
+     * нет GitHub-rate-limit), для Gist/прочих — прежние 5с (GitHub rate limit).
+     */
+    private val activeInterval: Long
+        get() = if (transport is NostrTransport) NOSTR_ACTIVE_INTERVAL_MS else ACTIVE_INTERVAL_MS
+
+    @Volatile private var currentIntervalMs = activeInterval
 
     // ── Public API ────────────────────────────────────────────────────────────
 
     /** Переключить на быстрый интервал (чат на переднем плане). */
-    fun setActive() { currentIntervalMs = ACTIVE_INTERVAL_MS }
+    fun setActive() { currentIntervalMs = activeInterval }
 
     /** Переключить на медленный интервал (чат ушёл в фон). */
     fun setBackground() { currentIntervalMs = BACKGROUND_INTERVAL_MS }
@@ -159,7 +167,17 @@ class SyncEngine(private val transport: ChatTransport) {
          * Нагрузка: 12 GET/мин при ETag (большинство — 304, ~0 трафика).
          * GitHub rate limit: 5000/час = 83/мин → 14% утилизации. Безопасно.
          */
-        const val ACTIVE_INTERVAL_MS     = 5_000L    // 5 с
+        const val ACTIVE_INTERVAL_MS     = 5_000L    // 5 с (Gist — под GitHub rate limit)
+
+        /**
+         * Интервал опроса для Nostr на переднем плане — 0.5 с.
+         * Persistent WebSocket (NostrRelayPool) делает каждый тик дешёвым.
+         * ⚠️ Публичные реле могут ограничивать частоту REQ-подписок: если реле
+         * начнут отваливаться/ругаться — подними это значение (напр. 1000–1500).
+         * Настоящий «push» (одна живая подписка вместо опроса) убрал бы опрос совсем,
+         * но требует переписать единый polling-цикл (CLAUDE.md §1).
+         */
+        const val NOSTR_ACTIVE_INTERVAL_MS = 3_000L
 
         /** Интервал опроса когда чат уходит в фон (не используется — onPause stop). */
         const val BACKGROUND_INTERVAL_MS = 30_000L   // 30 с

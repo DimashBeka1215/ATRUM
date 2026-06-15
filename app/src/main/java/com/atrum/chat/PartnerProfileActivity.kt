@@ -10,7 +10,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import com.atrum.chat.transport.GistTransport
+import com.atrum.chat.transport.TransportFactory
 import com.google.android.material.imageview.ShapeableImageView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -146,8 +146,7 @@ class PartnerProfileActivity : AppCompatActivity() {
         row1: LinearLayout,
         row2: LinearLayout
     ) {
-        val api = GistApi(token = gistToken, gistId = gistId)
-        val transport = GistTransport(api)
+        val transport = TransportFactory.forChat(this@PartnerProfileActivity, gistId, gistToken, chatPassword, prefs.myUserId)
         val loader = ImageLoader(transport, chatPassword)
 
         // Show up to 6 photos (3 per row)
@@ -434,7 +433,7 @@ class PartnerProfileActivity : AppCompatActivity() {
         if (verifyToken.isBlank() || verifyPassword.isBlank()) return
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val transport = GistTransport(GistApi(token = verifyToken, gistId = gistId))
+                val transport = TransportFactory.forChat(this@PartnerProfileActivity, gistId, verifyToken, verifyPassword, prefs.myUserId)
                 ProfileSync.pushPresence(
                     api = transport, password = verifyPassword, myUserId = prefs.myUserId,
                     typingTs = 0L, onlineTs = 0L,
@@ -455,7 +454,7 @@ class PartnerProfileActivity : AppCompatActivity() {
         if (verifySyncJob != null) return
         if (verifyToken.isBlank() || verifyPassword.isBlank()) return
         verifySyncJob = lifecycleScope.launch {
-            val transport = GistTransport(GistApi(token = verifyToken, gistId = gistId))
+            val transport = TransportFactory.forChat(this@PartnerProfileActivity, gistId, verifyToken, verifyPassword, prefs.myUserId)
             while (true) {
                 try {
                     val profiles = withContext(Dispatchers.IO) {

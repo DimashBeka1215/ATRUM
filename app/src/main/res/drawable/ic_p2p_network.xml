@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Контурная иконка P2P-сети: 4 узла, соединённые в ромб (для карточки «Создать P2P-чат») -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- рёбра ромба -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M13.4,5.4 L18.6,10.6"
+        android:strokeColor="@color/text_primary"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.6" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M18.6,13.4 L13.4,18.6"
+        android:strokeColor="@color/text_primary"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.6" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M10.6,18.6 L5.4,13.4"
+        android:strokeColor="@color/text_primary"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.6" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M5.4,10.6 L10.6,5.4"
+        android:strokeColor="@color/text_primary"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.6" />
+
+    <!-- верхний узел -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M12,4 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0"
+        android:strokeColor="@color/text_primary"
+        android:strokeWidth="1.6" />
+    <!-- правый узел -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M20,12 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0"
+        android:strokeColor="@color/text_primary"
+        android:strokeWidth="1.6" />
+    <!-- нижний узел -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M12,20 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0"
+        android:strokeColor="@color/text_primary"
+        android:strokeWidth="1.6" />
+    <!-- левый узел -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M4,12 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0"
+        android:strokeColor="@color/text_primary"
+        android:strokeWidth="1.6" />
+</vector>

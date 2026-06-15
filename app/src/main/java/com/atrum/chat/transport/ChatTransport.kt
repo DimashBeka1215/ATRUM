@@ -155,6 +155,15 @@ interface ChatTransport {
     suspend fun deleteLine(line: String): Boolean
 
     /**
+     * Полная очистка истории чата.
+     * Дефолт (Local/прочие): перезаписывает chat.txt пустым манифестом.
+     * NostrTransport переопределяет: публикует "маркер очистки" + NIP-09 удаление.
+     */
+    suspend fun clearHistory() {
+        saveFile("chat.txt", "# Atrum Chat")
+    }
+
+    /**
      * Сохраняет файл с автоматическим разбиением на чанки для обхода
      * GitHub API rate limit при отправке больших изображений.
      *

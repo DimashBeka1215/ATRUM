@@ -86,6 +86,16 @@ data class NostrEvent(
             )
         }
 
+        /** NIP-09: одно событие-удаление сразу для нескольких целей (e-теги). */
+        fun createDeletion(privkeyBytes: ByteArray, targetEventIds: List<String>): NostrEvent {
+            return create(
+                privkeyBytes = privkeyBytes,
+                kind = 5,
+                tags = targetEventIds.map { listOf("e", it) },
+                content = "deleted"
+            )
+        }
+
         /** Парсит JSON-объект события; возвращает null при любой ошибке. */
         fun fromJson(json: JSONObject): NostrEvent? = try {
             val tags = mutableListOf<List<String>>()
@@ -109,20 +119,63 @@ data class NostrEvent(
 
         // ─── helpers ──────────────────────────────────────────────────────────
 
+        /**
+         * Каноническая сериализация для вычисления id согласно NIP-01.
+         *
+         * ВАЖНО: НЕ использовать org.json — Android-реализация экранирует прямой
+         * слэш '/' как '\\/'. Base64-контент почти всегда содержит '/', поэтому
+         * id, посчитанный по org.json-строке, НЕ совпадает с пересчётом реле
+         * (которое сериализует по NIP-01 с обычным '/') → "invalid: bad event id".
+         * Строим строку вручную, экранируя только разрешённые NIP-01 символы.
+         */
         private fun canonical(
             pubkey: String,
             createdAt: Long,
             kind: Int,
             tags: List<List<String>>,
             content: String
-        ): String = JSONArray().apply {
-            put(0)
-            put(pubkey)
-            put(createdAt)
-            put(kind)
-            put(tagsToJsonArray(tags))
-            put(content)
-        }.toString()
+        ): String {
+            val sb = StringBuilder()
+            sb.append("[0,\"").append(escapeJsonNip01(pubkey)).append("\",")
+            sb.append(createdAt).append(',')
+            sb.append(kind).append(',')
+            sb.append('[')
+            tags.forEachIndexed { i, tag ->
+                if (i > 0) sb.append(',')
+                sb.append('[')
+                tag.forEachIndexed { j, v ->
+                    if (j > 0) sb.append(',')
+                    sb.append('\"').append(escapeJsonNip01(v)).append('\"')
+                }
+                sb.append(']')
+            }
+            sb.append(']')
+            sb.append(',')
+            sb.append('\"').append(escapeJsonNip01(content)).append('\"')
+            sb.append(']')
+            return sb.toString()
+        }
+
+        /**
+         * Экранирование строки по NIP-01: ТОЛЬКО эти 7 символов, ничего больше.
+         * В частности, '/' остаётся как есть (это и ломало id через org.json).
+         */
+        private fun escapeJsonNip01(s: String): String {
+            val sb = StringBuilder(s.length + 2)
+            for (c in s) {
+                when (c) {
+                    '\"'     -> sb.append("\\\"")
+                    '\\'     -> sb.append("\\\\")
+                    '\n'     -> sb.append("\\n")
+                    '\r'     -> sb.append("\\r")
+                    '\t'     -> sb.append("\\t")
+                    '\b'     -> sb.append("\\b")
+                    '\u000C' -> sb.append("\\f")
+                    else     -> sb.append(c)
+                }
+            }
+            return sb.toString()
+        }
 
         private fun tagsToJsonArray(tags: List<List<String>>): JSONArray =
             JSONArray().also { arr ->

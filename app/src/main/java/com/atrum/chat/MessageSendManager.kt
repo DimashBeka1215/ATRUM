@@ -299,19 +299,19 @@ class MessageSendManager(
 
     companion object {
         /** Максимум токенов (burst). */
-        const val MAX_TOKENS = 4
+        const val MAX_TOKENS = 12
 
         /** Пополнение: 1 токен каждые 2 сек. */
-        const val TOKEN_RECOVERY_MS = 2_000L
+        const val TOKEN_RECOVERY_MS = 400L
 
         /** Жёсткое ограничение очереди до срабатывания наказания. */
-        const val MAX_QUEUE_SIZE = 10
+        const val MAX_QUEUE_SIZE = 30
 
         /**
          * Сколько «спам-нажатий» (в SPAM_WINDOW_MS) нужно для блокировки.
          * Обычный пользователь никогда не достигнет этого порога.
          */
-        const val SPAM_PRESS_THRESHOLD = 6
+        const val SPAM_PRESS_THRESHOLD = 14
 
         /** Окно подсчёта спам-нажатий. */
         const val SPAM_WINDOW_MS = 8_000L
@@ -332,10 +332,10 @@ class MessageSendManager(
         const val GOOD_BEHAVIOR_MS = 3 * 60_000L
 
         /** Количество retry при сетевых ошибках. */
-        const val MAX_RETRY = 3
+        const val MAX_RETRY = 5
 
         /** Задержки между попытками retry (1.5с, 3с, 6с). */
-        val RETRY_DELAYS_MS = longArrayOf(500L, 1_500L, 3_000L)
+        val RETRY_DELAYS_MS = longArrayOf(800L, 1_500L, 3_000L, 5_000L, 8_000L)
 
         /** Окно анти-дублей: одинаковый текст в течение 2 сек игнорируется. */
         const val DUPLICATE_WINDOW_MS = 2_000L

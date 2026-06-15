@@ -27,7 +27,7 @@ class AboutActivity : AppCompatActivity() {
 
         // Версия приложения
         val versionName = try {
-            packageManager.getPackageInfo(packageName, 0).versionName
+            packageManager.getPackageInfo(packageName, 0).versionName ?: ""
         } catch (_: Exception) { "" }
         binding.tvVersion.text = if (versionName.isNotBlank()) "Версия $versionName" else ""
 

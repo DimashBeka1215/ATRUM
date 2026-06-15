@@ -1,24 +1,20 @@
 package com.atrum.chat.transport
 
 import android.content.Context
-import com.atrum.chat.GistApi
 
 /**
- * Создаёт и кэширует GistTransport для одного чата.
+ * Создаёт транспорт для одного чата. Проект работает на Nostr (публичные реле) —
+ * GitHub и DHT убраны.
  *
- * NostrTransport намеренно отключён: публичные Nostr-реле раскрывают метаданные
- * (время и факт общения), что противоречит модели угрозы приложения.
- * Содержимое зашифровано, но метаданные всё равно утекают.
- * Если GitHub недоступен — операция завершается с ошибкой, что честнее
- * чем тихий фолбэк на публичную инфраструктуру.
- *
- * Создавай один экземпляр на Activity и передавай его в ProfileSync / ImageLoader.
+ * Поле токена чата (gistToken) зарезервировано для будущего выбора пути
+ * (например, Nostr напрямую vs Nostr через Tor). Сейчас всё → NostrTransport,
+ * а "Избранное" → локальный LocalTransport.
  */
 class TransportFactory(
     private val gistId: String,
-    private val gistToken: String,
-    @Suppress("UNUSED_PARAMETER") chatPassword: String,
-    @Suppress("UNUSED_PARAMETER") myUserId: String,
+    @Suppress("unused") private val gistToken: String,
+    private val chatPassword: String,
+    private val myUserId: String,
     private val isFavorites: Boolean = false,
     private val chatIdLong: Long = -1L,
     private val chatDao: com.atrum.chat.data.ChatDao? = null,
@@ -27,40 +23,39 @@ class TransportFactory(
     @Volatile
     private var cached: ChatTransport? = null
 
-    /**
-     * Возвращает актуальный транспорт. При первом вызове проверяет доступность Gist.
-     * Последующие вызовы возвращают закэшированный результат.
-     */
+    /** Возвращает актуальный транспорт. */
     suspend fun get(): ChatTransport = cached ?: resolve().also { cached = it }
 
-    /**
-     * Принудительно перепроверяет транспорт (сбрасывает кэш).
-     * Вызывай при смене сети или по кнопке в UI.
-     */
+    /** Принудительно перепроверяет транспорт (сбрасывает кэш). */
     suspend fun refresh(): ChatTransport {
         cached = null
         return get()
     }
 
-    /**
-     * Возвращает GistTransport напрямую, без проверки доступности.
-     * Удобно для CreateChatActivity / JoinChatActivity — там Gist точно есть.
-     */
-    fun gistDirect(): ChatTransport {
+    /** Транспорт для мгновенного старта UI без сетевой инициализации. */
+    fun instant(): ChatTransport {
         if (isFavorites && chatDao != null && context != null)
             return LocalTransport(chatIdLong, chatDao, context)
-        return GistTransport(makeGistApi())
+        // Через Tor по умолчанию; напрямую — только если токен явно "nostrdirect".
+        val useTor = gistToken != NostrTransport.NOSTR_DIRECT_TOKEN
+        // Ленивый старт Tor: поднимаем демон только когда реально открыт чат через Tor.
+        if (useTor) context?.let { com.atrum.chat.TorManager.start(it) }
+        return NostrTransport(gistId, chatPassword, myUserId, useTor = useTor)
     }
 
-    // ─── private ──────────────────────────────────────────────────────────────
+    private fun resolve(): ChatTransport = instant()
 
-    private suspend fun resolve(): ChatTransport {
-        if (isFavorites && chatDao != null && context != null)
-            return LocalTransport(chatIdLong, chatDao, context)
-        // Nostr-фолбэк убран: публичные реле раскрывают метаданные.
-        // При недоступности GitHub бросаем исключение — ChatActivity покажет ошибку.
-        return GistTransport(makeGistApi())
+    companion object {
+        /** Быстрый транспорт для разовых операций экранов (профиль, верификация и т.п.). */
+        fun forChat(
+            context: Context,
+            gistId: String,
+            token: String,
+            password: String,
+            myUserId: String
+        ): ChatTransport = TransportFactory(
+            gistId = gistId, gistToken = token, chatPassword = password,
+            myUserId = myUserId, context = context
+        ).instant()
     }
-
-    private fun makeGistApi() = GistApi(token = gistToken, gistId = gistId)
 }

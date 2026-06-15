@@ -7,6 +7,10 @@ import android.content.Intent
 import android.graphics.Bitmap
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
+import com.atrum.chat.nostr.NostrRelayPool
+import com.atrum.chat.transport.NostrTransport
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 /**
  * Application-класс. Точка входа: применяет сохранённые тему и язык ДО создания
@@ -17,6 +21,15 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         ImageCache.init(this)
+        ChatSnapshotCache.init(this)
+        com.atrum.chat.transport.NostrMessageStore.init(this)
+        // Tor стартует ЛЕНИВО — только когда открыт/создан чат через Tor (это делают
+        // TransportFactory / CreateChat / Join). Прямые чаты Tor не поднимают.
+        // Как только Tor поднялся — заранее прогреваем цепочки к реле.
+        AppScope.launch {
+            TorManager.status.first { it == TorManager.TorStatus.READY }
+            NostrRelayPool.prewarm(NostrTransport.RELAYS)
+        }
         // Подчищаем кадры стикеров прошлых версий формата (в фоне — это файловый I/O).
         Thread { StickerDiskCache.cleanupOldVersions(cacheDir) }.start()
         CrashHandler.install(this)

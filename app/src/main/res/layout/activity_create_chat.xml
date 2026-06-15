@@ -1,10 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    CreateChat — 3 экрана с переключением:
-      1) choice_screen   — стартовый: 3 карточки (GitHub / Join / Manual)
-      2) github_form     — новый premium дизайн (avatar + features + password + chips)
-                           показывается ТОЛЬКО после клика "Создать через GitHub"
-      3) manual_form     — продвинутый режим (warning + 4 поля)
+    CreateChat — 2 экрана с переключением:
+      1) choice_screen   — стартовый: 2 карточки (Создать P2P / Присоединиться)
+      2) github_form     — форма создания P2P-чата (avatar + features + chips),
+                           показывается после клика "Создать P2P-чат"
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -112,7 +111,7 @@
                         android:layout_height="56dp"
                         android:layout_gravity="center"
                         android:contentDescription="@null"
-                        android:src="@drawable/ic_github"
+                        android:src="@drawable/ic_p2p_network"
                         app:tint="@color/text_primary" />
                 </FrameLayout>
 
@@ -235,59 +234,6 @@
                     android:background="@color/border" />
             </LinearLayout>
 
-            <!-- Manual режим -->
-            <LinearLayout
-                android:id="@+id/card_manual"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_link_card"
-                android:clickable="true"
-                android:focusable="true"
-                android:foreground="?attr/selectableItemBackground"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingHorizontal="18dp"
-                android:paddingVertical="16dp">
-
-                <ImageView
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
-                    android:layout_marginEnd="14dp"
-                    android:contentDescription="@null"
-                    android:src="@drawable/ic_code"
-                    app:tint="@color/text_secondary" />
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:fontFamily="sans-serif-medium"
-                        android:text="@string/create_card_manual_title"
-                        android:textColor="@color/text_primary"
-                        android:textSize="14sp" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:fontFamily="sans-serif"
-                        android:text="@string/create_card_advanced"
-                        android:textColor="@color/text_tertiary"
-                        android:textSize="11sp" />
-                </LinearLayout>
-
-                <ImageView
-                    android:layout_width="18dp"
-                    android:layout_height="18dp"
-                    android:contentDescription="@null"
-                    android:src="@drawable/ic_arrow_forward"
-                    app:tint="@color/text_tertiary" />
-            </LinearLayout>
 
             <Button
                 android:id="@+id/btn_cancel_choice"
@@ -601,20 +547,6 @@
                         android:focusable="true" />
 
                     <TextView
-                        android:id="@+id/chip_90d"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:layout_marginEnd="8dp"
-                        android:background="@drawable/bg_chip_default"
-                        android:gravity="center"
-                        android:paddingHorizontal="16dp"
-                        android:text="@string/cc_duration_90d"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="13sp"
-                        android:clickable="true"
-                        android:focusable="true" />
-
-                    <TextView
                         android:id="@+id/chip_unlim"
                         android:layout_width="wrap_content"
                         android:layout_height="36dp"
@@ -638,6 +570,76 @@
                 android:textColor="@color/text_tertiary"
                 android:textSize="11sp" />
 
+            <!-- Путь сообщений: Nostr напрямую / через Tor (иконки) -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:layout_marginBottom="10dp"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.10"
+                android:text="@string/cc_path_label"
+                android:textAllCaps="true"
+                android:textColor="@color/text_tertiary"
+                android:textSize="11sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <FrameLayout
+                    android:id="@+id/path_nostr"
+                    android:layout_width="0dp"
+                    android:layout_height="46dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/bg_chip_default"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:contentDescription="@string/cd_path_nostr">
+
+                    <ImageView
+                        android:id="@+id/path_nostr_icon"
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:layout_gravity="center"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_flash"
+                        app:tint="@color/text_secondary" />
+                </FrameLayout>
+
+                <FrameLayout
+                    android:id="@+id/path_tor"
+                    android:layout_width="0dp"
+                    android:layout_height="46dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_chip_default"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:contentDescription="@string/cd_path_tor">
+
+                    <ImageView
+                        android:id="@+id/path_tor_icon"
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:layout_gravity="center"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_shield"
+                        app:tint="@color/text_secondary" />
+                </FrameLayout>
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tv_path_desc"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:lineSpacingExtra="2dp"
+                android:text="@string/cc_path_desc_tor"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+
             <Button
                 android:id="@+id/btn_create_github"
                 android:layout_width="match_parent"
@@ -654,256 +656,6 @@
                 android:textAllCaps="false"
                 android:textColor="@color/white"
                 android:textSize="15sp" />
-        </LinearLayout>
-
-        <!-- ====== MANUAL FORM (продвинутый режим) ====== -->
-        <LinearLayout
-            android:id="@+id/manual_form"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:visibility="gone">
-
-            <!-- Warning Card -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="20dp"
-                android:background="@drawable/bg_warning"
-                android:orientation="horizontal"
-                android:padding="14dp">
-
-                <ImageView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:layout_marginEnd="12dp"
-                    android:layout_marginTop="1dp"
-                    android:contentDescription="@null"
-                    android:src="@drawable/ic_warning" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:fontFamily="sans-serif-medium"
-                        android:text="@string/manual_warning_title"
-                        android:textColor="@color/warning"
-                        android:textSize="13sp" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:lineSpacingExtra="2dp"
-                        android:text="@string/manual_warning_text"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="12sp" />
-                </LinearLayout>
-            </LinearLayout>
-
-            <!-- Inputs Card -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_card_hero"
-                android:orientation="vertical"
-                android:padding="20dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="8dp"
-                    android:fontFamily="sans-serif-medium"
-                    android:text="@string/create_chat_partner_name"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp" />
-
-                <EditText
-                    android:id="@+id/et_partner_name"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="16dp"
-                    android:background="@drawable/bg_input"
-                    android:hint="Alex"
-                    android:importantForAutofill="no"
-                    android:inputType="textPersonName|textCapWords"
-                    android:paddingHorizontal="16dp"
-                    android:paddingVertical="14dp"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_quaternary"
-                    android:textSize="15sp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="8dp"
-                    android:fontFamily="sans-serif-medium"
-                    android:text="@string/create_chat_token"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp" />
-
-                <EditText
-                    android:id="@+id/et_token"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="16dp"
-                    android:background="@drawable/bg_input"
-                    android:fontFamily="monospace"
-                    android:hint="ghp_..."
-                    android:importantForAutofill="no"
-                    android:inputType="textVisiblePassword|textNoSuggestions"
-                    android:paddingHorizontal="16dp"
-                    android:paddingVertical="14dp"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_quaternary"
-                    android:textSize="14sp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="8dp"
-                    android:fontFamily="sans-serif-medium"
-                    android:text="@string/create_chat_gist"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp" />
-
-                <EditText
-                    android:id="@+id/et_gist"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="16dp"
-                    android:background="@drawable/bg_input"
-                    android:fontFamily="monospace"
-                    android:hint="5679a0ff..."
-                    android:importantForAutofill="no"
-                    android:inputType="text|textNoSuggestions"
-                    android:paddingHorizontal="16dp"
-                    android:paddingVertical="14dp"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_quaternary"
-                    android:textSize="14sp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="8dp"
-                    android:fontFamily="sans-serif-medium"
-                    android:text="@string/create_chat_password"
-                    android:textColor="@color/text_primary"
-                    android:textSize="13sp" />
-
-                <EditText
-                    android:id="@+id/et_manual_password"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="4dp"
-                    android:background="@drawable/bg_input"
-                    android:hint="секрет"
-                    android:importantForAutofill="no"
-                    android:inputType="textPassword"
-                    android:paddingHorizontal="16dp"
-                    android:paddingVertical="14dp"
-                    android:textColor="@color/text_primary"
-                    android:textColorHint="@color/text_quaternary"
-                    android:textSize="15sp" />
-
-                <TextView
-                    android:id="@+id/tv_manual_pwd_error"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:fontFamily="sans-serif"
-                    android:textColor="@color/error"
-                    android:textSize="12sp"
-                    android:visibility="gone" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/create_chat_password_hint"
-                    android:textColor="@color/text_tertiary"
-                    android:textSize="11sp" />
-            </LinearLayout>
-            <!-- Help Sections -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:orientation="horizontal"
-                android:weightSum="2">
-
-                <LinearLayout
-                    android:id="@+id/btn_help_token"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="6dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/bg_settings_card"
-                    android:orientation="vertical"
-                    android:padding="12dp"
-                    android:clickable="true"
-                    android:focusable="true">
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/manual_help_token_title"
-                        android:textColor="@color/text_primary"
-                        android:textSize="13sp"
-                        android:textStyle="bold" />
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/manual_help_token_desc"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="11sp" />
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
-                        android:text="@string/manual_help_token_button"
-                        android:textColor="@color/accent"
-                        android:textSize="12sp" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:id="@+id/btn_help_gist"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/bg_settings_card"
-                    android:orientation="vertical"
-                    android:padding="12dp"
-                    android:clickable="true"
-                    android:focusable="true">
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/manual_help_gist_title"
-                        android:textColor="@color/text_primary"
-                        android:textSize="13sp"
-                        android:textStyle="bold" />
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
-                        android:text="@string/manual_help_gist_desc"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="11sp" />
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
-                        android:text="@string/manual_help_gist_button"
-                        android:textColor="@color/accent"
-                        android:textSize="12sp" />
-                </LinearLayout>
-            </LinearLayout>
 
             <ProgressBar
                 android:id="@+id/progress"
@@ -912,19 +664,7 @@
                 android:layout_gravity="center"
                 android:layout_marginTop="16dp"
                 android:visibility="gone" />
-
-            <Button
-                android:id="@+id/btn_create_manual"
-                android:layout_width="match_parent"
-                android:layout_height="52dp"
-                android:layout_marginTop="24dp"
-                android:layout_marginBottom="24dp"
-                android:background="@drawable/bg_button"
-                android:text="@string/btn_connect_chat"
-                android:textColor="@color/white"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
         </LinearLayout>
+
     </LinearLayout>
 </ScrollView>

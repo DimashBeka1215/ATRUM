@@ -1,6 +1,8 @@
 package com.atrum.chat
 
-import com.atrum.chat.transport.GistTransport
+import com.atrum.chat.transport.ChatTransport
+import com.atrum.chat.transport.NostrTransport
+import com.atrum.chat.nostr.NostrRelayPool
 
 import android.content.Intent
 import android.os.Bundle
@@ -31,7 +33,7 @@ import java.net.UnknownHostException
  * Поток подключения (полностью функциональный, не stub):
  *   1. Валидация ввода → декод [InviteCodec.decode]
  *   2. Проверка на дубликат (уже подключены к этому gistId)
- *   3. Подключение к gist через [GistApi.loadContent]
+ *   3. Подключение к gist через [транспорт чата]
  *   4. Если есть сообщения — пробуем расшифровать первое для проверки пароля
  *   5. Сохраняем [Chat] локально через Room
  *   6. Публикуем свой профиль через [ProfileSync.pushMyProfile]
@@ -71,6 +73,10 @@ class JoinChatActivity : SecureActivity() {
 
         prefs = Prefs(this)
         db = AppDatabase.get(this)
+
+        // Прогрев соединений с реле сразу при открытии экрана ввода приглашения —
+        // к моменту нажатия "Подключиться" TLS уже установлен, соединение мгновенное.
+        if (TorManager.status.value != TorManager.TorStatus.IDLE) NostrRelayPool.prewarm(NostrTransport.RELAYS)
 
         binding.btnBack.setOnClickListener { if (state != UiState.LOADING) finish() }
         binding.btnBackBottom.setOnClickListener { if (state != UiState.LOADING) finish() }
@@ -185,17 +191,23 @@ class JoinChatActivity : SecureActivity() {
                 return
             }
 
-            // 2. Подключение к gist
+            // 2. Подключение к транспорту: DHT (token=="dht") или legacy Gist.
             setProgress(getString(R.string.join_status_connecting))
-            val api = GistApi(token = invite.gistToken, gistId = invite.gistId)
-            withContext(Dispatchers.IO) { api.loadContent() } // просто проверяем доступность гиста
+            // Ленивый старт Tor, если путь чата — через Tor.
+            if (invite.gistToken != NostrTransport.NOSTR_DIRECT_TOKEN) TorManager.start(applicationContext)
+            // Все чаты сейчас живут в Nostr. Путь (Tor/прямой) берём из токена приглашения.
+            val transport: ChatTransport =
+                NostrTransport(
+                    invite.gistId, invite.chatPassword, prefs.myUserId,
+                    useTor = invite.gistToken != NostrTransport.NOSTR_DIRECT_TOKEN
+                )
 
             // 3. Проверка "чат уже занят" — фетчим profiles.txt, если там 2+ профиля
             // и моего userId среди них нет, отказываем (чат рассчитан на двоих).
             setProgress(getString(R.string.join_status_verifying))
             val profilesMap = withContext(Dispatchers.IO) {
                 try {
-                    ProfileSync.pullProfiles(GistTransport(api), invite.chatPassword)
+                    ProfileSync.pullProfiles(transport, invite.chatPassword)
                 } catch (_: Throwable) {
                     emptyMap()
                 }
@@ -239,23 +251,21 @@ class JoinChatActivity : SecureActivity() {
             prefs.saveChatSecrets(invite.gistId, invite.gistToken, invite.chatPassword)
             val newChatId = withContext(Dispatchers.IO) { db.chatDao().insert(chat) }
 
-            // 5. Публикуем свой профиль (имя/аватар для собеседника)
-            setProgress(getString(R.string.join_status_profile))
+            // 5. Профиль публикуем В ФОНЕ — не блокируем открытие чата (ChatActivity
+            //    всё равно опубликует профиль при открытии). AppScope переживёт finish().
             val myProfile = Profile(
                 userId = prefs.myUserId,
                 name = prefs.myName,
                 tag = prefs.myTag,
                 avatarBase64 = prefs.myAvatarBase64
             )
-            withContext(Dispatchers.IO) {
+            AppScope.launch {
                 try {
-                    ProfileSync.pushMyProfile(GistTransport(api), invite.chatPassword, myProfile)
-                } catch (_: Throwable) {
-                    // не критично — ChatActivity сделает retry при первом open
-                }
+                    ProfileSync.pushMyProfile(transport, invite.chatPassword, myProfile)
+                } catch (_: Throwable) {}
             }
 
-            // 6. Открываем чат
+            // 6. Открываем чат сразу
             openChat(newChatId)
         } catch (e: Throwable) {
             if (e is kotlinx.coroutines.CancellationException) return
@@ -263,7 +273,7 @@ class JoinChatActivity : SecureActivity() {
         }
     }
 
-    /** Транслирует исключение из GistApi/сети в человеческое сообщение. */
+    /** Транслирует сетевое исключение в человеческое сообщение. */
     private fun mapError(e: Throwable): String {
         val msg = e.message.orEmpty()
         return when {

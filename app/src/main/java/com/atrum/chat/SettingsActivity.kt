@@ -1,6 +1,6 @@
 package com.atrum.chat
 
-import com.atrum.chat.transport.GistTransport
+import com.atrum.chat.transport.TransportFactory
 import com.atrum.chat.stickers.StickerSettingsActivity
 import android.content.Intent
 import android.graphics.Bitmap
@@ -453,7 +453,7 @@ class SettingsActivity : SecureActivity() {
                     val password = settingsPrefs.getChatPassword(chat.gistId)
                         .takeIf { it.isNotEmpty() }
                         ?: @Suppress("DEPRECATION") chat.chatPassword
-                    val api = GistTransport(GistApi(token = token, gistId = chat.gistId))
+                    val api = TransportFactory.forChat(applicationContext, chat.gistId, token, password, settingsPrefs.myUserId)
                     ProfileSync.pushMyProfile(api, password, profile)
                 } catch (_: Exception) {}
             }
@@ -536,7 +536,7 @@ class SettingsActivity : SecureActivity() {
                     val password = logoutPrefs.getChatPassword(chat.gistId)
                         .takeIf { it.isNotEmpty() }
                         ?: @Suppress("DEPRECATION") chat.chatPassword
-                    val api = GistTransport(GistApi(token = token, gistId = chat.gistId))
+                    val api = TransportFactory.forChat(applicationContext, chat.gistId, token, password, myUserId)
                     ProfileSync.pushDeletedMarker(api, password, myUserId)
                 } catch (_: Exception) {}
                 logoutPrefs.deleteChatSecrets(chat.gistId)

@@ -91,22 +91,6 @@
             android:exported="false"
             android:theme="@style/Theme.GithubChat" />
 
-        <!-- GitHub Device Flow: показывает user_code, далее работу делает сервис -->
-        <activity
-            android:name=".OAuthWarningActivity"
-            android:exported="false" />
-
-        <activity
-            android:name=".DeviceFlowActivity"
-            android:exported="false" />
-
-        <!-- Foreground Service для гарантированного завершения OAuth flow
-             даже когда пользователь в браузере / приложение в фоне. -->
-        <service
-            android:name=".DeviceFlowService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
-
         <activity
             android:name=".MainActivity"
             android:exported="false" />

@@ -1,134 +1,215 @@
 package com.atrum.chat.transport
 
 import com.atrum.chat.nostr.NostrEvent
-import com.atrum.chat.nostr.NostrRelay
+import com.atrum.chat.nostr.NostrRelayPool
 import com.atrum.chat.nostr.toHex
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicInteger
+import com.atrum.chat.CryptoHelper
+import com.atrum.chat.ImageChunker
 import java.security.MessageDigest
 
 /**
- * ChatTransport поверх Nostr-протокола (NIP-01).
- *
- * ──────────────────────────────────────────────────────────────────────────────
- * Архитектура хранения данных в Nostr:
- *
- *   • Сообщения чата (chat.txt строки) —
- *       kind:1, tags=[["t", channelId]]
- *       content = зашифрованная строка (тот же формат что и в Gist)
- *
- *   • Файлы (profiles.txt, img_*.txt и т.д.) —
- *       kind:1, tags=[["t", channelId], ["file", "<name>"]]
- *       content = содержимое файла
- *       При чтении берём самое новое событие для данного имени файла.
- *
- *   • Удаление (deleteLine / replaceLine) —
- *       NIP-09: kind:5, tags=[["e", "<event_id>"]]
- *       Большинство публичных реле чтят эти запросы.
- *
- * Идентификация канала:
- *   channelId = hex(SHA256("atrum_channel_v1_" + gistId)).take(16)
- *   — детерминировано из gistId, не требует дополнительных данных в БД.
- *
- * Ключ подписи:
- *   privkey = SHA256("atrum_nostr_v1_" + chatPassword + "_" + myUserId)
- *   — уникален для каждого пользователя в каждом чате.
- *
- * Реле:
- *   Запросы рассылаются на все 4 реле параллельно, результаты объединяются
- *   и дедуплицируются по event id. Публикация — последовательно до первого успеха.
- * ──────────────────────────────────────────────────────────────────────────────
+ * ChatTransport поверх Nostr (NIP-01). Drop-in замена GistTransport:
+ * тот же файловый контракт (chat.txt / reactions.txt / profiles.txt / img_*),
+ * меняется только «труба» хранения — публичные реле вместо GitHub Gist.
  */
 class NostrTransport(
     gistId: String,
     private val chatPassword: String,
-    private val myUserId: String
+    private val myUserId: String,
+    /** true — соединение к реле через встроенный Tor (SOCKS); false — напрямую. */
+    private val useTor: Boolean = true
 ) : ChatTransport {
 
     override val displayName: String get() = "Nostr P2P"
     override val displayIcon: String get() = "⚡"
     override val chatId: String get() = channelId
 
-    // SHA256(prefix + gistId), берём первые 16 hex-символов = 8 байт
     val channelId: String = sha256("atrum_channel_v1_$gistId").toHex().take(16)
 
-    /**
-     * SHA-256 последнего успешно загруженного контента.
-     * Используется в loadContentIfChanged() для имитации ETag без HTTP-заголовков:
-     * если хеш совпал → контент не изменился → возвращаем null.
-     */
     @Volatile private var lastContentHash: String? = null
 
-    // Приватный ключ Nostr: уникален per-user per-chat
+    /** Хеш последнего объединённого снапшота (chat+reactions+profiles) для loadAllIfChanged(). */
+    @Volatile private var lastAllHash: String? = null
+
     private val privkey: ByteArray = sha256("atrum_nostr_v1_${chatPassword}_${myUserId}")
 
-    // ─── ChatTransport impl ───────────────────────────────────────────────────
+    /** Последний УСПЕШНО прочитанный снапшот — отдаём его, если реле не ответили (анти-очистка). */
+    @Volatile private var lastGoodAll: AllGistData? = null
+    @Volatile private var lastGoodContent: String? = null
 
-    /**
-     * Загружает все сообщения чата: kind:1 события без тега "file",
-     * отсортированные по created_at. Возвращает зашифрованные строки через \n.
-     */
+    // ─── чтение чата ────────────────────────────────────────────────────────────
+
     override suspend fun loadContent(): String {
         val events = queryAllRelays(chatFilter())
-        val content = events
-            .filter { ev -> ev.tags.none { t -> t.firstOrNull() == "file" } }
-            .sortedBy { it.created_at }
-            .joinToString("\n") { it.content }
+            ?: return NostrMessageStore.render(channelId).ifEmpty { lastGoodContent ?: "" }
+        NostrMessageStore.merge(channelId, events)
+        val content = NostrMessageStore.render(channelId)
         lastContentHash = sha256(content).toHex()
+        lastGoodContent = content
         return content
     }
 
-    /**
-     * Nostr-аналог ETag: загружает контент и возвращает null если он не изменился.
-     *
-     * Вместо HTTP 304 используем SHA-256 контента: если хеш совпал с прошлым
-     * запросом — возвращаем null. ChatActivity интерпретирует null как «нет новых
-     * данных» и сообщает AdaptiveInterval.reportIdle() → интервал увеличивается.
-     *
-     * Не идеально как ETag (сетевой запрос всё равно уходит), но даёт UI-оптимизацию:
-     * при тихом чате адаптивный интервал замедляется до 30 сек, снижая нагрузку на реле.
-     */
     override suspend fun loadContentIfChanged(): String? {
-        val events = queryAllRelays(chatFilter())
-        val content = events
-            .filter { ev -> ev.tags.none { t -> t.firstOrNull() == "file" } }
-            .sortedBy { it.created_at }
-            .joinToString("\n") { it.content }
+        val events = queryAllRelays(chatFilter()) ?: return null // реле не ответили — без изменений
+        NostrMessageStore.merge(channelId, events)
+        val content = NostrMessageStore.render(channelId)
         val hash = sha256(content).toHex()
         if (hash == lastContentHash) return null
         lastContentHash = hash
+        lastGoodContent = content
         return content
     }
 
-    /** Публикует одну зашифрованную строку как Nostr kind:1 событие. */
+    // ─── Объединённый снапшот: chat + reactions + profiles ОДНИМ запросом ──────
+    // Паритет с Gist (один GET на всё): профили обрабатываются в основном цикле
+    // (presence/typing/online, галочки прочтения, имя/аватар, V3-ключ).
+
+    override suspend fun loadAll(): AllGistData {
+        val events = queryAllRelays(chatFilter())
+            ?: return lastGoodAll ?: AllGistData(NostrMessageStore.render(channelId), "", "")
+        val data = splitAll(events)
+        lastAllHash = hashAll(data)
+        lastContentHash = sha256(data.chatContent).toHex()
+        lastGoodAll = data
+        return data
+    }
+
+    override suspend fun loadAllIfChanged(): AllGistData? {
+        val events = queryAllRelays(chatFilter()) ?: return null // реле не ответили — без изменений
+        val data = splitAll(events)
+        val h = hashAll(data)
+        if (h == lastAllHash) return null
+        lastAllHash = h
+        lastContentHash = sha256(data.chatContent).toHex()
+        lastGoodAll = data
+        return data
+    }
+
+    private fun chatFrom(events: List<NostrEvent>): String {
+        fun has(ev: NostrEvent, key: String) = ev.tags.any { it.firstOrNull() == key }
+        // Маркер очистки: оба клиента отбрасывают сообщения старше последнего "clear".
+        val clearCutoff = events.filter { has(it, "clear") }.maxOfOrNull { it.created_at } ?: 0L
+        // Надгробия (del): хеши удалённых сообщений — скрываем их детерминированно у обоих.
+        val delHashes = events.filter { has(it, "del") }
+            .mapNotNull { ev -> ev.tags.firstOrNull { it.firstOrNull() == "del" }?.getOrNull(1) }
+            .toSet()
+        return events
+            .filter { ev ->
+                ev.kind == 1 &&
+                    !has(ev, "file") && !has(ev, "clear") && !has(ev, "del") &&
+                    ev.created_at >= clearCutoff &&
+                    delHash(ev.content) !in delHashes
+            }
+            // Стабильный порядок на обоих устройствах: по времени, при равенстве — по id.
+            .sortedWith(compareBy({ it.created_at }, { it.id }))
+            .map { it.content }
+            // Дедуп по шифртексту: одинаковый зашифрованный текст бывает ТОЛЬКО при
+            // ретрае одного события (соль/nonce случайны → разные сообщения = разный
+            // шифртекст). Так уходят дубликаты после повторной отправки через флаки-Tor.
+            .distinct()
+            .joinToString("\n")
+    }
+
+    /** Хеш шифртекста для «надгробий» удаления (детерминирован, стабилен между ретраями). */
+    private fun delHash(content: String): String = sha256("atrum_del_$content").toHex().take(32)
+
+    private fun splitAll(events: List<NostrEvent>): AllGistData {
+        // Сообщения — через долговечный локальный стор (реле могут подрезать историю).
+        NostrMessageStore.merge(channelId, events)
+        return AllGistData(
+            chatContent = NostrMessageStore.render(channelId),
+            reactionsContent = latestFile(events, "reactions.txt"),
+            profilesContent = latestFile(events, "profiles.txt")
+        )
+    }
+
+    private fun latestFile(events: List<NostrEvent>, name: String): String =
+        events
+            .filter { ev -> ev.tags.any { t -> t.firstOrNull() == "file" && t.getOrNull(1) == name } }
+            .maxByOrNull { it.created_at }
+            ?.content ?: ""
+
+    private fun hashAll(d: AllGistData): String =
+        sha256(d.chatContent + " : " + d.reactionsContent + " : " + d.profilesContent).toHex()
+
+    // ─── запись ──────────────────────────────────────────────────────────────────
+
+    /** Публикует одну зашифрованную строку как kind:1 + дополнительные файлы (паритет с Gist). */
     override suspend fun appendLine(encryptedLine: String, extraFiles: Map<String, String>) {
-        val event = NostrEvent.create(
+        val ev = NostrEvent.create(
             privkeyBytes = privkey,
             kind = 1,
             tags = listOf(listOf("t", channelId)),
             content = encryptedLine
         )
-        publishToAnyRelay(event)
+        publishToAnyRelay(ev)
+        NostrMessageStore.merge(channelId, listOf(ev)) // своё сообщение — сразу в долговечный стор
+        for ((name, content) in extraFiles) saveFile(name, content)
+    }
+
+    /** Сырая публикация одного файла-события (kind:1, тег ["file", name]) без чанкинга. */
+    private suspend fun publishFile(name: String, content: String) {
+        publishToAnyRelay(
+            NostrEvent.create(
+                privkeyBytes = privkey,
+                // Параметризованное replaceable-событие (NIP-78): реле хранит только
+                // ПОСЛЕДНЮЮ версию на (pubkey, kind, d=name). Так profiles.txt/reactions.txt,
+                // переписываемые каждые ~2с, НЕ копятся и не забивают ленту сообщений.
+                kind = FILE_KIND,
+                tags = listOf(listOf("t", channelId), listOf("file", name), listOf("d", name)),
+                content = content
+            )
+        )
     }
 
     /**
-     * Сохраняет файл (profiles.txt, img_*.txt) как kind:1 с тегом ["file", name].
-     * При чтении всегда берём самое свежее событие — это эмулирует перезапись.
+     * Сохраняет файл. Крупный контент (изображения) АВТОМАТИЧЕСКИ чанкуется —
+     * иначе реле отклоняет большое событие ("too large"). Это покрывает и путь
+     * appendLine(extraFiles=...) для фото. Чанки и манифест публикуются
+     * отдельными событиями; ImageLoader собирает их обратно по манифесту.
      */
     override suspend fun saveFile(name: String, content: String) {
-        val event = NostrEvent.create(
-            privkeyBytes = privkey,
-            kind = 1,
-            tags = listOf(
-                listOf("t", channelId),
-                listOf("file", name)
-            ),
-            content = content
-        )
-        publishToAnyRelay(event)
+        if (content.length > NOSTR_CHUNK_CHARS) saveFileChunked(name, content, chatPassword, null)
+        else publishFile(name, content)
+    }
+
+    /**
+     * Чанковая заливка большого изображения/стикера: режем зашифрованный контент на
+     * части по [NOSTR_CHUNK_CHARS], каждую — отдельным событием-файлом, плюс
+     * зашифрованный манифест "CHUNKED:N" под основным именем. ImageLoader соберёт.
+     */
+    override suspend fun saveFileChunked(
+        name: String,
+        encryptedContent: String,
+        password: String,
+        onProgress: ((current: Int, total: Int) -> Unit)?
+    ) {
+        if (encryptedContent.length <= NOSTR_CHUNK_CHARS) {
+            publishFile(name, encryptedContent)
+            return
+        }
+        val chunks = encryptedContent.chunked(NOSTR_CHUNK_CHARS)
+        val chunkNames = chunks.indices.map { ImageChunker.chunkName(name, it) }
+        chunks.forEachIndexed { i, chunk ->
+            publishFile(chunkNames[i], chunk)
+            onProgress?.invoke(i + 1, chunks.size)
+        }
+        val manifestEnc = CryptoHelper.encrypt(ImageChunker.makeManifestPlain(chunkNames), password, chatId)
+        publishFile(name, manifestEnc)
     }
 
     override suspend fun loadFileOrNull(name: String): String? = try {
@@ -138,94 +219,185 @@ class NostrTransport(
     }
 
     override suspend fun loadFile(name: String): String {
-        val events = queryAllRelays(fileFilter(name))
-        return events
+        if (isImmutableFile(name)) mediaCache.get(name)?.let { return it }
+        val events = queryAllRelays(fileFilter(name)) ?: emptyList()
+        val content = events
             .filter { ev -> ev.tags.any { t -> t.firstOrNull() == "file" && t.getOrNull(1) == name } }
             .maxByOrNull { it.created_at }
             ?.content
             ?: throw RuntimeException("Файл '$name' не найден в Nostr (channel=$channelId)")
+        if (isImmutableFile(name)) mediaCache.put(name, content)
+        return content
     }
 
-    /**
-     * Находит событие с контентом == oldLine, публикует NIP-09 deletion,
-     * затем публикует newLine как новое событие.
-     */
+    /** Замена строки: надгробие старой + публикация новой. */
     override suspend fun replaceLine(oldLine: String, newLine: String): Boolean {
-        val target = findMessageEvent(oldLine) ?: return false
-        publishToAnyRelay(NostrEvent.createDeletion(privkey, target.id))
+        deleteLine(oldLine)
         appendLine(newLine)
         return true
     }
 
     /**
-     * Находит событие с контентом == line и публикует NIP-09 deletion.
+     * Удаление строки: публикуем «надгробие» (тег "del" с хешем шифртекста) — оба
+     * клиента скрывают сообщение детерминированно. Плюс best-effort NIP-09 удаление.
      */
     override suspend fun deleteLine(line: String): Boolean {
-        val target = findMessageEvent(line) ?: return false
-        publishToAnyRelay(NostrEvent.createDeletion(privkey, target.id))
+        val marker = NostrEvent.create(
+            privkeyBytes = privkey,
+            kind = 1,
+            tags = listOf(listOf("t", channelId), listOf("del", delHash(line))),
+            content = ""
+        )
+        publishToAnyRelay(marker)
+        NostrMessageStore.merge(channelId, listOf(marker)) // надгробие сразу локально
+        findMessageEvent(line)?.let { ev ->
+            runCatching { publishToAnyRelay(NostrEvent.createDeletion(privkey, ev.id)) }
+        }
         return true
     }
 
-    // ─── internal helpers ─────────────────────────────────────────────────────
-
-    private suspend fun findMessageEvent(content: String): NostrEvent? {
-        return queryAllRelays(chatFilter())
-            .filter { ev -> ev.tags.none { t -> t.firstOrNull() == "file" } }
-            .firstOrNull { it.content.trim() == content.trim() }
+    /**
+     * Полная очистка истории. Публикуем "маркер очистки" (событие с тегом "clear"):
+     * оба клиента после его created_at отбрасывают старые сообщения детерминированно,
+     * даже если реле не исполняют NIP-09. Плюс best-effort NIP-09 удаление событий.
+     */
+    override suspend fun clearHistory() {
+        val marker = NostrEvent.create(
+            privkeyBytes = privkey,
+            kind = 1,
+            tags = listOf(listOf("t", channelId), listOf("clear", "")),
+            content = ""
+        )
+        publishToAnyRelay(marker)
+        NostrMessageStore.merge(channelId, listOf(marker)) // cutoff сразу локально
+        val ids = (queryAllRelays(chatFilter()) ?: emptyList())
+            .filter { ev -> ev.tags.none { t -> t.firstOrNull() == "file" || t.firstOrNull() == "clear" || t.firstOrNull() == "del" } }
+            .map { it.id }
+        if (ids.isNotEmpty()) {
+            runCatching { publishToAnyRelay(NostrEvent.createDeletion(privkey, ids)) }
+        }
+        lastContentHash = null
+        lastAllHash = null
+        lastGoodAll = null
+        lastGoodContent = null
     }
 
-    /** Фильтр для сообщений чата (без файлов). */
+    // ─── internal ─────────────────────────────────────────────────────────────
+
+    private suspend fun findMessageEvent(content: String): NostrEvent? =
+        (queryAllRelays(chatFilter()) ?: emptyList())
+            .filter { ev -> ev.tags.none { t -> t.firstOrNull() == "file" } }
+            .firstOrNull { it.content.trim() == content.trim() }
+
     private fun chatFilter(): JSONObject = JSONObject().apply {
-        put("kinds", JSONArray().put(1))
+        // kind:1 — сообщения (хранятся), kind FILE_KIND — файлы (replaceable). Один запрос на всё.
+        put("kinds", JSONArray().put(1).put(FILE_KIND))
         put("#t", JSONArray().put(channelId))
         put("limit", 1000)
     }
 
-    /** Фильтр для конкретного файла. */
     private fun fileFilter(name: String): JSONObject = JSONObject().apply {
-        put("kinds", JSONArray().put(1))
+        put("kinds", JSONArray().put(1).put(FILE_KIND))
         put("#t", JSONArray().put(channelId))
-        // Тег "file" не является стандартным NIP-01 индексируемым тегом,
-        // поэтому реле может не фильтровать по нему — фильтруем на клиенте.
-        put("limit", 200)
+        // Точечно по имени файла/чанка через индексируемый тег #d.
+        put("#d", JSONArray().put(name))
+        put("limit", 100)
     }
 
-    /** Параллельный запрос на все реле + дедупликация по event id. */
-    private suspend fun queryAllRelays(filter: JSONObject): List<NostrEvent> = coroutineScope {
-        val jobs = RELAYS.map { url ->
-            async {
-                try { NostrRelay(url).query(filter) } catch (_: Exception) { emptyList() }
+    /**
+     * Запрос ко всем реле БЕЗ ожидания самого медленного: возвращаемся, как только
+     * ответили все ИЛИ истёк мягкий дедлайн [SOFT_READ_DEADLINE_MS]. Дедуп по id.
+     */
+    /**
+     * Запрос ко всем реле. Возвращает null, если НИ ОДНО реле не ответило за дедлайн
+     * (частый случай нестабильного Tor) — чтобы вызыватели НЕ трактовали это как
+     * "чат пуст" и не стирали уже показанную историю. Если ответило хотя бы одно
+     * реле (пусть и пустым множеством) — возвращаем дедуплицированный список.
+     */
+    private suspend fun queryAllRelays(filter: JSONObject): List<NostrEvent>? {
+        val collected = ConcurrentLinkedQueue<NostrEvent>()
+        val responded = AtomicInteger(0)
+        coroutineScope {
+            val jobs = RELAYS.map { url ->
+                launch {
+                    val r = runCatching { NostrRelayPool.query(url, filter, useTor) }.getOrNull()
+                    if (r != null) { responded.incrementAndGet(); collected.addAll(r) }
+                }
             }
+            withTimeoutOrNull(if (useTor) SOFT_READ_DEADLINE_TOR_MS else SOFT_READ_DEADLINE_MS) { jobs.joinAll() }
+            jobs.forEach { it.cancel() }
         }
-        val all = jobs.awaitAll().flatten()
-        val seen = mutableSetOf<String>()
-        all.filter { seen.add(it.id) }
+        if (responded.get() == 0) return null
+        val seen = HashSet<String>()
+        return collected.filter { seen.add(it.id) }
     }
 
-    /** Публикует событие последовательно до первого успешного реле. */
+    /**
+     * Публикует событие ПАРАЛЛЕЛЬНО на все реле и возвращается, как только ПЕРВОЕ
+     * реле приняло событие (не ждём самое медленное — иначе через Tor часы у
+     * сообщения висят до 20с-таймаута). Остальные публикации продолжаются в фоне
+     * на [publishScope] для надёжности доставки на несколько реле.
+     * Если ВСЕ реле отклонили — бросаем исключение с причинами.
+     */
     private suspend fun publishToAnyRelay(event: NostrEvent) {
-        var lastErr: Exception? = null
+        val firstSuccess = CompletableDeferred<Boolean>()
+        val failures = ConcurrentLinkedQueue<String>()
+        val remaining = AtomicInteger(RELAYS.size)
         for (url in RELAYS) {
-            try {
-                NostrRelay(url).publish(event)
-                return
-            } catch (e: Exception) {
-                lastErr = e
+            publishScope.launch {
+                val r = runCatching { NostrRelayPool.publish(url, event, useTor) }
+                if (r.isSuccess) {
+                    firstSuccess.complete(true) // первый успех разблокирует отправителя
+                } else {
+                    val host = url.removePrefix("wss://")
+                    failures.add("$host: ${r.exceptionOrNull()?.message?.take(80) ?: "?"}")
+                    if (remaining.decrementAndGet() == 0) firstSuccess.complete(false)
+                }
             }
         }
-        throw lastErr ?: RuntimeException("Все Nostr-реле недоступны")
+        if (!firstSuccess.await()) {
+            throw RuntimeException("Все Nostr-реле отклонили событие — ${failures.joinToString("; ")}")
+        }
     }
-
-    // ─── static config ────────────────────────────────────────────────────────
 
     companion object {
-        /** Публичные Nostr-реле с поддержкой NIP-01, NIP-09. */
+        /** Маркер транспорта в поле токена чата: token == "nostr" → чат живёт в Nostr-реле. */
+        const val NOSTR_TOKEN = "nostr"
+
+        /** Маркер чата, который ходит к реле НАПРЯМУЮ (без Tor). Всё остальное → через Tor. */
+        const val NOSTR_DIRECT_TOKEN = "nostrdirect"
+
+        /** Kind параметризованного replaceable-события (NIP-78) для файлов — реле хранит latest. */
+        const val FILE_KIND = 30078
+
+        /** Максимум символов зашифрованного контента в одном Nostr-событии (крупнее — чанки). */
+        const val NOSTR_CHUNK_CHARS = 48_000
+
+        /** Мягкий дедлайн чтения: не ждём медленное/мёртвое реле дольше этого. */
+        private const val SOFT_READ_DEADLINE_MS = 8_000L
+        /** Для Tor дедлайн чтения больше: построение цепочки + round-trip медленнее. */
+        private const val SOFT_READ_DEADLINE_TOR_MS = 15_000L
+
+        /** LRU неизменяемых медиа-файлов (чанки/манифесты img_/stk_) — повторное чтение из памяти. */
+        private const val MEDIA_CACHE_MAX_CHARS = 8 * 1024 * 1024
+        private val mediaCache = object : android.util.LruCache<String, String>(MEDIA_CACHE_MAX_CHARS) {
+            override fun sizeOf(key: String, value: String): Int = value.length
+        }
+
+        private fun isImmutableFile(name: String): Boolean =
+            name.startsWith("img_") || name.startsWith("stk_")
+
+        /** Публичные Nostr-реле (NIP-01, NIP-09). */
         val RELAYS = listOf(
+            "wss://nos.lol",
             "wss://relay.damus.io",
-            "wss://relay.nostr.band",
-            "wss://nostr-pub.wellorder.net",
-            "wss://nos.lol"
+            "wss://relay.primal.net",
+            "wss://offchain.pub",
+            "wss://nostr.mom"
         )
+
+        /** Фоновый scope для дослания публикаций на оставшиеся реле (не блокирует отправителя). */
+        private val publishScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         fun sha256(s: String): ByteArray =
             MessageDigest.getInstance("SHA-256").digest(s.toByteArray(Charsets.UTF_8))

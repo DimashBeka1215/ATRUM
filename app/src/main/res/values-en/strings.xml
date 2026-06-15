@@ -88,21 +88,13 @@
     <string name="error_no_token">Enter a GitHub Token first</string>
 
     <!-- OAuth -->
-    <string name="oauth_processing">Authorising…</string>
-    <string name="oauth_exchanging">Getting token…</string>
-    <string name="oauth_failed">Authorisation failed</string>
-    <string name="oauth_error_user">Authorisation cancelled: %1$s</string>
-    <string name="oauth_error_invalid">Invalid response from GitHub</string>
-    <string name="oauth_error_state">Authorisation session expired, please try again</string>
-    <string name="oauth_error_exchange">Error: %1$s</string>
-    <string name="oauth_not_configured">GitHub OAuth is not configured. Open OAuthConfig.kt and add client_id/client_secret. See the instructions in that file.</string>
 
     <!-- Create cards -->
     <string name="create_card_manual_title">Create manually</string>
     <string name="create_card_manual_subtitle">Connect to an existing gist with a ready-made token</string>
-    <string name="create_card_github_title">Create via GitHub</string>
-    <string name="create_card_github_subtitle">Automatic — just authorise in your browser. The gist and encryption will be set up automatically.</string>
-    <string name="create_card_github_cta">Start</string>
+    <string name="create_card_github_title">Create P2P chat</string>
+    <string name="create_card_github_subtitle">Direct device-to-device. No servers — on-device encryption.</string>
+    <string name="create_card_github_cta">Create</string>
     <string name="create_card_or">or</string>
     <string name="create_card_advanced">Advanced mode</string>
     <string name="manual_warning_title">For advanced users</string>
@@ -133,30 +125,9 @@
     <string name="join_chat_back">Back</string>
     <string name="cd_toggle_password">Show / hide password</string>
 
-    <!-- Device Flow -->
-    <string name="device_flow_title">GitHub confirmation</string>
-    <string name="device_flow_subtitle">Open GitHub in your browser and enter this code</string>
-    <string name="device_flow_code_label">CONFIRMATION CODE</string>
-    <string name="device_flow_open_github">Open GitHub</string>
-    <string name="device_flow_waiting">Waiting for browser confirmation…</string>
-    <string name="device_flow_tap_copy">Tap to copy</string>
-    <string name="device_flow_code_copied">Code copied</string>
-    <string name="device_flow_expired">Code expired, please try again</string>
-    <string name="device_flow_denied">Authorisation denied</string>
     <string name="notif_auth_success_title">Authorisation successful</string>
     <string name="notif_auth_success_text">Open chat: %1$s</string>
 
-    <!-- DeviceFlowService -->
-    <string name="df_notif_title">Atrum Chat</string>
-    <string name="df_status_authorizing">Waiting for browser confirmation…</string>
-    <string name="df_status_creating_gist">Creating room…</string>
-    <string name="df_status_saving">Saving configuration…</string>
-    <string name="df_status_profile">Setting up profile…</string>
-    <string name="df_status_expired">Code expired, please try again</string>
-    <string name="df_status_denied">Authorisation denied</string>
-    <string name="df_status_error">Error: %1$s</string>
-    <string name="df_done_title">Room ready</string>
-    <string name="df_done_text">Open chat: %1$s</string>
 
     <!-- Delete chat -->
     <string name="action_delete_chat">Delete chat</string>
@@ -679,4 +650,15 @@
     <string name="transparency_title">Transparency</string>
     <string name="transparency_ui">Interface (header, input)</string>
     <string name="wallpaper_preview_adjust">Preview &amp; Adjust</string>
+    <string name="tor_connecting">Connecting to Tor…</string>
+    <string name="tor_connected">Connected to Tor</string>
+    <string name="tor_failed">Tor unavailable. Retrying…</string>
+    <string name="cc_path_label">Message path</string>
+    <string name="cc_path_desc_tor">Via Tor — private: traffic goes through the Tor network, relays don\'t see your IP. A bit slower.</string>
+    <string name="cc_path_desc_nostr">Nostr — fast: direct connection to relays. Relays see your IP address.</string>
+    <string name="cd_path_nostr">Nostr direct</string>
+    <string name="cd_path_tor">Via Tor</string>
+    <string name="warn_tor_title">Tor not connected</string>
+    <string name="warn_tor_message">Messages won\'t send until Tor is up. Check your internet; if Tor is blocked, turn on a VPN.</string>
+    <string name="btn_tor_retry">Retry</string>
 </resources>

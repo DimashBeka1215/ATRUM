@@ -7,14 +7,18 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.content.res.ColorStateList
 import android.os.Bundle
 import android.view.View
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.atrum.chat.data.AppDatabase
-import com.atrum.chat.transport.GistTransport
+import com.atrum.chat.nostr.NostrRelayPool
+import com.atrum.chat.transport.NostrTransport
+import com.atrum.chat.transport.TransportFactory
 import com.atrum.chat.data.Chat
 import com.atrum.chat.databinding.ActivityChatsListBinding
 import kotlinx.coroutines.Dispatchers
@@ -52,6 +56,11 @@ class ChatsListActivity : SecureActivity() {
 
         prefs = Prefs(this)
         db = AppDatabase.get(this)
+
+        // Статус подъёма встроенного Tor — баннер «Подключение к Tor…»
+        lifecycleScope.launch {
+            TorManager.status.collect { st -> updateTorBanner(st) }
+        }
 
         // Проверка обязательного обновления (молча если нет сети)
         lifecycleScope.launch {
@@ -126,9 +135,50 @@ class ChatsListActivity : SecureActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Прогреваем соединения с Nostr-реле заранее: пока пользователь в списке
+        // чатов, TLS-рукопожатия уже выполнены — открытие чата и подключение по
+        // приглашению происходят без задержки на установку соединения.
+        if (TorManager.status.value != TorManager.TorStatus.IDLE) NostrRelayPool.prewarm(NostrTransport.RELAYS)
         refreshMyAvatar()
         startUnreadPolling()
         cleanupExpiredChats()
+    }
+
+    /** Обновляет баннер статуса Tor (подключение / подключено / недоступно). */
+    private fun updateTorBanner(status: TorManager.TorStatus) {
+        val banner = binding.torStatusBanner
+        when (status) {
+            TorManager.TorStatus.IDLE -> banner.visibility = View.GONE
+            TorManager.TorStatus.CONNECTING -> {
+                banner.visibility = View.VISIBLE
+                binding.torSpinner.visibility = View.VISIBLE
+                binding.torIcon.visibility = View.GONE
+                binding.torStatusText.setText(R.string.tor_connecting)
+                binding.torStatusText.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+            }
+            TorManager.TorStatus.READY -> {
+                banner.visibility = View.VISIBLE
+                binding.torSpinner.visibility = View.GONE
+                binding.torIcon.visibility = View.VISIBLE
+                binding.torIcon.setImageResource(R.drawable.ic_shield_check)
+                binding.torIcon.imageTintList =
+                    ColorStateList.valueOf(ContextCompat.getColor(this, R.color.accent))
+                binding.torStatusText.setText(R.string.tor_connected)
+                binding.torStatusText.setTextColor(ContextCompat.getColor(this, R.color.accent))
+                // Авто-скрытие через 1.5 с после готовности.
+                banner.postDelayed({ banner.visibility = View.GONE }, 1500L)
+            }
+            TorManager.TorStatus.FAILED -> {
+                banner.visibility = View.VISIBLE
+                binding.torSpinner.visibility = View.GONE
+                binding.torIcon.visibility = View.VISIBLE
+                binding.torIcon.setImageResource(R.drawable.ic_warning)
+                binding.torIcon.imageTintList =
+                    ColorStateList.valueOf(ContextCompat.getColor(this, R.color.error))
+                binding.torStatusText.setText(R.string.tor_failed)
+                binding.torStatusText.setTextColor(ContextCompat.getColor(this, R.color.error))
+            }
+        }
     }
 
     /**
@@ -146,15 +196,7 @@ class ChatsListActivity : SecureActivity() {
 
                 withContext(Dispatchers.IO) {
                     for (chat in expired) {
-                        try {
-                            // best-effort удаление gist — token from EncryptedSharedPreferences
-                            val token = prefs.getChatToken(chat.gistId)
-                                .takeIf { it.isNotEmpty() }
-                                ?: @Suppress("DEPRECATION") chat.gistToken
-                            GistApi.deleteGist(token, chat.gistId)
-                        } catch (_: Throwable) {
-                            // не критично — gist может уже не существовать или токен отозван
-                        }
+                        // Nostr/DHT: серверного gist нет — только локальная очистка секретов
                         prefs.deleteChatSecrets(chat.gistId)
                         db.chatDao().delete(chat)
                     }
@@ -333,8 +375,7 @@ class ChatsListActivity : SecureActivity() {
                 val chatPassword = prefs.getChatPassword(chat.gistId)
                     .takeIf { it.isNotEmpty() }
                     ?: @Suppress("DEPRECATION") chat.chatPassword
-                val gistApi = GistApi(token = chatToken, gistId = chat.gistId)
-                val api = GistTransport(gistApi)
+                val api = TransportFactory.forChat(applicationContext, chat.gistId, chatToken, chatPassword, myUserId)
                 val content = withContext(Dispatchers.IO) { api.loadContent() }
                 val lines = content.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
                 val totalLines = lines.size
@@ -564,14 +605,7 @@ class ChatsListActivity : SecureActivity() {
         ) {
             lifecycleScope.launch {
                 withContext(Dispatchers.IO) {
-                    // Удаляем gist с GitHub — best effort (если нет сети, просто пропускаем)
-                    try {
-                        val token = prefs.getChatToken(chat.gistId)
-                            .takeIf { it.isNotEmpty() }
-                            ?: @Suppress("DEPRECATION") chat.gistToken
-                        GistApi.deleteGist(token, chat.gistId)
-                    }
-                    catch (_: Exception) {}
+                    // Nostr/DHT: серверного gist нет — только локальная очистка секретов
                     prefs.deleteChatSecrets(chat.gistId)
                     db.chatDao().delete(chat)
                 }

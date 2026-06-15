@@ -196,6 +196,18 @@ object CryptoHelper {
     private val sessionKeys     = HashMap<String, ByteArray>()
     private val sessionKeysLock = Any()
 
+    // ─── Кэш результатов расшифровки (анти-шторм Argon2id) ──────────────────────
+    // V5/V4/V2 деривируют Argon2id (64 МБ) НА КАЖДЫЙ вызов. При перезаходе/опросе
+    // вся история расшифровывается заново → лавина 64МБ-аллокаций → GC-фриз/OOM.
+    // Шифртекст детерминированно даёт один и тот же plaintext (пароль/chatId стабильны),
+    // поэтому мемоизируем результат. Сессионные V4-S/V3 НЕ кэшируем — их читаемость
+    // зависит от живого сессионного ключа (forward secrecy).
+    private const val DECRYPT_CACHE_MAX = 600
+    private val decryptCacheLock = Any()
+    private val decryptCache = object : LinkedHashMap<String, String>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: Map.Entry<String, String>): Boolean = size > DECRYPT_CACHE_MAX
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // PUBLIC API — шифрование / дешифрование
     // ═════════════════════════════════════════════════════════════════════════
@@ -224,7 +236,13 @@ object CryptoHelper {
      */
     fun decrypt(ciphertextB64: String, password: String, chatId: String = ""): String? {
         val s = ciphertextB64.trim()
-        return when {
+        // Сессионные форматы зависят от живого ключа сессии — их не кэшируем.
+        val isSession = s.startsWith(V4S_PREFIX) || s.startsWith(V3_PREFIX)
+        val cacheKey = if (isSession) null else chatId + "\u0000" + s
+        if (cacheKey != null) {
+            synchronized(decryptCacheLock) { decryptCache[cacheKey] }?.let { return it }
+        }
+        val result = when {
             s.startsWith(V5_PREFIX)  -> decryptV5(s, password)
             s.startsWith(V4S_PREFIX) -> {
                 val sk = synchronized(sessionKeysLock) { sessionKeys[chatId] }
@@ -239,6 +257,10 @@ object CryptoHelper {
             s.startsWith(V2_PREFIX) -> decryptV2(s, password, chatId)
             else                    -> decryptV1(s, password)
         }
+        if (cacheKey != null && result != null) {
+            synchronized(decryptCacheLock) { decryptCache[cacheKey] = result }
+        }
+        return result
     }
 
     /**

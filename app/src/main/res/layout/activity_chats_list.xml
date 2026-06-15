@@ -178,6 +178,45 @@
 
         </androidx.constraintlayout.widget.ConstraintLayout>
 
+        <!-- Статус подъёма встроенного Tor (Nostr через Tor) -->
+        <LinearLayout
+            android:id="@+id/tor_status_banner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@color/surface"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="9dp"
+            android:visibility="gone">
+
+            <ProgressBar
+                android:id="@+id/tor_spinner"
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:indeterminateTint="@color/accent" />
+
+            <ImageView
+                android:id="@+id/tor_icon"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:src="@drawable/ic_shield_check"
+                android:visibility="gone"
+                android:contentDescription="@null"
+                app:tint="@color/accent" />
+
+            <TextView
+                android:id="@+id/tor_status_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="10dp"
+                android:text="@string/tor_connecting"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+        </LinearLayout>
+
         <LinearLayout
             android:id="@+id/empty_state"
             android:layout_width="match_parent"

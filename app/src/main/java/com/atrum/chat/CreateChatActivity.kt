@@ -1,18 +1,13 @@
 package com.atrum.chat
 
-import com.atrum.chat.transport.GistTransport
+import com.atrum.chat.transport.NostrTransport
 
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.content.Intent
 import android.os.Bundle
-import android.text.Editable
-import android.text.InputFilter
-import android.text.TextWatcher
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
-import android.view.animation.LinearInterpolator
-import android.widget.Toast
 import androidx.lifecycle.lifecycleScope
 import com.atrum.chat.data.AppDatabase
 import com.atrum.chat.data.Chat
@@ -23,14 +18,13 @@ import kotlinx.coroutines.withContext
 import java.security.SecureRandom
 
 /**
- * Создание чата. Три экрана с переключением:
+ * Создание чата. Два экрана с переключением:
  *
- *   1) CHOICE — стартовый: три карточки (GitHub / Join / Manual)
- *   2) GITHUB — premium дизайн: profile preview + features card + info warning +
- *               duration chips → DeviceFlow OAuth. Пароль генерируется автоматически.
- *   3) MANUAL — продвинутый режим: 4 поля (имя/token/gist/пароль)
+ *   1) CHOICE — стартовый: две карточки (Создать P2P / Присоединиться)
+ *   2) CREATE — форма создания P2P-чата: profile preview + features + duration chips
+ *               → создание чата поверх DHT. Пароль генерируется автоматически.
  *
- * Срок жизни чата: enum [Duration] → передаётся в DeviceFlowActivity как extra.
+ * Срок жизни чата: enum [Duration] → expiresAtMs у [Chat].
  */
 class CreateChatActivity : SecureActivity() {
 
@@ -38,15 +32,18 @@ class CreateChatActivity : SecureActivity() {
     private lateinit var db: AppDatabase
     private lateinit var prefs: Prefs
 
-    private enum class Screen { CHOICE, GITHUB, MANUAL }
+    private enum class Screen { CHOICE, CREATE }
     private var screen: Screen = Screen.CHOICE
 
     private enum class Duration(val days: Int) {
-        DAY_1(1), DAY_7(7), DAY_30(30), DAY_90(90), UNLIMITED(-1)
+        DAY_1(1), DAY_7(7), DAY_30(30), UNLIMITED(-1)
     }
     private var selectedDuration: Duration = Duration.UNLIMITED
 
-    /** Пароль, который будет использован при создании чата через GitHub OAuth. */
+    /** Путь сообщений: true = через Tor (по умолчанию), false = напрямую. */
+    private var selectedTor: Boolean = true
+
+    /** Пароль чата — генерируется автоматически при создании. */
     private val generatedPassword: String = generateSecurePassword()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -57,73 +54,26 @@ class CreateChatActivity : SecureActivity() {
         db = AppDatabase.get(this)
         prefs = Prefs(this)
 
-        // Фильтр без пробелов на secret-поля
-        val noWhitespace = InputFilter { source, start, end, _, _, _ ->
-            val original = source.subSequence(start, end).toString()
-            val cleaned = original.filter { !it.isWhitespace() }
-            if (cleaned == original) null else cleaned
-        }
-        listOf(
-            binding.etToken, binding.etGist, binding.etManualPassword
-        ).forEach { it.filters = arrayOf<InputFilter>(noWhitespace) + it.filters }
-
-        // Watcher для пароля и всех полей в Manual-форме
-        binding.etManualPassword.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
-            override fun afterTextChanged(s: Editable?) {
-                showPwdError(binding.tvManualPwdError, s?.toString().orEmpty())
-                updateManualButtonState()
-            }
-        })
-        val manualFieldWatcher = object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
-            override fun afterTextChanged(s: Editable?) { updateManualButtonState() }
-        }
-        binding.etPartnerName.addTextChangedListener(manualFieldWatcher)
-        binding.etToken.addTextChangedListener(manualFieldWatcher)
-        binding.etGist.addTextChangedListener(manualFieldWatcher)
-
         // Choice screen
-        binding.cardGithub.setOnClickListener { showScreen(Screen.GITHUB) }
-        binding.cardManual.setOnClickListener { showScreen(Screen.MANUAL) }
+        binding.cardGithub.setOnClickListener { showScreen(Screen.CREATE) }
         binding.cardJoin.setOnClickListener {
             startActivity(Intent(this, JoinChatActivity::class.java))
         }
         binding.btnCancelChoice.setOnClickListener { finish() }
         binding.btnBackToChoice.setOnClickListener { showScreen(Screen.CHOICE) }
 
-        // GitHub form
+        // Create form (P2P / DHT)
         setupDurationChips()
-        binding.btnCreateGithub.setOnClickListener { startGithubFlow() }
+        setupPathSelector()
+        binding.btnCreateGithub.setOnClickListener { createP2pChat() }
 
-        // Аватарка в GitHub-форме
         prefs.myAvatarBase64?.let { base64 ->
             AvatarUtils.fromBase64(base64)?.let { bmp -> binding.ivAvatar.setImageBitmap(bmp) }
         }
 
         startAvatarAnimations()
 
-        // Manual form
-        binding.btnCreateManual.setOnClickListener { createManual() }
-        binding.btnHelpToken.setOnClickListener {
-            openUrl("https://github.com/settings/tokens/new?scopes=gist&description=Atrum%20Chat")
-        }
-        binding.btnHelpGist.setOnClickListener {
-            openUrl("https://gist.github.com")
-        }
-
         showScreen(Screen.CHOICE)
-        updateManualButtonState()
-    }
-
-    private fun openUrl(url: String) {
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)))
-        } catch (e: Exception) {
-            Toast.makeText(this, "No browser found", Toast.LENGTH_SHORT).show()
-        }
     }
 
     override fun onBackPressed() {
@@ -137,8 +87,7 @@ class CreateChatActivity : SecureActivity() {
     private fun showScreen(target: Screen) {
         screen = target
         binding.choiceScreen.visibility = if (target == Screen.CHOICE) View.VISIBLE else View.GONE
-        binding.githubForm.visibility = if (target == Screen.GITHUB) View.VISIBLE else View.GONE
-        binding.manualForm.visibility = if (target == Screen.MANUAL) View.VISIBLE else View.GONE
+        binding.githubForm.visibility = if (target == Screen.CREATE) View.VISIBLE else View.GONE
         binding.btnBackToChoice.visibility = if (target == Screen.CHOICE) View.GONE else View.VISIBLE
         binding.tvSubtitle.visibility = if (target == Screen.CHOICE) View.VISIBLE else View.GONE
     }
@@ -148,7 +97,6 @@ class CreateChatActivity : SecureActivity() {
     private fun startAvatarAnimations() {
         // Желе-эффект: scaleX и scaleY анимируются в противофазе —
         // когда рамка растягивается по X, она сжимается по Y, и наоборот.
-        // Это создаёт органичное упругое "дыхание" без какого-либо вращения.
         val jellyX = ObjectAnimator.ofFloat(
             binding.flAvatarGlow, View.SCALE_X,
             1f, 1.07f, 0.95f, 1.04f, 0.98f, 1f
@@ -183,7 +131,6 @@ class CreateChatActivity : SecureActivity() {
             binding.chip1d   to Duration.DAY_1,
             binding.chip7d   to Duration.DAY_7,
             binding.chip30d  to Duration.DAY_30,
-            binding.chip90d  to Duration.DAY_90,
             binding.chipUnlim to Duration.UNLIMITED
         )
         applyDurationSelection(chips)
@@ -210,47 +157,102 @@ class CreateChatActivity : SecureActivity() {
         }
     }
 
-    // ═══ GitHub OAuth ═══
+    // ═══ Путь сообщений (Nostr напрямую / через Tor) ═══
 
-    private fun startGithubFlow() {
-        val roomName = prefs.myName.takeIf { it.isNotBlank() } ?: "Чат"
-
-        val intent = Intent(this, OAuthWarningActivity::class.java).apply {
-            putExtra(DeviceFlowActivity.EXTRA_ROOM_NAME, roomName)
-            putExtra(DeviceFlowActivity.EXTRA_ROOM_PASSWORD, generatedPassword)
-            putExtra(EXTRA_DURATION_DAYS, selectedDuration.days)
+    private fun setupPathSelector() {
+        applyPathSelection()
+        binding.pathNostr.setOnClickListener {
+            selectedTor = false; applyPathSelection(); animateBolt(binding.pathNostrIcon)
         }
-        startActivity(intent)
-        finish()
+        binding.pathTor.setOnClickListener {
+            selectedTor = true; applyPathSelection(); animateShield(binding.pathTorIcon)
+        }
     }
 
-    // ═══ Manual ═══
-
-    private fun createManual() {
-        val partnerName = binding.etPartnerName.text.toString().trim()
-        val token = binding.etToken.text.toString().trim()
-        val gist = binding.etGist.text.toString().trim()
-        val pwd = binding.etManualPassword.text.toString().trim()
-
-        if (partnerName.isEmpty() || token.isEmpty() || gist.isEmpty() || pwd.isEmpty()) {
-            Toast.makeText(this, R.string.error_create_chat, Toast.LENGTH_SHORT).show()
-            return
+    /** Молния (Nostr): чёткий «рывок» вверх с подскоком масштаба. */
+    private fun animateBolt(v: View) {
+        v.animate().cancel()
+        val up = -6f * resources.displayMetrics.density
+        val sx = ObjectAnimator.ofFloat(v, View.SCALE_X, 1f, 1.32f, 0.92f, 1f)
+        val sy = ObjectAnimator.ofFloat(v, View.SCALE_Y, 1f, 1.32f, 0.92f, 1f)
+        val ty = ObjectAnimator.ofFloat(v, View.TRANSLATION_Y, 0f, up, 2f, 0f)
+        AnimatorSet().apply {
+            playTogether(sx, sy, ty)
+            duration = 640
+            interpolator = AccelerateDecelerateInterpolator()
+            start()
         }
+    }
+
+    /** Щит (Tor): медленный защитный подскок с мягкой пружиной. */
+    private fun animateShield(v: View) {
+        v.animate().cancel()
+        val sx = ObjectAnimator.ofFloat(v, View.SCALE_X, 1f, 1.26f, 0.97f, 1.06f, 1f)
+        val sy = ObjectAnimator.ofFloat(v, View.SCALE_Y, 1f, 1.26f, 0.97f, 1.06f, 1f)
+        AnimatorSet().apply {
+            playTogether(sx, sy)
+            duration = 720
+            interpolator = AccelerateDecelerateInterpolator()
+            start()
+        }
+    }
+
+    private fun applyPathSelection() {
+        binding.pathNostr.setBackgroundResource(
+            if (!selectedTor) R.drawable.bg_chip_selected else R.drawable.bg_chip_default
+        )
+        binding.pathTor.setBackgroundResource(
+            if (selectedTor) R.drawable.bg_chip_selected else R.drawable.bg_chip_default
+        )
+        binding.pathNostrIcon.setColorFilter(
+            androidx.core.content.ContextCompat.getColor(
+                this, if (!selectedTor) R.color.accent_light else R.color.text_secondary
+            )
+        )
+        binding.pathTorIcon.setColorFilter(
+            androidx.core.content.ContextCompat.getColor(
+                this, if (selectedTor) R.color.accent_light else R.color.text_secondary
+            )
+        )
+        binding.tvPathDesc.setText(
+            if (selectedTor) R.string.cc_path_desc_tor else R.string.cc_path_desc_nostr
+        )
+    }
+
+    // ═══ P2P (Nostr-реле) ═══
+
+    /**
+     * Создаёт P2P-чат поверх публичных Nostr-реле — без GitHub, без gist, без токена.
+     * Личность чата = локально сгенерированный channelId; в поле токена пишем
+     * маркер [NostrTransport.NOSTR_TOKEN], по которому TransportFactory выбирает Nostr.
+     */
+    private fun createP2pChat() {
+        val roomName = prefs.myName.takeIf { it.isNotBlank() }
+            ?: getString(R.string.join_default_partner_name)
+        val channelId = generateChannelId()
+        val password = generatedPassword
+        val expiresAt = if (selectedDuration.days < 0) null
+            else System.currentTimeMillis() + selectedDuration.days * 24L * 60 * 60 * 1000
 
         setLoading(true)
         lifecycleScope.launch {
             @Suppress("DEPRECATION")
             val chat = Chat(
-                gistId = gist,
-                gistToken = "",   // secrets stored in EncryptedSharedPreferences
+                gistId = channelId,
+                gistToken = "",
                 chatPassword = "",
-                partnerName = partnerName,
+                partnerName = roomName,
                 lastMessage = "",
-                lastTimeMs = System.currentTimeMillis()
+                lastTimeMs = System.currentTimeMillis(),
+                expiresAtMs = expiresAt
             )
-            // Save secrets in EncryptedSharedPreferences before DB insert
-            prefs.saveChatSecrets(gist, token, pwd)
-            val newId = db.chatDao().insert(chat)
+            // Токен пути идёт и в секреты, и в приглашение → у собеседника тот же путь.
+            val pathToken = if (selectedTor) NostrTransport.NOSTR_TOKEN
+                            else NostrTransport.NOSTR_DIRECT_TOKEN
+            prefs.saveChatSecrets(channelId, pathToken, password)
+            // Ленивый старт Tor только для Tor-чата.
+            if (selectedTor) TorManager.start(applicationContext)
+            val newId = withContext(Dispatchers.IO) { db.chatDao().insert(chat) }
 
             val myProfile = Profile(
                 userId = prefs.myUserId,
@@ -258,11 +260,15 @@ class CreateChatActivity : SecureActivity() {
                 tag = prefs.myTag,
                 avatarBase64 = prefs.myAvatarBase64
             )
-            withContext(Dispatchers.IO) {
+            // Профиль публикуем В ФОНЕ — НЕ блокируем открытие чата сетью.
+            // ChatActivity всё равно опубликует профиль при открытии; здесь дублируем
+            // для надёжности через AppScope (переживёт finish() этого экрана).
+            AppScope.launch {
                 try {
-                    val api = GistApi(token = token, gistId = gist)
-                    ProfileSync.pushMyProfile(GistTransport(api), pwd, myProfile)
+                    val transport = NostrTransport(channelId, password, prefs.myUserId, useTor = selectedTor)
+                    ProfileSync.pushMyProfile(transport, password, myProfile)
                 } catch (_: Exception) {
+                    // не критично — ChatActivity сделает retry при первом открытии
                 }
             }
 
@@ -273,49 +279,18 @@ class CreateChatActivity : SecureActivity() {
         }
     }
 
+    /** Случайный 128-битный идентификатор канала (32 hex-символа). */
+    private fun generateChannelId(): String {
+        val bytes = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
     private fun setLoading(loading: Boolean) {
         binding.progress.visibility = if (loading) View.VISIBLE else View.GONE
         binding.btnCreateGithub.isEnabled = !loading
-        binding.btnCreateManual.isEnabled = !loading
-    }
-
-    // ═══ Валидация пароля (Manual) ═══
-
-    private fun passwordError(pwd: String): String? {
-        if (pwd.isEmpty()) return null
-        if (pwd.any { it.isWhitespace() }) return "Введите пароль без пробелов"
-        if (pwd.any { it == '%' || it.code < 0x20 || it.code > 0x7E })
-            return "Удалите недопустимый символ"
-        return null
-    }
-
-    private fun showPwdError(errorView: android.widget.TextView, pwd: String) {
-        val err = passwordError(pwd)
-        if (err != null) {
-            errorView.text = err
-            errorView.visibility = View.VISIBLE
-        } else {
-            errorView.visibility = View.GONE
-        }
-    }
-
-    private fun updateManualButtonState() {
-        val partnerName = binding.etPartnerName.text?.toString().orEmpty().trim()
-        val token       = binding.etToken.text?.toString().orEmpty().trim()
-        val gist        = binding.etGist.text?.toString().orEmpty().trim()
-        val pwd         = binding.etManualPassword.text?.toString().orEmpty()
-        val allFilled   = partnerName.isNotEmpty() && token.isNotEmpty()
-                && gist.isNotEmpty() && pwd.isNotEmpty()
-        val pwdOk       = passwordError(pwd) == null
-        val enabled     = allFilled && pwdOk
-        binding.btnCreateManual.isEnabled = enabled
-        binding.btnCreateManual.alpha = if (enabled) 1f else 0.45f
     }
 
     companion object {
-        /** -1 = бессрочно, иначе количество дней до истечения. */
-        const val EXTRA_DURATION_DAYS = "duration_days"
-
         private const val GENERATED_LEN = 14
         private const val GENERATED_ALPHABET =
             "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"

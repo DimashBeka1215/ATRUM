@@ -90,21 +90,13 @@
     <string name="error_no_token">Сначала введи GitHub Token</string>
 
     <!-- OAuth -->
-    <string name="oauth_processing">Авторизация…</string>
-    <string name="oauth_exchanging">Получаем токен…</string>
-    <string name="oauth_failed">Не удалось авторизоваться</string>
-    <string name="oauth_error_user">Авторизация отменена: %1$s</string>
-    <string name="oauth_error_invalid">Некорректный ответ от GitHub</string>
-    <string name="oauth_error_state">Сессия авторизации устарела, попробуйте ещё раз</string>
-    <string name="oauth_error_exchange">Ошибка: %1$s</string>
-    <string name="oauth_not_configured">GitHub OAuth не настроен. Открой OAuthConfig.kt и впиши client_id/client_secret. См. инструкцию в файле.</string>
 
     <!-- Карточки в Create -->
     <string name="create_card_manual_title">Создать вручную</string>
     <string name="create_card_manual_subtitle">Подключиться к существующему gist\'у с готовым токеном</string>
-    <string name="create_card_github_title">Создать через GitHub</string>
-    <string name="create_card_github_subtitle">Автоматически — нужна только авторизация в браузере. Gist и шифрование настроятся сами.</string>
-    <string name="create_card_github_cta">Начать</string>
+    <string name="create_card_github_title">Создать P2P-чат</string>
+    <string name="create_card_github_subtitle">Прямое соединение между устройствами. Без серверов — шифрование на устройстве.</string>
+    <string name="create_card_github_cta">Создать</string>
     <string name="create_card_or">или</string>
     <string name="create_card_advanced">Продвинутый режим</string>
     <string name="manual_warning_title">Режим для опытных пользователей</string>
@@ -135,30 +127,9 @@
     <string name="join_chat_back">Назад</string>
     <string name="cd_toggle_password">Показать / скрыть пароль</string>
 
-    <!-- Device Flow -->
-    <string name="device_flow_title">Подтверждение в GitHub</string>
-    <string name="device_flow_subtitle">Откройте GitHub в браузере и введите этот код</string>
-    <string name="device_flow_code_label">КОД ПОДТВЕРЖДЕНИЯ</string>
-    <string name="device_flow_open_github">Открыть GitHub</string>
-    <string name="device_flow_waiting">Ждём подтверждения в браузере…</string>
-    <string name="device_flow_tap_copy">Нажмите чтобы скопировать</string>
-    <string name="device_flow_code_copied">Код скопирован</string>
-    <string name="device_flow_expired">Код истёк, попробуйте ещё раз</string>
-    <string name="device_flow_denied">Авторизация отклонена</string>
     <string name="notif_auth_success_title">Авторизация успешна</string>
     <string name="notif_auth_success_text">Открыть чат: %1$s</string>
 
-    <!-- DeviceFlowService notifications + loading flow -->
-    <string name="df_notif_title">Atrum Chat</string>
-    <string name="df_status_authorizing">Ожидаем подтверждения в браузере…</string>
-    <string name="df_status_creating_gist">Создаём комнату…</string>
-    <string name="df_status_saving">Сохраняем конфигурацию…</string>
-    <string name="df_status_profile">Настраиваем профиль…</string>
-    <string name="df_status_expired">Код истёк, попробуйте ещё раз</string>
-    <string name="df_status_denied">Авторизация отклонена</string>
-    <string name="df_status_error">Ошибка: %1$s</string>
-    <string name="df_done_title">Комната готова</string>
-    <string name="df_done_text">Открыть чат: %1$s</string>
 
     <!-- Action: удалить чат -->
     <string name="action_delete_chat">Удалить чат</string>
@@ -691,4 +662,15 @@
     <string name="sticker_guide_s5_d">Зажми стикер → View Sticker Set → ⋯ → Copy Link.</string>
     <string name="sticker_guide_s6_t">Добавь пак по ссылке</string>
     <string name="sticker_guide_s6_d">«Добавить пак» → вставь t.me/addstickers/… → загрузка → готово.</string>
+    <string name="tor_connecting">Подключение к Tor…</string>
+    <string name="tor_connected">Tor подключён</string>
+    <string name="tor_failed">Tor недоступен. Повтор…</string>
+    <string name="cc_path_label">Путь сообщений</string>
+    <string name="cc_path_desc_tor">Через Tor — приватно: соединение идёт через сеть Tor, реле не видят ваш IP. Чуть медленнее.</string>
+    <string name="cc_path_desc_nostr">Nostr — быстро: соединение с реле напрямую. Реле видят ваш IP-адрес.</string>
+    <string name="cd_path_nostr">Nostr напрямую</string>
+    <string name="cd_path_tor">Через Tor</string>
+    <string name="warn_tor_title">Tor не подключён</string>
+    <string name="warn_tor_message">Сообщения не отправляются, пока Tor не поднимется. Проверьте интернет; если Tor заблокирован — включите VPN.</string>
+    <string name="btn_tor_retry">Повторить</string>
 </resources>

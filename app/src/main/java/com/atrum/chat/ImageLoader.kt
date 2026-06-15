@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import com.atrum.chat.transport.ChatTransport
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
@@ -105,7 +106,7 @@ class ImageLoader(private val api: ChatTransport, private val password: String) 
      * Обрабатывает plain base64, CHUNKED-манифест и любые другие форматы.
      */
     private suspend fun loadFromChatGist(fileName: String): String? {
-        val mainContent = withContext(Dispatchers.IO) { api.loadFile(fileName) }
+        val mainContent = loadFileRetry(fileName)
         val decrypted = CryptoHelper.decrypt(mainContent, password, api.chatId) ?: return null
         return if (decrypted.startsWith(ImageChunker.CHUNKED_MARKER)) {
             assembleChunkedImage(decrypted)
@@ -123,12 +124,28 @@ class ImageLoader(private val api: ChatTransport, private val password: String) 
         return try {
             val sb = StringBuilder()
             for (chunkName in chunkNames) {
-                val chunkContent = withContext(Dispatchers.IO) { api.loadFile(chunkName) }
-                sb.append(chunkContent)
+                sb.append(loadFileRetry(chunkName))
             }
             CryptoHelper.decrypt(sb.toString(), password, api.chatId)
         } catch (e: Exception) {
             null
         }
+    }
+
+    /**
+     * Загружает файл с ретраями — через Tor чтение нестабильно, и один транзиентный
+     * промах (реле не ответило за дедлайн) не должен рушить всю картинку/чанк.
+     */
+    private suspend fun loadFileRetry(name: String, attempts: Int = 5): String {
+        var last: Exception? = null
+        repeat(attempts) { i ->
+            try {
+                return withContext(Dispatchers.IO) { api.loadFile(name) }
+            } catch (e: Exception) {
+                last = e
+                if (i < attempts - 1) delay(900L * (i + 1))
+            }
+        }
+        throw last ?: RuntimeException("loadFile failed: $name")
     }
 }

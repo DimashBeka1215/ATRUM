@@ -4,6 +4,7 @@ import com.atrum.chat.transport.ChatTransport
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Обмен профилями через зашифрованный JSON в profiles.txt в gist'е чата.
@@ -37,10 +38,37 @@ object ProfileSync {
      */
     private val profilesMutex = Mutex()
 
+    /**
+     * Кэш «известных участников» на процесс: chatId → (userId → Profile).
+     * Через нестабильный Tor чтение profiles.txt может вернуть пусто/без партнёра,
+     * и тогда read-modify-write затёр бы профиль собеседника. Поэтому при записи
+     * объединяем прочитанное с этим кэшем — однажды увиденный участник не теряется.
+     */
+    private val known = ConcurrentHashMap<String, MutableMap<String, Profile>>()
+
+    /** Возвращает (кэш ∪ read), где read свежее (выигрывает по ключам, что в нём есть). */
+    private fun unionWithKnown(chatId: String, read: Map<String, Profile>): MutableMap<String, Profile> {
+        val result = LinkedHashMap<String, Profile>()
+        known[chatId]?.let { result.putAll(it) }   // ранее виденные (в т.ч. партнёр)
+        result.putAll(read)                          // актуальное с реле перекрывает
+        return result
+    }
+
+    /** Запоминает финальное состояние карты как «известное» для chatId. */
+    private fun rememberKnown(chatId: String, map: Map<String, Profile>) {
+        known[chatId] = LinkedHashMap(map)
+    }
+
     suspend fun pullProfiles(api: ChatTransport, password: String): Map<String, Profile> {
         val rawEncrypted = api.loadFileOrNull(FILE_NAME)?.trim() ?: return emptyMap()
         if (rawEncrypted.isEmpty()) return emptyMap()
-        return parseProfiles(rawEncrypted, password, api.chatId)
+        val parsed = parseProfiles(rawEncrypted, password, api.chatId)
+        // Пополняем кэш известных участников всем, что реально прочитали с реле.
+        if (parsed.isNotEmpty()) {
+            val merged = unionWithKnown(api.chatId, parsed)
+            rememberKnown(api.chatId, merged)
+        }
+        return parsed
     }
 
     /**
@@ -75,7 +103,7 @@ object ProfileSync {
         myProfile: Profile
     ): Boolean = profilesMutex.withLock {
         try {
-        val existing = pullProfiles(api, password).toMutableMap()
+        val existing = unionWithKnown(api.chatId, pullProfiles(api, password))
 
         // Удалить все "старые я" — профили с моим именем но не моим userId.
         // Имя не пустое — пустые имена не считаем "моим клоном".
@@ -89,6 +117,7 @@ object ProfileSync {
 
         // Записать мой профиль
         existing[myProfile.userId] = myProfile
+        rememberKnown(api.chatId, existing) // не теряем партнёра при будущих флаки-чтениях
 
         val json = JSONObject().apply {
             for ((userId, profile) in existing) {
@@ -133,7 +162,7 @@ object ProfileSync {
         myVerifiedPartnerIdk: String? = null
     ): Boolean = profilesMutex.withLock {
         try {
-            val existing = pullProfiles(api, password).toMutableMap()
+            val existing = unionWithKnown(api.chatId, pullProfiles(api, password))
             // Берём наш профиль из gist; если его там нет — создаём с реальными данными,
             // а не с пустым именем. Так же восстанавливаем имя если оно там было пустым.
             val gist = existing[myUserId]
@@ -152,6 +181,7 @@ object ProfileSync {
                 ephemeralSig       = myEphemeralSig ?: base.ephemeralSig,
                 verifiedPartnerIdk = myVerifiedPartnerIdk ?: base.verifiedPartnerIdk
             )
+            rememberKnown(api.chatId, existing) // не теряем партнёра при флаки-чтениях
             val json = JSONObject().apply {
                 for ((uid, p) in existing) put(uid, p.toJsonObject())
             }

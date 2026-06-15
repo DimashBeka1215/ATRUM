@@ -29,6 +29,7 @@ import com.atrum.chat.stickers.StickerPanelController
 import com.atrum.chat.stickers.StickerRepository
 import android.view.animation.DecelerateInterpolator
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.flow.collectLatest
 import android.content.res.Configuration
 import android.graphics.BitmapFactory
 import android.graphics.Shader
@@ -84,7 +85,7 @@ class ChatActivity : SecureActivity() {
     // ── Warning banner ────────────────────────────────────────────────────────
 
     /** Типы мягких предупреждений. Каждый имеет свой текст, но одинаковый визуал. */
-    private enum class WarningType { TOKEN, RATE_LIMIT, NETWORK, FORWARD_SECRECY }
+    private enum class WarningType { TOKEN, RATE_LIMIT, NETWORK, FORWARD_SECRECY, TOR }
 
     /** Текущий активный тип предупреждения, null если баннер скрыт. */
     private var activeWarning: WarningType? = null
@@ -315,13 +316,26 @@ class ChatActivity : SecureActivity() {
             // Держим overlay до завершения рукопожатия (с таймаутом) — чтобы при входе
             // в чат сессия и проверка идентичности уже были готовы.
             startHandshakeGate()
+            // Мгновенный показ из кэша прошлого захода (в этой сессии) — чат не грузится
+            // с нуля; сетевой loadMessages ниже обновит его в фоне.
+            ChatSnapshotCache.get(chat.gistId)?.let { cached ->
+                runCatching { processGistData(cached) }
+            }
             // Первая загрузка — silent: gist может быть только что создан,
             // первая попытка может выдать "файл не найден" — это норм, polling попробует ещё.
             loadMessages(silent = true)
+            // Страховка: если за 15с контент так и не пришёл (нет сети / Tor не поднялся) —
+            // всё равно показываем чат, чтобы не залипнуть на спиннере.
+            lifecycleScope.launch {
+                delay(15_000L)
+                if (!firstLoadComplete) { firstLoadComplete = true; revealMessages() }
+            }
             startPolling()
             startPresence()
             // В параллель синхронизируем профили (имя/аватарка собеседника)
             syncProfiles()
+            // Следим за статусом Tor: жёлтая плашка, если Tor не поднялся в Tor-чате.
+            observeTorStatus()
           } catch (e: Exception) {
             CrashHandler.report(this@ChatActivity, "ChatActivity: onCreate loop fail", e)
             finish()
@@ -527,7 +541,7 @@ class ChatActivity : SecureActivity() {
             context = applicationContext
         )
         // Стартуем с Gist напрямую (без проверки) — UI не ждёт
-        transport = transportFactory.gistDirect()
+        transport = transportFactory.instant()
         // В фоне проверяем реальную доступность — переключимся на Nostr если нужно
         lifecycleScope.launch { resolveTransport() }
 
@@ -635,8 +649,18 @@ class ChatActivity : SecureActivity() {
                 // (compose + pendingSnapshot) → копия, исчезающая только после перезахода.
                 currentMessages = messages.filter { !it.isPending }
                 adapter.submit(messages)
+                // Снимаем загрузочный оверлей ТОЛЬКО когда сообщения уже уложены в список
+                // (post выполнится после layout-прохода) — чат проявляется готовым, без пустой вспышки.
+                // Раскрываем чат, когда пришли реальные сообщения. Если чат и впрямь пустой
+                // (нет превью истории) — раскрываем сразу; иначе держим спиннер до данных:
+                // через медленный Tor первый ответ может быть пустым/транзиентным.
+                if (messages.isNotEmpty() || chat.lastMessage.isBlank()) {
+                    binding.rvMessages.post { maybeReveal() }
+                }
+                // Заглушку "чат пуст" показываем только после снятия загрузочного оверлея —
+                // иначе спиннер виден поверх надписи "пусто".
                 binding.tvEmptyPlaceholder.visibility =
-                    if (messages.isEmpty()) View.VISIBLE else View.GONE
+                    if (messages.isEmpty() && firstLoadComplete) View.VISIBLE else View.GONE
                 // Авто-скролл только если уже у дна: не прерываем чтение истории.
                 // canScrollVertically(1) == false → нельзя скроллить дальше вниз = мы у дна.
                 val isAtBottom = !binding.rvMessages.canScrollVertically(1)
@@ -650,9 +674,12 @@ class ChatActivity : SecureActivity() {
         sendManager = MessageSendManager(
             scope = lifecycleScope,
             doSend = { encrypted ->
-                // Через PatchQueue — строгий FIFO, один PATCH за раз
-                // (блокирующий вызов: suspendCoroutine ждёт onSuccess/onFailure)
+                // Один appendLine за раз (строгий FIFO).
                 withContext(Dispatchers.IO) { transport.appendLine(encrypted) }
+                // Часы → галочка СРАЗУ при успешной публикации — не ждём round-trip
+                // от реле (на публичных реле он ненадёжен). reconcile() позже заменит
+                // оптимистичную строку серверной копией, когда она вернётся.
+                chatStore.confirmSent(encrypted)
                 if (chat.isFavorites) {
                     // Для локального чата имитируем мгновенную загрузку из "сети"
                     // сразу после appendLine, чтобы сообщение вышло из pending-статуса.
@@ -669,7 +696,6 @@ class ChatActivity : SecureActivity() {
                     // Без этого CDN может отдавать 304 (старый контент) 1-3 сек после PATCH,
                     // и часики висят до следующего обычного тика (10 сек).
                     lifecycleScope.launch {
-                        (transport as? com.atrum.chat.transport.GistTransport)?.resetEtag()
                         // Немедленный форс-синк: ETag сброшен → 200 гарантирован → часики гаснут.
                         syncEngine.forceSync(delayMs = 0L)
                         // Страховка: если sync пропустил single-flight guard (предыдущий GET в полёте)
@@ -924,6 +950,11 @@ class ChatActivity : SecureActivity() {
         resumeVisibleStickers()
         applyWallpaper()
         if (::chat.isInitialized) {
+            // Re-ensure: при возврате в Tor-чат поднимаем Tor, если он «уснул» в фоне.
+            if (!chat.isFavorites &&
+                chat.gistToken != com.atrum.chat.transport.NostrTransport.NOSTR_DIRECT_TOKEN) {
+                TorManager.start(this)
+            }
             // Сбрасываем кэши — при возврате в чат гарантируем:
             //  1. lastContent="" → loadMessages всегда парсит заново
             //  2. lastPushedReadIndex=-1 → read receipt отправится даже если контент не изменился
@@ -944,7 +975,6 @@ class ChatActivity : SecureActivity() {
             // Заменяет отдельный loadMessages() — избегаем параллельного GET рядом со
             // стартом SyncEngine. ETag сброшен в lastContent="" выше — следующий
             // poll вернёт свежий контент независимо от кэша.
-            (transport as? com.atrum.chat.transport.GistTransport)?.resetEtag()
             syncEngine.forceSync(delayMs = 0L)
             // Перетягиваем актуальные данные собеседника (вдруг он сменил аватарку/ник
             // пока мы были в Settings или другом чате).
@@ -1258,6 +1288,7 @@ class ChatActivity : SecureActivity() {
      * НЕ делает никаких сетевых вызовов — только обрабатывает уже полученные данные.
      */
     private suspend fun processGistData(data: AllGistData) {
+        ChatSnapshotCache.put(chat.gistId, data)
         val chatContent     = data.chatContent
         val profilesContent = data.profilesContent
 
@@ -1276,10 +1307,12 @@ class ChatActivity : SecureActivity() {
                 parseReactions(decrypted)
             }
             currentReactions = parsedReactions
-            lastReactionsContent = "" // Больше не нужно хранить сырую дешифрованную строку здесь
-        }
-        withContext(Dispatchers.Main) {
-            adapter.setReactions(currentReactions, prefs.myUserId)
+            lastReactionsContent = ""
+            // Обновляем реакции в адаптере ТОЛЬКО при реальном изменении — иначе
+            // notifyDataSetChanged на каждый опрос перерисовывает список и стикеры мигают.
+            withContext(Dispatchers.Main) {
+                adapter.setReactions(currentReactions, prefs.myUserId)
+            }
         }
 
         // ETag content dedup: пропускаем парсинг сообщений если chat.txt не изменился
@@ -1335,9 +1368,10 @@ class ChatActivity : SecureActivity() {
             if (activeWarning == WarningType.FORWARD_SECRECY) hideChatWarning()
         }
 
-        // Первая загрузка: показываем чат только когда рукопожатие готово (или таймаут).
+        // contentLoaded ставим здесь, но оверлей снимаем ИЗ КОЛЛЕКТОРА сообщений
+        // (после adapter.submit, через rvMessages.post) — иначе оверлей гаснет до
+        // того, как сообщения окажутся в списке, и видна пустая вспышка.
         contentLoaded = true
-        maybeReveal()
 
         // ── КЛЮЧЕВОЕ: stable reconciliation через ChatStore ───────────────────
         // reconcile() сохраняет pending-сообщения, убирает tombstones.
@@ -1569,7 +1603,6 @@ class ChatActivity : SecureActivity() {
                 }
 
                 // Cache-bust и синхронизация
-                (transport as? com.atrum.chat.transport.GistTransport)?.resetEtag()
                 chatStore.confirmSent(encryptedMessage) // Сразу подтверждаем отправку в ChatStore
                 syncEngine.forceSync(delayMs = 0L)
                 stopTypingSignal()
@@ -1851,14 +1884,14 @@ class ChatActivity : SecureActivity() {
             binding.progress.visibility = android.view.View.VISIBLE
             try {
                 withContext(Dispatchers.IO) {
-                    // Перезаписываем chat.txt пустым манифестом — сообщения исчезают у обоих
-                    transport.saveFile("chat.txt", "# Atrum Chat")
+                    // Очистка истории: маркер "clear" + NIP-09 (NostrTransport) — у обоих.
+                    transport.clearHistory()
                 }
                 // Сбрасываем локальные кеши и ETag — иначе следующий polling вернёт 304
                 // (GitHub CDN может ещё не обновиться) и сообщения "воскреснут" на 1 тик
-                (transport as? com.atrum.chat.transport.GistTransport)?.resetEtag()
                 lastContent = ""
                 lastPushedReadIndex = -1
+                ChatSnapshotCache.clear(chat.gistId)
                 db.chatDao().updatePreview(chat.id, "", System.currentTimeMillis())
                 adapter.submit(emptyList(), emptyList())
                 Toast.makeText(this@ChatActivity, "История очищена", Toast.LENGTH_SHORT).show()
@@ -1905,41 +1938,25 @@ class ChatActivity : SecureActivity() {
     private suspend fun doPushPresence(typingTs: Long, onlineTs: Long) {
         if (!::transport.isInitialized) return
         val myUserId = prefs.myUserId
-        val cached   = lastKnownProfiles.toMap()   // snapshot — thread-safe copy
 
+        // ВСЕГДА GET+merge (как Gist): profiles.txt — общий файл, который пишут оба
+        // участника, а Nostr-чтение берёт одно последнее событие. Запись из кэша
+        // затирала бы профиль собеседника. Свежий pull+merge сохраняет обе стороны.
         val ok = withContext(Dispatchers.IO) {
-            if (cached.containsKey(myUserId)) {
-                // Write-only: 1 PATCH, 0 GET
-                ProfileSync.pushPresenceWriteOnly(
-                    api               = transport,
-                    password          = chat.chatPassword,
-                    cachedProfiles    = cached,
-                    myUserId          = myUserId,
-                    typingTs          = typingTs,
-                    onlineTs          = onlineTs,
-                    myEphemeralPubKey = myCurrentEphemeralPubKey,
-                    myIdentityPubKey     = prefs.myIdentityPubKey,
-                    myEphemeralSig       = myEphemeralSig,
-                    myVerifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.gistId)
-                )
-            } else {
-                // Первый тик: наш профиль ещё не в кэше — полный GET+PATCH чтобы
-                // создать профиль с правильными именем/аватаром/ephemeralKey.
-                ProfileSync.pushPresence(
-                    api               = transport,
-                    password          = chat.chatPassword,
-                    myUserId          = myUserId,
-                    typingTs          = typingTs,
-                    onlineTs          = onlineTs,
-                    myEphemeralPubKey = myCurrentEphemeralPubKey,
-                    myName            = prefs.myName,
-                    myTag             = prefs.myTag,
-                    myAvatarBase64    = prefs.myAvatarBase64,
-                    myIdentityPubKey     = prefs.myIdentityPubKey,
-                    myEphemeralSig       = myEphemeralSig,
-                    myVerifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.gistId)
-                )
-            }
+            ProfileSync.pushPresence(
+                api               = transport,
+                password          = chat.chatPassword,
+                myUserId          = myUserId,
+                typingTs          = typingTs,
+                onlineTs          = onlineTs,
+                myEphemeralPubKey = myCurrentEphemeralPubKey,
+                myName            = prefs.myName,
+                myTag             = prefs.myTag,
+                myAvatarBase64    = prefs.myAvatarBase64,
+                myIdentityPubKey     = prefs.myIdentityPubKey,
+                myEphemeralSig       = myEphemeralSig,
+                myVerifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.gistId)
+            )
         }
 
         // Обновляем локальный кэш сразу — следующий write-only push будет корректным
@@ -1984,12 +2001,19 @@ class ChatActivity : SecureActivity() {
      * при активном общении. TYPING_EXPIRY_MS=20s перекрывает presence interval с запасом.
      */
     private fun onTypingDetected() {
+        val wasTyping = isCurrentlyTyping
+        isCurrentlyTyping = true
         stopTypingJob?.cancel()
         stopTypingJob = lifecycleScope.launch {
             delay(TYPING_STOP_DELAY_MS)
             stopTypingSignal()
         }
-        isCurrentlyTyping = true
+        // Telegram-like: при НАЧАЛЕ печати — мгновенный push (не ждём heartbeat).
+        if (!wasTyping) {
+            lifecycleScope.launch {
+                doPushPresence(System.currentTimeMillis(), System.currentTimeMillis())
+            }
+        }
     }
 
     /**
@@ -2000,9 +2024,16 @@ class ChatActivity : SecureActivity() {
      * что вполне приемлемо и не нагружает API.
      */
     private fun stopTypingSignal() {
+        val wasTyping = isCurrentlyTyping
         stopTypingJob?.cancel()
         stopTypingJob = null
         isCurrentlyTyping = false
+        // Telegram-like: при ОСТАНОВКЕ печати — мгновенный push typingTs=0.
+        if (wasTyping) {
+            lifecycleScope.launch {
+                doPushPresence(0L, if (isInForeground) System.currentTimeMillis() else 0L)
+            }
+        }
     }
 
     /**
@@ -2071,7 +2102,7 @@ class ChatActivity : SecureActivity() {
             try {
                 // 1. Подготовка данных для оптимистичного сообщения
                 val base64 = withContext(Dispatchers.IO) {
-                    ImageUtils.loadOriginal(this@ChatActivity, uri)
+                    ImageUtils.loadAndCompress(this@ChatActivity, uri)
                 } ?: throw RuntimeException(getString(R.string.error_image_load))
 
                 val bitmap = withContext(Dispatchers.Default) { ImageUtils.fromBase64(base64) }
@@ -2118,7 +2149,6 @@ class ChatActivity : SecureActivity() {
                 }
 
                 // Cache-bust и форс-синк для быстрого скрытия часиков
-                (transport as? com.atrum.chat.transport.GistTransport)?.resetEtag()
                 lastContent = ""
                 syncEngine.forceSync(delayMs = 0L)
 
@@ -2160,7 +2190,7 @@ class ChatActivity : SecureActivity() {
                     uris.forEachIndexed { index, uri ->
                         launch {
                             val ar = withContext(Dispatchers.IO) { ImageUtils.getAspectRatio(this@ChatActivity, uri) }
-                            val b64 = withContext(Dispatchers.IO) { ImageUtils.loadOriginal(this@ChatActivity, uri) }
+                            val b64 = withContext(Dispatchers.IO) { ImageUtils.loadAndCompress(this@ChatActivity, uri) }
                                 ?: throw RuntimeException("Image load failed at index $index")
                             val bm = withContext(Dispatchers.Default) { ImageUtils.fromBase64(b64) }
 
@@ -2232,7 +2262,6 @@ class ChatActivity : SecureActivity() {
                     )
                 }
 
-                (transport as? com.atrum.chat.transport.GistTransport)?.resetEtag()
                 lastContent = ""
                 syncEngine.forceSync(delayMs = 0L)
 
@@ -2615,6 +2644,40 @@ class ChatActivity : SecureActivity() {
      * Если баннер уже показан с тем же типом — не перезапускает анимацию.
      * Не критичный — объясняет ситуацию и даёт рекомендацию.
      */
+    /**
+     * Наблюдение за Tor в Tor-чате: показываем жёлтую плашку, если Tor упал (FAILED)
+     * или не забутстрапился за 20с; прячем при READY. collectLatest отменяет ожидание
+     * при смене статуса (например, стал READY раньше 20с).
+     */
+    private fun observeTorStatus() {
+        if (chat.isFavorites) return
+        if (chat.gistToken == com.atrum.chat.transport.NostrTransport.NOSTR_DIRECT_TOKEN) return
+        lifecycleScope.launch {
+            TorManager.status.collectLatest { st ->
+                when (st) {
+                    TorManager.TorStatus.READY ->
+                        if (activeWarning == WarningType.TOR) hideChatWarning()
+                    TorManager.TorStatus.FAILED ->
+                        showChatWarning(WarningType.TOR)
+                    else -> {
+                        delay(20_000L)
+                        if (TorManager.status.value != TorManager.TorStatus.READY) {
+                            showChatWarning(WarningType.TOR)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Кладёт текст ошибки в буфер обмена (чтобы пользователь мог прислать). */
+    private fun copyErrorToClipboard(text: String) {
+        try {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("atrum_error", text))
+        } catch (_: Exception) {}
+    }
+
     private fun showChatWarning(type: WarningType) {
         if (activeWarning == type) return   // уже показан — не мелькаем
         activeWarning = type
@@ -2624,17 +2687,29 @@ class ChatActivity : SecureActivity() {
             WarningType.RATE_LIMIT      -> getString(R.string.warn_rate_limit_title) to getString(R.string.warn_rate_limit_message)
             WarningType.NETWORK         -> getString(R.string.warn_network_title)    to getString(R.string.warn_network_message)
             WarningType.FORWARD_SECRECY -> getString(R.string.warn_fs_title)        to getString(R.string.warn_fs_message)
+            WarningType.TOR             -> getString(R.string.warn_tor_title)       to getString(R.string.warn_tor_message)
         }
         binding.tvWarningTitle.text = title
         binding.tvWarningMessage.text = message
+        // Любую ошибку (кроме информационного FS) сразу кладём в буфер обмена — чтобы прислать.
+        if (type != WarningType.FORWARD_SECRECY) copyErrorToClipboard("$title — $message")
 
         // Для TOKEN — показываем кнопку «Обновить токен»; для остальных — скрываем.
-        if (type == WarningType.TOKEN) {
-            binding.tvWarningAction.text = getString(R.string.btn_update_token)
-            binding.tvWarningAction.visibility = View.VISIBLE
-            binding.tvWarningAction.setOnClickListener { showUpdateTokenDialog() }
-        } else {
-            binding.tvWarningAction.visibility = View.GONE
+        when (type) {
+            WarningType.TOKEN -> {
+                binding.tvWarningAction.text = getString(R.string.btn_update_token)
+                binding.tvWarningAction.visibility = View.VISIBLE
+                binding.tvWarningAction.setOnClickListener { showUpdateTokenDialog() }
+            }
+            WarningType.TOR -> {
+                binding.tvWarningAction.text = getString(R.string.btn_tor_retry)
+                binding.tvWarningAction.visibility = View.VISIBLE
+                binding.tvWarningAction.setOnClickListener {
+                    TorManager.start(this)
+                    forceHideChatWarning()
+                }
+            }
+            else -> binding.tvWarningAction.visibility = View.GONE
         }
 
         if (binding.warningBanner.visibility == View.VISIBLE) {
@@ -2723,9 +2798,10 @@ class ChatActivity : SecureActivity() {
                     gistId     = chat.gistId,
                     gistToken  = trimmed,
                     chatPassword = chat.chatPassword,
-                    myUserId   = prefs.myUserId
+                    myUserId   = prefs.myUserId,
+                    context    = applicationContext
                 )
-                transport = transportFactory.gistDirect()
+                transport = transportFactory.instant()
                 // В фоне проверяем доступность и, если нужно, переключаемся на Nostr
                 lifecycleScope.launch { resolveTransport() }
                 // Сбрасываем счётчик ошибок и принудительно прячем любой баннер
@@ -2789,10 +2865,16 @@ class ChatActivity : SecureActivity() {
         }
     }
 
-    /** Показывает чат, когда И контент загружен, И рукопожатие завершено/истёк таймаут. */
+    /**
+     * Показывает чат, как только загружен контент сообщений.
+     * НЕ ждём рукопожатие (V3-сессию): иначе спиннер висел до установки сессии
+     * с собеседником или до 10-с таймаута — отсюда "крутится просто так и
+     * кончается когда хочет". Сессия доустанавливается в фоне; непрочитанные
+     * V3-сообщения прикрыты отдельным FS-баннером (lockedV3ConsecutiveCount).
+     */
     private fun maybeReveal() {
         if (firstLoadComplete) return
-        if (contentLoaded && handshakeSettled) {
+        if (contentLoaded) {
             firstLoadComplete = true
             revealMessages()
         }
@@ -2818,6 +2900,10 @@ class ChatActivity : SecureActivity() {
             .setInterpolator(android.view.animation.DecelerateInterpolator())
             .withStartAction { rv.visibility = View.VISIBLE }
             .start()
+
+        // Оверлей ушёл — теперь корректно показываем/прячем заглушку "чат пуст".
+        binding.tvEmptyPlaceholder.visibility =
+            if (currentMessages.isEmpty()) View.VISIBLE else View.GONE
     }
 
     companion object {
@@ -2833,15 +2919,15 @@ class ChatActivity : SecureActivity() {
 
         // ── Presence ──────────────────────────────────────────────────────────
         /** Период presence-цикла: один write-only PATCH каждые N мс. */
-        const val PRESENCE_INTERVAL_MS = 12_000L
+        const val PRESENCE_INTERVAL_MS = 2_000L
         /**
          * Через сколько мс без обновления партнёр считается офлайн.
          * 32 сек = PRESENCE_INTERVAL_MS (12) + poll interval (8) + сеть (4) + запас (8).
          * Гарантирует что партнёр не "мигает" при задержках сети.
          */
-        const val ONLINE_EXPIRY_MS = 32_000L
+        const val ONLINE_EXPIRY_MS = 20_000L
         /** Через сколько мс без обновления typing-сигнал считается устаревшим. */
-        const val TYPING_EXPIRY_MS = 20_000L
+        const val TYPING_EXPIRY_MS = 14_000L
         /** Задержка после последнего нажатия клавиши до отправки «перестал печатать». */
         const val TYPING_STOP_DELAY_MS = 3_000L
 

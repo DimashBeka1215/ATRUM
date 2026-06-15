@@ -24,23 +24,23 @@ object ImageUtils {
      * 1280 — стандарт WhatsApp/Telegram: хорошо выглядит на современных экранах,
      * не создаёт гигантских файлов.
      */
-    private const val MAX_SIZE = 1280
+    private const val MAX_SIZE = 1600
 
     /**
      * Стартовое качество JPEG.
      * 85 — баланс качество/размер: артефакты практически невидимы.
      */
-    private const val START_QUALITY = 85
+    private const val START_QUALITY = 92
 
     /** Минимальное качество, ниже которого не опускаемся. */
-    private const val MIN_QUALITY = 55
+    private const val MIN_QUALITY = 75
 
     /**
      * Целевой максимальный размер сжатого base64 (≈ 500 КБ).
      * Каждая картинка хранится в отдельном файле gist'а (лимит ~1 МБ),
      * поэтому 500 КБ — разумный потолок с запасом под шифрование.
      */
-    private const val MAX_BASE64_SIZE = 500 * 1024
+    private const val MAX_BASE64_SIZE = 450 * 1024
 
     /**
      * Загружает картинку, ресайзит и компрессит до целевого размера.
