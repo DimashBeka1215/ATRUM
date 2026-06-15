@@ -4,6 +4,9 @@ import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -40,6 +43,10 @@ class StickerRepository(private val context: Context) {
         @Volatile private var packsCache: List<StickerPack>? = null
         /** Сбросить кеш паков — после любого изменения на диске (add/remove/rename). */
         fun invalidatePacksCache() { packsCache = null }
+
+        /** Сколько стикеров качаем одновременно. Шквал из 100+ параллельных запросов
+         *  Telegram режет → часть файлов не скачивалась вовсе. Ограничиваем. */
+        private const val MAX_PARALLEL_DOWNLOADS = 6
     }
 
     // ── Публичное API ────────────────────────────────────────────────────────
@@ -83,13 +90,24 @@ class StickerRepository(private val context: Context) {
         val setJson   = apiGetStickerSet(packName)
         val title     = setJson.getString("title")
         val stickersArr = setJson.getJSONArray("stickers")
-        val total     = stickersArr.length()
 
-        // 2. Скачиваем каждый стикер параллельно
+        // 2. Дедуп записей: Telegram нередко перечисляет ОДИН и тот же файл под
+        //    несколькими эмодзи → иначе в паке видны дубликаты. Ключ — file_unique_id
+        //    (стабилен), fallback на file_id. Порядок сохраняем.
+        val uniqueDescs = LinkedHashMap<String, JSONObject>()
+        for (i in 0 until stickersArr.length()) {
+            val o = stickersArr.getJSONObject(i)
+            val key = o.optString("file_unique_id", "").ifEmpty { o.optString("file_id", "") }
+            if (key.isNotEmpty() && !uniqueDescs.containsKey(key)) uniqueDescs[key] = o
+        }
+        val descs = uniqueDescs.values.toList()
+        val total = descs.size
+
+        // 3. Скачиваем с ОГРАНИЧЕННЫМ параллелизмом + ретраями (см. downloadWithRetry).
+        val gate = Semaphore(MAX_PARALLEL_DOWNLOADS)
         val counter = AtomicInteger(0)
-        val deferredStickers = (0 until total).map { i ->
+        val deferredStickers = descs.map { stickerObj ->
             async {
-                val stickerObj = stickersArr.getJSONObject(i)
                 val fileId = stickerObj.getString("file_id")
                 val emoji = stickerObj.optString("emoji", "")
                 val isAnimated = stickerObj.optBoolean("is_animated", false)
@@ -103,28 +121,26 @@ class StickerRepository(private val context: Context) {
                 val ext = extensionFor(type)
                 val file = File(packDir, "$fileId$ext")
 
-                if (!file.exists()) {
-                    try {
-                        // Для анимаций и видео ВСЕГДА скачиваем основной файл, а не превью
-                        downloadFile(fileId, file)
-                    } catch (e: Exception) {
-                        android.util.Log.e("StickerRepo", "Failed to download sticker $fileId", e)
-                    }
-                }
+                if (!file.exists()) gate.withPermit { downloadWithRetry(fileId, file) }
 
-                val sticker = Sticker(
+                onProgress?.invoke(counter.incrementAndGet(), total)
+                Sticker(
                     fileId = fileId,
                     localPath = if (file.exists()) file.absolutePath else null,
                     type = type,
                     emoji = emoji
                 )
-                
-                onProgress?.invoke(counter.incrementAndGet(), total)
-                sticker
             }
         }
 
-        val stickers = deferredStickers.awaitAll()
+        // 4. Лечебный проход: то, что не скачалось в параллельном шквале, добираем
+        //    последовательно — так почти не остаётся «непрогружаемых» стикеров.
+        val stickers = deferredStickers.awaitAll().map { s ->
+            if (s.localPath != null) return@map s
+            val file = File(packDir, "${s.fileId}${extensionFor(s.type)}")
+            runCatching { downloadWithRetry(s.fileId, file) }
+            if (file.exists()) s.copy(localPath = file.absolutePath) else s
+        }
 
         // 3. Сохраняем meta.json
         val thumbPath = stickers.firstOrNull { it.localPath != null }?.localPath
@@ -283,6 +299,21 @@ class StickerRepository(private val context: Context) {
         return root.getJSONObject("result")
     }
 
+    /** Скачивает файл с ретраями (транзиентные таймауты Telegram при пакетной загрузке). */
+    private suspend fun downloadWithRetry(fileId: String, dest: File, attempts: Int = 3) {
+        var last: Exception? = null
+        repeat(attempts) { i ->
+            try {
+                downloadFile(fileId, dest)
+                if (dest.exists()) return
+            } catch (e: Exception) {
+                last = e
+            }
+            if (i < attempts - 1) delay(500L * (i + 1))
+        }
+        last?.let { android.util.Log.e("StickerRepo", "Failed to download sticker $fileId", it) }
+    }
+
     /** Скачивает файл по file_id и записывает на диск. */
     private fun downloadFile(fileId: String, dest: File) {
         // Шаг 1: getFile → получаем file_path
@@ -352,10 +383,13 @@ class StickerRepository(private val context: Context) {
         return try {
             val json     = JSONObject(metaFile.readText())
             val arr      = json.getJSONArray("stickers")
-            val stickers = (0 until arr.length()).map { i ->
+            val seenIds = HashSet<String>()
+            val stickers = (0 until arr.length()).mapNotNull { i ->
                 val obj = arr.getJSONObject(i)
+                val fid = obj.getString("fileId")
+                if (!seenIds.add(fid)) return@mapNotNull null // дедуп уже скачанных паков
                 Sticker(
-                    fileId    = obj.getString("fileId"),
+                    fileId    = fid,
                     localPath = obj.getString("localPath").takeIf { it.isNotBlank() },
                     type      = StickerType.valueOf(obj.getString("type")),
                     emoji     = obj.optString("emoji", "")
