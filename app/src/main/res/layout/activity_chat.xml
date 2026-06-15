@@ -480,6 +480,17 @@
                     android:padding="11dp"
                     app:tint="@color/text_secondary"/>
 
+                <ImageButton
+                    android:id="@+id/btn_rec_delete"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:src="@drawable/ic_trash_menu"
+                    android:background="@drawable/bg_icon_button"
+                    android:contentDescription="@string/voice_delete_cd"
+                    android:padding="12dp"
+                    android:visibility="gone"
+                    app:tint="@color/error"/>
+
                 <LinearLayout
                     android:id="@+id/recording_row"
                     android:layout_width="0dp"
@@ -511,6 +522,13 @@
                         android:text="@string/voice_slide_to_cancel"
                         android:textColor="@color/text_secondary"
                         android:textSize="13sp" />
+                    <com.atrum.chat.WaveformView
+                        android:id="@+id/waveform_record"
+                        android:layout_width="0dp"
+                        android:layout_height="32dp"
+                        android:layout_weight="1"
+                        android:layout_marginHorizontal="6dp"
+                        android:visibility="gone" />
                 </LinearLayout>
 
                 <EditText
@@ -548,6 +566,28 @@
                     android:src="@drawable/ic_mic"
                     android:background="@drawable/bg_send_button"
                     android:contentDescription="@string/voice_record_cd"
+                    android:padding="11dp"
+                    android:visibility="gone"
+                    app:tint="@color/white"/>
+
+                <ImageButton
+                    android:id="@+id/btn_rec_pause"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:src="@drawable/ic_pause"
+                    android:background="@drawable/bg_icon_button"
+                    android:contentDescription="@string/voice_pause_cd"
+                    android:padding="11dp"
+                    android:visibility="gone"
+                    app:tint="@color/accent"/>
+
+                <ImageButton
+                    android:id="@+id/btn_rec_send"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:src="@drawable/ic_send"
+                    android:background="@drawable/bg_send_button"
+                    android:contentDescription="@string/cd_send"
                     android:padding="11dp"
                     android:visibility="gone"
                     app:tint="@color/white"/>

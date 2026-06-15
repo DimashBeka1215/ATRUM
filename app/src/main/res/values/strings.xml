@@ -630,6 +630,11 @@
     <string name="voice_need_mic">Нужен доступ к микрофону</string>
     <string name="voice_record_failed">Не удалось начать запись</string>
     <string name="voice_too_short">Слишком коротко</string>
+    <string name="voice_delete_cd">Удалить запись</string>
+    <string name="voice_pause_cd">Пауза</string>
+    <string name="voice_resume_cd">Продолжить</string>
+    <string name="voice_lock_hint">вверх — зафиксировать · влево — отмена</string>
+    <string name="voice_paused">на паузе</string>
     <string name="msg_preview_photo">Фото</string>
     <string name="sticker_pack_label_default">Стикеры</string>
     <string name="sticker_add_pack_cd">Добавить пак</string>

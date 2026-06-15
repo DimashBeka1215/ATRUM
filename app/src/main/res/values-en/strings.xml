@@ -584,6 +584,11 @@
     <string name="voice_need_mic">Microphone access required</string>
     <string name="voice_record_failed">Could not start recording</string>
     <string name="voice_too_short">Too short</string>
+    <string name="voice_delete_cd">Delete recording</string>
+    <string name="voice_pause_cd">Pause</string>
+    <string name="voice_resume_cd">Resume</string>
+    <string name="voice_lock_hint">up — lock · left — cancel</string>
+    <string name="voice_paused">paused</string>
     <string name="msg_preview_photo">Photo</string>
     <string name="sticker_pack_label_default">Stickers</string>
     <string name="sticker_add_pack_cd">Add pack</string>

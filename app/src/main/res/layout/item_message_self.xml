@@ -127,27 +127,35 @@
             android:paddingVertical="2dp"
             android:layout_marginBottom="2dp"
             android:visibility="gone">
-            <ImageButton
-                android:id="@+id/btn_voice_play"
+            <FrameLayout
                 android:layout_width="38dp"
                 android:layout_height="38dp"
-                android:src="@drawable/ic_play"
-                android:background="@drawable/bg_voice_circle_white"
-                android:scaleType="centerInside"
-                android:padding="9dp"
-                android:contentDescription="@string/cd_voice_play"
-                app:tint="@color/msg_self" />
-            <ProgressBar
-                android:id="@+id/voice_progress"
-                style="?android:attr/progressBarStyleHorizontal"
+                android:background="@drawable/bg_voice_circle_white">
+                <ImageButton
+                    android:id="@+id/btn_voice_play"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:src="@drawable/ic_play"
+                    android:background="@null"
+                    android:scaleType="centerInside"
+                    android:padding="9dp"
+                    android:contentDescription="@string/cd_voice_play"
+                    app:tint="@color/msg_self" />
+                <ProgressBar
+                    android:id="@+id/voice_spinner"
+                    style="?android:attr/progressBarStyleSmall"
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_gravity="center"
+                    android:indeterminateTint="@color/msg_self"
+                    android:visibility="gone" />
+            </FrameLayout>
+            <com.atrum.chat.WaveformView
+                android:id="@+id/voice_waveform"
                 android:layout_width="0dp"
                 android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:layout_marginHorizontal="10dp"
-                android:max="100"
-                android:progress="0"
-                android:progressTint="@color/white"
-                android:progressBackgroundTint="#66FFFFFF" />
+                android:layout_height="30dp"
+                android:layout_marginHorizontal="10dp" />
             <TextView
                 android:id="@+id/tv_voice_dur"
                 android:layout_width="wrap_content"

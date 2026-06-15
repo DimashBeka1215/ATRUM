@@ -59,7 +59,11 @@ class ChatActivity : SecureActivity() {
     private var voiceUiJob: Job? = null
     private var recordCancelled = false
     private var recordStartX = 0f
+    private var recordStartY = 0f
+    private var voiceLocked = false
+    private val recordLevels = ArrayList<Int>()
     private val cancelThresholdPx by lazy { 120f * resources.displayMetrics.density }
+    private val lockThresholdPx by lazy { 90f * resources.displayMetrics.density }
     private val requestAudioPerm = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -1733,10 +1737,13 @@ class ChatActivity : SecureActivity() {
     @SuppressLint("ClickableViewAccessibility")
     private fun setupVoiceInput() {
         updateSendVoiceButtons(binding.etMessage.text.toString())
+        binding.btnRecPause.setOnClickListener { togglePauseRecording() }
+        binding.btnRecDelete.setOnClickListener { finishVoiceRecording(cancel = true) }
+        binding.btnRecSend.setOnClickListener { finishVoiceRecording(cancel = false) }
         binding.btnVoice.setOnTouchListener { _, ev ->
             when (ev.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    recordStartX = ev.rawX
+                    recordStartX = ev.rawX; recordStartY = ev.rawY
                     recordCancelled = false
                     if (!hasAudioPermission()) {
                         requestAudioPerm.launch(Manifest.permission.RECORD_AUDIO)
@@ -1747,22 +1754,25 @@ class ChatActivity : SecureActivity() {
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    if (voiceRecorder.isRecording) {
+                    if (voiceRecorder.isRecording && !voiceLocked) {
                         val dx = ev.rawX - recordStartX
-                        if (dx < -cancelThresholdPx) {
+                        val dy = ev.rawY - recordStartY
+                        if (dy < -lockThresholdPx && dx > -cancelThresholdPx) {
+                            setVoiceLocked()
+                        } else if (dx < -cancelThresholdPx) {
                             recordCancelled = true
                             binding.tvRecHint.setText(R.string.voice_release_to_cancel)
                             binding.tvRecHint.setTextColor(ContextCompat.getColor(this, R.color.error))
                         } else {
                             recordCancelled = false
-                            binding.tvRecHint.setText(R.string.voice_slide_to_cancel)
+                            binding.tvRecHint.setText(R.string.voice_lock_hint)
                             binding.tvRecHint.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
                         }
                     }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (voiceRecorder.isRecording) {
+                    if (!voiceLocked && voiceRecorder.isRecording) {
                         finishVoiceRecording(cancel = recordCancelled || ev.action == MotionEvent.ACTION_CANCEL)
                     }
                     true
@@ -1772,27 +1782,84 @@ class ChatActivity : SecureActivity() {
         }
     }
 
+    /** Фиксирует запись (hands-free): палец можно убрать, управляют кнопки. */
+    private fun setVoiceLocked() {
+        if (voiceLocked) return
+        voiceLocked = true
+        recordCancelled = false
+        binding.btnVoice.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        binding.btnVoice.visibility = View.GONE
+        binding.btnRecDelete.visibility = View.VISIBLE
+        binding.btnRecPause.visibility = View.VISIBLE
+        binding.btnRecSend.visibility = View.VISIBLE
+        binding.btnRecPause.setImageResource(R.drawable.ic_pause)
+        binding.btnRecPause.contentDescription = getString(R.string.voice_pause_cd)
+        binding.tvRecHint.visibility = View.GONE
+        binding.waveformRecord.visibility = View.VISIBLE
+        binding.waveformRecord.setColors(
+            ContextCompat.getColor(this, R.color.accent),
+            ContextCompat.getColor(this, R.color.text_tertiary)
+        )
+    }
+
+    /** Пауза/продолжение записи в зафиксированном режиме. */
+    private fun togglePauseRecording() {
+        if (!voiceRecorder.isRecording) return
+        if (voiceRecorder.isPaused) {
+            voiceRecorder.resume()
+            binding.btnRecPause.setImageResource(R.drawable.ic_pause)
+            binding.btnRecPause.contentDescription = getString(R.string.voice_pause_cd)
+            binding.recDot.setBackgroundResource(R.drawable.bg_voice_circle_rec)
+            binding.tvRecHint.visibility = View.GONE
+            binding.waveformRecord.visibility = View.VISIBLE
+        } else {
+            voiceRecorder.pause()
+            binding.btnRecPause.setImageResource(R.drawable.ic_mic)
+            binding.btnRecPause.contentDescription = getString(R.string.voice_resume_cd)
+            binding.recDot.setBackgroundResource(R.drawable.bg_voice_circle_paused)
+            binding.waveformRecord.visibility = View.GONE
+            binding.tvRecHint.visibility = View.VISIBLE
+            binding.tvRecHint.setText(R.string.voice_paused)
+            binding.tvRecHint.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+        }
+    }
+
     private fun beginVoiceRecording() {
         if (!voiceRecorder.start()) {
             Toast.makeText(this, R.string.voice_record_failed, Toast.LENGTH_SHORT).show()
             return
         }
+        voiceLocked = false
+        recordCancelled = false
+        recordLevels.clear()
+        binding.waveformRecord.reset()
         binding.btnVoice.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         binding.btnAttach.visibility = View.GONE
         binding.btnSticker.visibility = View.GONE
         binding.etMessage.visibility = View.GONE
         binding.recordingRow.visibility = View.VISIBLE
+        binding.recDot.setBackgroundResource(R.drawable.bg_voice_circle_rec)
         binding.tvRecTime.text = "0:00"
-        binding.tvRecHint.setText(R.string.voice_slide_to_cancel)
+        binding.tvRecHint.visibility = View.VISIBLE
+        binding.waveformRecord.visibility = View.GONE
+        binding.tvRecHint.setText(R.string.voice_lock_hint)
         binding.tvRecHint.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+        binding.btnRecDelete.visibility = View.GONE
+        binding.btnRecPause.visibility = View.GONE
+        binding.btnRecSend.visibility = View.GONE
         voiceUiJob?.cancel()
         voiceUiJob = lifecycleScope.launch {
             while (voiceRecorder.isRecording) {
                 val ms = voiceRecorder.elapsedMs()
                 val sec = (ms / 1000).toInt()
                 binding.tvRecTime.text = String.format(Locale.ROOT, "%d:%02d", sec / 60, sec % 60)
+                if (!voiceRecorder.isPaused) {
+                    val lvl = (voiceRecorder.amplitude() * 100f).toInt().coerceIn(0, 100)
+                    recordLevels.add(lvl)
+                    if (voiceLocked) binding.waveformRecord.pushLevel(lvl)
+                }
                 if (ms >= MAX_VOICE_MS) { finishVoiceRecording(cancel = false); break }
-                delay(200L)
+                delay(80L)
             }
         }
     }
@@ -1803,10 +1870,19 @@ class ChatActivity : SecureActivity() {
         binding.btnSticker.visibility = View.VISIBLE
         binding.etMessage.visibility = View.VISIBLE
         binding.tvRecTime.text = "0:00"
+        binding.tvRecHint.visibility = View.VISIBLE
+        binding.waveformRecord.visibility = View.GONE
+        binding.waveformRecord.reset()
+        binding.btnRecDelete.visibility = View.GONE
+        binding.btnRecPause.visibility = View.GONE
+        binding.btnRecSend.visibility = View.GONE
+        voiceLocked = false
+        updateSendVoiceButtons(binding.etMessage.text.toString())
     }
 
     private fun finishVoiceRecording(cancel: Boolean) {
         voiceUiJob?.cancel(); voiceUiJob = null
+        val levelsSnapshot = ArrayList(recordLevels)
         restoreInputAfterRecording()
         if (cancel) { voiceRecorder.cancel(); return }
         val result = voiceRecorder.stop(minMs = 700L)
@@ -1815,10 +1891,27 @@ class ChatActivity : SecureActivity() {
             return
         }
         val (file, durMs) = result
-        sendVoice(file, ((durMs + 500L) / 1000L).toInt().coerceAtLeast(1))
+        val wf = Message.encodeWaveform(downsampleLevels(levelsSnapshot, 40))
+        sendVoice(file, ((durMs + 500L) / 1000L).toInt().coerceAtLeast(1), wf)
     }
 
-    private fun sendVoice(file: File, durationSec: Int) {
+    /** Сжимает накопленные уровни до target столбиков (берём пик в каждой корзине). */
+    private fun downsampleLevels(levels: List<Int>, target: Int): IntArray {
+        if (levels.isEmpty()) return IntArray(0)
+        if (levels.size <= target) return levels.toIntArray()
+        val out = IntArray(target)
+        val bucket = levels.size.toFloat() / target
+        for (i in 0 until target) {
+            val start = (i * bucket).toInt()
+            val end = ((i + 1) * bucket).toInt().coerceAtMost(levels.size)
+            var peak = 0
+            for (j in start until end) if (levels[j] > peak) peak = levels[j]
+            out[i] = peak
+        }
+        return out
+    }
+
+    private fun sendVoice(file: File, durationSec: Int, waveform: String) {
         if (sendManager.isPunished()) return
         val now = System.currentTimeMillis()
         lifecycleScope.launch {
@@ -1832,12 +1925,19 @@ class ChatActivity : SecureActivity() {
                 val contentRef = withContext(Dispatchers.IO) {
                     transport.uploadImage(encryptedContent, chat.chatPassword)
                 }
+                // Кэшируем контент и копируем файл под ссылку → своё голосовое сразу «готово».
+                ImageCache.put(contentRef, b64, null)
+                runCatching {
+                    val playDir = File(cacheDir, "voice_play").apply { mkdirs() }
+                    file.copyTo(File(playDir, "v_" + Integer.toHexString(contentRef.hashCode()) + ".m4a"), overwrite = true)
+                }
                 val plaintext = Message.composePlaintext(
                     senderName = prefs.myName,
                     senderUserId = prefs.myUserId,
                     text = "",
                     voiceFileName = contentRef,
                     voiceDurationSec = durationSec,
+                    voiceWaveform = waveform,
                     timestampMs = now
                 )
                 val encryptedMessage = withContext(Dispatchers.Default) {
@@ -1851,6 +1951,7 @@ class ChatActivity : SecureActivity() {
                     timestampMs = now,
                     voiceFileName = contentRef,
                     voiceDurationSec = durationSec,
+                    voiceWaveform = waveform,
                     senderUserId = prefs.myUserId,
                     isPending = true
                 )

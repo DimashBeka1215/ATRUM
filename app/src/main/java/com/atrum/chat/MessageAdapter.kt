@@ -281,7 +281,8 @@ class MessageAdapter(
         private val webmView: WebmStickerView? = itemView.findViewById(R.id.webm_sticker)
         private val voiceContainer: View? = itemView.findViewById(R.id.voice_container)
         private val voicePlayBtn: ImageView? = itemView.findViewById(R.id.btn_voice_play)
-        private val voiceProgress: android.widget.ProgressBar? = itemView.findViewById(R.id.voice_progress)
+        private val voiceWaveform: WaveformView? = itemView.findViewById(R.id.voice_waveform)
+        private val voiceSpinner: View? = itemView.findViewById(R.id.voice_spinner)
         private val voiceDur: TextView? = itemView.findViewById(R.id.tv_voice_dur)
         private val tickView: ImageView? = itemView.findViewById(R.id.iv_tick)
         /** The rounded bubble container — background changes between classic and glass modes. */
@@ -585,29 +586,64 @@ class MessageAdapter(
             val key = msg.msgId
             val ref = msg.voiceFileName ?: return
             val totalSec = msg.voiceDurationSec
+            val ctx = itemView.context
             playBtn.tag = key
+
+            // Цвета дорожки под свой/чужой пузырёк.
+            if (msg.isSelf) {
+                voiceWaveform?.setColors(ContextCompat.getColor(ctx, R.color.white), 0x66FFFFFF)
+            } else {
+                voiceWaveform?.setColors(
+                    ContextCompat.getColor(ctx, R.color.accent),
+                    ContextCompat.getColor(ctx, R.color.text_tertiary)
+                )
+            }
+            val levels = msg.voiceWaveform?.takeIf { it.isNotEmpty() }?.let { Message.decodeWaveform(it) }
+                ?: IntArray(24) { 28 }
+            voiceWaveform?.setSamples(levels)
+
+            fun showLoading(loading: Boolean) {
+                voiceSpinner?.visibility = if (loading) View.VISIBLE else View.GONE
+                playBtn.visibility = if (loading) View.INVISIBLE else View.VISIBLE
+                voiceWaveform?.alpha = if (loading) 0.4f else 1f
+            }
 
             val progressCb: (String, Int, Int) -> Unit = { k, pos, dur ->
                 if (playBtn.tag == k) {
-                    voiceProgress?.progress = if (dur > 0) (pos.toLong() * 100 / dur).toInt() else 0
+                    voiceWaveform?.setProgress(if (dur > 0) pos.toFloat() / dur else 0f)
                     voiceDur?.text = voiceTime(pos)
                 }
             }
             val completeCb: (String) -> Unit = { k ->
                 if (playBtn.tag == k) {
                     playBtn.setImageResource(R.drawable.ic_play)
-                    voiceProgress?.progress = 0
+                    voiceWaveform?.setProgress(0f)
                     voiceDur?.text = voiceTime(totalSec * 1000)
                 }
             }
 
+            voiceDur?.text = voiceTime(totalSec * 1000)
             if (VoicePlayer.currentKey == key) {
                 playBtn.setImageResource(R.drawable.ic_pause)
                 VoicePlayer.rebind(key, progressCb, completeCb)
             } else {
                 playBtn.setImageResource(R.drawable.ic_play)
-                voiceProgress?.progress = 0
-                voiceDur?.text = voiceTime(totalSec * 1000)
+                voiceWaveform?.setProgress(0f)
+            }
+
+            // Индикатор готовности: файл уже скачан → play; иначе спиннер + фоновая загрузка.
+            val cached = File(File(ctx.cacheDir, "voice_play"), "v_" + Integer.toHexString(ref.hashCode()) + ".m4a")
+            val readyNow = cached.exists() && cached.length() > 0
+            showLoading(!readyNow)
+            if (!readyNow) {
+                val loader = getImageLoader()
+                val scope = loadScope
+                if (loader != null && scope != null) {
+                    scope.launch {
+                        val file = withContext(Dispatchers.IO) { loadVoiceFile(loader, ref) }
+                        if (playBtn.tag == key) showLoading(file == null)
+                    }
+                }
             }
 
             playBtn.setOnClickListener {
@@ -620,7 +656,8 @@ class MessageAdapter(
                 }
                 scope.launch {
                     val file = withContext(Dispatchers.IO) { loadVoiceFile(loader, ref) }
-                    if (file == null || playBtn.tag != key) return@launch
+                    if (playBtn.tag != key || file == null) return@launch
+                    showLoading(false)
                     playBtn.setImageResource(R.drawable.ic_pause)
                     VoicePlayer.toggle(key, file, progressCb, completeCb)
                 }

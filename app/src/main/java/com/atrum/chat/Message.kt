@@ -40,6 +40,8 @@ data class Message(
     val voiceFileName: String? = null,
     /** Длительность голосового в секундах. */
     val voiceDurationSec: Int = 0,
+    /** Кодированная огибающая громкости голосового (для дорожки/«спектрограммы»). */
+    val voiceWaveform: String? = null,
     /**
      * true = сообщение ещё не подтверждено сервером (отображается с иконкой часов).
      * Никогда не сохраняется в gist — только в памяти адаптера.
@@ -72,8 +74,23 @@ data class Message(
         private const val GIST_REF_PREFIX = "gist:"
         /** Префикс коллажа из нескольких изображений. */
         private const val MULTI_PREFIX = "MULTI:"
-        /** Префикс голосового: VOICE:<секунды>|<ссылка_на_контент> в DC1-канале. */
+        /** Префикс голосового: VOICE:<секунды>[:<огибающая>]|<ссылка> в DC1-канале. */
         private const val VOICE_PREFIX = "VOICE:"
+
+        /** Алфавит для кодирования уровней огибающей (32 уровня, без |/:/управляющих). */
+        private const val WF_ALPHABET = "0123456789abcdefghijklmnopqrstuv"
+
+        /** Кодирует уровни 0..100 в компактную строку (каждый столбик — 1 символ). */
+        fun encodeWaveform(levels0to100: IntArray): String {
+            val sb = StringBuilder(levels0to100.size)
+            for (v in levels0to100) sb.append(WF_ALPHABET[(v.coerceIn(0, 100) * 31 / 100)])
+            return sb.toString()
+        }
+
+        /** Декодирует строку огибающей обратно в уровни 0..100. */
+        fun decodeWaveform(wf: String): IntArray = IntArray(wf.length) { i ->
+            WF_ALPHABET.indexOf(wf[i]).coerceAtLeast(0) * 100 / 31
+        }
 
         /**
          * Разделитель в новом формате имени стикера: "stk_<ts>_<rand>.<ext>|<contentRef>".
@@ -189,9 +206,12 @@ data class Message(
                     // ── Голосовое ───────────────────────────────────────────
                     ref.startsWith(VOICE_PREFIX) -> {
                         val rest = ref.removePrefix(VOICE_PREFIX)
-                        val sep = rest.indexOf('|')
-                        val dur = (if (sep > 0) rest.substring(0, sep) else "").toIntOrNull() ?: 0
-                        val contentRef = if (sep >= 0) rest.substring(sep + 1) else rest
+                        val bar = rest.indexOf('|')
+                        val meta = if (bar >= 0) rest.substring(0, bar) else ""
+                        val contentRef = if (bar >= 0) rest.substring(bar + 1) else rest
+                        val metaParts = meta.split(':')
+                        val dur = metaParts.getOrNull(0)?.toIntOrNull() ?: 0
+                        val wf = metaParts.getOrNull(1)?.takeIf { it.isNotEmpty() }
                         Message(
                             sender = sender,
                             text = caption,
@@ -200,6 +220,7 @@ data class Message(
                             timestampMs = timestamp,
                             voiceFileName = contentRef,
                             voiceDurationSec = dur,
+                            voiceWaveform = wf,
                             senderUserId = parsedUserId
                         )
                     }
@@ -285,6 +306,7 @@ data class Message(
             aspectRatios: List<Float>? = null,
             voiceFileName: String? = null,
             voiceDurationSec: Int = 0,
+            voiceWaveform: String? = null,
             timestampMs: Long = System.currentTimeMillis()
         ): String {
             val tsPrefix = "$US$timestampMs$US"
@@ -296,7 +318,8 @@ data class Message(
             return when {
                 // ── Голосовое ───────────────────────────────────────────────
                 voiceFileName != null -> {
-                    "$tsPrefix$uidPrefix$cleanSender: $DC1$VOICE_PREFIX$voiceDurationSec|$voiceFileName"
+                    val wfPart = if (!voiceWaveform.isNullOrEmpty()) ":$voiceWaveform" else ""
+                    "$tsPrefix$uidPrefix$cleanSender: $DC1$VOICE_PREFIX$voiceDurationSec$wfPart|$voiceFileName"
                 }
                 // ── Коллаж ──────────────────────────────────────────────────
                 imageFileNames != null && imageFileNames.isNotEmpty() -> {

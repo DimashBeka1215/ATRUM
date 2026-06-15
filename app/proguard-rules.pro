@@ -84,4 +84,17 @@
 }
 
 # ── Сериализация через Parcelable/Serializable ────────────────────────────────
--keepclass
+-keepclassmembers class * implements java.io.Serializable {
+    private static final java.io.ObjectStreamField[] serialPersistentFields;
+    private void writeObject(java.io.ObjectOutputStream);
+    private void readObject(java.io.ObjectInputStream);
+    java.lang.Object writeReplace();
+    java.lang.Object readResolve();
+}
+
+# ── Удаление логов в release-сборке ──────────────────────────────────────────
+-assumenosideeffects class android.util.Log {
+    public static int v(...);
+    public static int d(...);
+    public static int i(...);
+}

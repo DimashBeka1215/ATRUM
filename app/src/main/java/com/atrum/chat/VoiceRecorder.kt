@@ -35,7 +35,10 @@ class VoiceRecorder(context: Context) {
     private val appCtx = context.applicationContext
 
     @Volatile private var recording = false
+    @Volatile private var paused = false
     @Volatile private var startedAt = 0L
+    private var pauseStartedAt = 0L
+    private var pausedAccumMs = 0L
     @Volatile private var lastAmp = 0f
     private var outFile: File? = null
 
@@ -51,12 +54,31 @@ class VoiceRecorder(context: Context) {
     private var usingFallback = false
 
     val isRecording: Boolean get() = recording
+    val isPaused: Boolean get() = paused
+
+    /** Ставит запись на паузу: захват звука замораживается, файл остаётся цельным. */
+    fun pause() {
+        if (!recording || paused) return
+        paused = true
+        pauseStartedAt = System.currentTimeMillis()
+        if (usingFallback) runCatching { mediaRecorder?.pause() }
+    }
+
+    /** Продолжает запись с того же места. */
+    fun resume() {
+        if (!recording || !paused) return
+        if (pauseStartedAt > 0L) pausedAccumMs += System.currentTimeMillis() - pauseStartedAt
+        pauseStartedAt = 0L
+        paused = false
+        if (usingFallback) runCatching { mediaRecorder?.resume() }
+    }
 
     fun start(): Boolean {
         if (recording) return false
         val dir = File(appCtx.cacheDir, "voice_rec").apply { mkdirs() }
         val f = File(dir, "rec_${System.currentTimeMillis()}.m4a")
         outFile = f
+        paused = false; pauseStartedAt = 0L; pausedAccumMs = 0L
         if (startAdvanced(f)) {
             recording = true; startedAt = System.currentTimeMillis(); return true
         }
@@ -68,7 +90,11 @@ class VoiceRecorder(context: Context) {
         return false
     }
 
-    fun elapsedMs(): Long = if (startedAt == 0L) 0L else System.currentTimeMillis() - startedAt
+    fun elapsedMs(): Long {
+        if (startedAt == 0L) return 0L
+        val extra = if (paused && pauseStartedAt > 0L) System.currentTimeMillis() - pauseStartedAt else 0L
+        return System.currentTimeMillis() - startedAt - pausedAccumMs - extra
+    }
 
     fun amplitude(): Float {
         if (usingFallback) {
@@ -84,7 +110,7 @@ class VoiceRecorder(context: Context) {
         recording = false
         val f = outFile
         finishCommon()
-        startedAt = 0L; usingFallback = false; outFile = null
+        startedAt = 0L; paused = false; pauseStartedAt = 0L; pausedAccumMs = 0L; usingFallback = false; outFile = null
         return if (f != null && f.exists() && f.length() > 0 && dur >= minMs) f to dur
         else { runCatching { f?.delete() }; null }
     }
@@ -93,7 +119,7 @@ class VoiceRecorder(context: Context) {
         recording = false
         val f = outFile
         finishCommon()
-        startedAt = 0L; usingFallback = false; outFile = null
+        startedAt = 0L; paused = false; pauseStartedAt = 0L; pausedAccumMs = 0L; usingFallback = false; outFile = null
         runCatching { f?.delete() }
     }
 
@@ -212,6 +238,7 @@ class VoiceRecorder(context: Context) {
             while (recording) {
                 val read = rec.read(pcm, 0, pcm.size)
                 if (read > 0) {
+                    if (paused) continue // звук на паузе отбрасываем — файл без «дыры»
                     lastAmp = amplitudeOf(pcm, read)
                     val inIdx = enc.dequeueInputBuffer(10_000)
                     if (inIdx >= 0) {
