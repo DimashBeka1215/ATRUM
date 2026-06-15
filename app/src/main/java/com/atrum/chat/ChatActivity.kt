@@ -1202,9 +1202,12 @@ class ChatActivity : SecureActivity() {
         if (newHash == lastProfilesHash && lastKnownProfiles.isNotEmpty()) return
         lastProfilesHash = newHash
 
-        val allProfiles = ProfileSync.parseProfiles(rawEncrypted, chat.chatPassword, transport.chatId)
+        val parsed = ProfileSync.parseProfiles(rawEncrypted, chat.chatPassword, transport.chatId)
+        // Сырой снимок — для presence-записей (чтобы не реинжектить устаревшего партнёра).
         lastKnownProfiles.clear()
-        lastKnownProfiles.putAll(allProfiles)
+        lastKnownProfiles.putAll(parsed)
+        // Для отображения и сессионного ключа — «липкий» партнёр (флаки-чтение не теряет его).
+        val allProfiles = ProfileSync.unionAndRemember(transport.chatId, parsed)
 
         val partner = ProfileSync.findPartner(allProfiles, prefs.myUserId, prefs.myName)
         if (partner == null) {

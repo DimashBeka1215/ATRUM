@@ -382,7 +382,9 @@ class ChatsListActivity : SecureActivity() {
 
                 // В параллель: подтянуть профиль собеседника
                 withContext(Dispatchers.IO) {
-                    val allProfiles = ProfileSync.pullProfiles(api, chatPassword)
+                    val parsedProfiles = ProfileSync.pullProfiles(api, chatPassword)
+                    // «Липкий» партнёр: флаки-чтение profiles.txt не теряет аву/ник.
+                    val allProfiles = ProfileSync.unionAndRemember(api.chatId, parsedProfiles)
                     val partner = ProfileSync.findPartner(allProfiles, myUserId, myName)
                     if (partner != null) {
                         val profileChanged = partner.name != chat.partnerName ||

@@ -59,6 +59,19 @@ object ProfileSync {
         known[chatId] = LinkedHashMap(map)
     }
 
+    /**
+     * Для ЧТЕНИЯ/отображения: возвращает union(известные ∪ parsed) и пополняет кэш.
+     * Делает партнёра «липким» — если отдельное чтение profiles.txt на миг вернуло
+     * только мой профиль (гонка перезаписи replaceable-файла / флаки-Tor), партнёр
+     * (его ава/ник и эфемерный ключ для forward secrecy) НЕ теряется. На запись это
+     * не влияет — пишущие пути используют свой сырой снимок.
+     */
+    fun unionAndRemember(chatId: String, parsed: Map<String, Profile>): Map<String, Profile> {
+        val merged = unionWithKnown(chatId, parsed)
+        if (parsed.isNotEmpty()) rememberKnown(chatId, merged)
+        return merged
+    }
+
     suspend fun pullProfiles(api: ChatTransport, password: String): Map<String, Profile> {
         val rawEncrypted = api.loadFileOrNull(FILE_NAME)?.trim() ?: return emptyMap()
         if (rawEncrypted.isEmpty()) return emptyMap()
@@ -381,9 +394,11 @@ object ProfileSync {
         myUserId: String,
         myName: String = ""
     ): Profile? {
-        return profiles.values
-            .filter { it.userId != myUserId }
-            .filter { myName.isBlank() || it.name != myName }
-            .maxByOrNull { it.updatedAt }
+        val others = profiles.values.filter { it.userId != myUserId }
+        if (others.isEmpty()) return null
+        // Отбрасываем "клонов меня" (моё имя, чужой userId) — но если кроме них
+        // никого нет, значит это легитимный партнёр с таким же именем: берём его.
+        val nonClones = if (myName.isBlank()) others else others.filter { it.name != myName }
+        return (if (nonClones.isNotEmpty()) nonClones else others).maxByOrNull { it.updatedAt }
     }
 }
