@@ -57,6 +57,7 @@ class NostrTransport(
         val events = queryAllRelays(chatFilter())
             ?: return NostrMessageStore.render(channelId).ifEmpty { lastGoodContent ?: "" }
         NostrMessageStore.merge(channelId, events)
+        cacheMediaFrom(events)
         val content = NostrMessageStore.render(channelId)
         lastContentHash = sha256(content).toHex()
         lastGoodContent = content
@@ -66,6 +67,7 @@ class NostrTransport(
     override suspend fun loadContentIfChanged(): String? {
         val events = queryAllRelays(chatFilter()) ?: return null // реле не ответили — без изменений
         NostrMessageStore.merge(channelId, events)
+        cacheMediaFrom(events)
         val content = NostrMessageStore.render(channelId)
         val hash = sha256(content).toHex()
         if (hash == lastContentHash) return null
@@ -127,9 +129,25 @@ class NostrTransport(
     /** Хеш шифртекста для «надгробий» удаления (детерминирован, стабилен между ретраями). */
     private fun delHash(content: String): String = sha256("atrum_del_$content").toHex().take(32)
 
+    /**
+     * Кэширует контент неизменяемых файловых событий (img_/stk_), пришедших в ОСНОВНОМ
+     * опросе. Эти события и так скачиваются (chatFilter запрашивает kind FILE_KIND),
+     * поэтому стикеры/фото партнёра подхватываются из памяти мгновенно — без отдельного
+     * медленного per-file запроса к реле (8–15с + ретраи + по чанкам).
+     */
+    private fun cacheMediaFrom(events: List<NostrEvent>) {
+        for (ev in events) {
+            if (ev.kind != FILE_KIND) continue
+            val name = ev.tags.firstOrNull { it.firstOrNull() == "file" }?.getOrNull(1) ?: continue
+            if (!isImmutableFile(name)) continue
+            if (mediaCache.get(name) == null) mediaCache.put(name, ev.content)
+        }
+    }
+
     private fun splitAll(events: List<NostrEvent>): AllGistData {
         // Сообщения — через долговечный локальный стор (реле могут подрезать историю).
         NostrMessageStore.merge(channelId, events)
+        cacheMediaFrom(events) // стикеры/фото — в кэш из этого же опроса
         return AllGistData(
             chatContent = NostrMessageStore.render(channelId),
             reactionsContent = latestFile(events, "reactions.txt"),
