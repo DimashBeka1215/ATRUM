@@ -140,11 +140,36 @@ object CryptoHelper {
             .withIterations(ARGON2_ITER)
             .withParallelism(parallelism)
             .build()
-        val gen = Argon2BytesGenerator()
-        gen.init(params)
-        val key = ByteArray(KEY_LEN)
-        gen.generateBytes(password.toByteArray(Charsets.UTF_8), key)
-        return key
+        return runArgon2(params, password.toByteArray(Charsets.UTF_8))
+    }
+
+    // ─── Сериализованный запуск Argon2id (анти-OOM) ──────────────────────────
+    // Argon2id(m=64МиБ) аллоцирует ~64МБ блоков НА КАЖДЫЙ вызов. V5 (random salt)
+    // деривирует ключ на каждое сообщение, поэтому при открытии чата несколько
+    // 64-МБ аллокаций могли идти параллельно → OutOfMemoryError на бюджетных
+    // устройствах (heap ~128МБ). Глобальный argon2Lock пропускает только ОДНУ
+    // деривацию за раз: пик памяти — один блок, который GC освобождает между
+    // вызовами. Это самый ВНУТРЕННИЙ лок (keyCacheLock → argon2Lock), дедлока нет.
+    private val argon2Lock = Any()
+
+    private fun runArgon2(params: Argon2Parameters, passwordBytes: ByteArray): ByteArray {
+        synchronized(argon2Lock) {
+            var attempt = 0
+            while (true) {
+                try {
+                    val gen = Argon2BytesGenerator()
+                    gen.init(params)
+                    val key = ByteArray(KEY_LEN)
+                    gen.generateBytes(passwordBytes, key)
+                    return key
+                } catch (e: OutOfMemoryError) {
+                    // Память фрагментирована — отдаём GC шанс собрать блоки и пробуем ещё раз.
+                    if (attempt++ >= 1) throw e
+                    System.gc()
+                    try { Thread.sleep(120) } catch (_: InterruptedException) {}
+                }
+            }
+        }
     }
 
     // ─── V4 — Argon2id + AES-GCM (legacy GCM формат) ─────────────────────────
@@ -553,11 +578,7 @@ object CryptoHelper {
             .withParallelism(parallelism)
             .build()
 
-        val gen = Argon2BytesGenerator()
-        gen.init(params)
-        val key = ByteArray(KEY_LEN)
-        gen.generateBytes(password.toByteArray(Charsets.UTF_8), key)
-        return key
+        return runArgon2(params, password.toByteArray(Charsets.UTF_8))
     }
 
     /**
