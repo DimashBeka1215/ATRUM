@@ -47,6 +47,7 @@ class VoiceRecorder(context: Context) {
     private val effects = ArrayList<AudioEffect>()
     private var codec: MediaCodec? = null
     private var muxer: MediaMuxer? = null
+    private var reducer: NoiseReducer? = null
     private var worker: Thread? = null
 
     // Запасной путь.
@@ -164,6 +165,8 @@ class VoiceRecorder(context: Context) {
             val rec = found ?: return false
             audioRecord = rec
             attachEffects(rec.audioSessionId)
+            // Программное доп. шумоподавление (спектральное вычитание) только для моно.
+            reducer = if (channelCount == 1) NoiseReducer() else null
 
             val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelCount).apply {
                 setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
@@ -234,26 +237,45 @@ class VoiceRecorder(context: Context) {
             }
         }
 
+        fun feed(data: ByteArray, len: Int) {
+            var off = 0
+            while (off < len) {
+                val inIdx = enc.dequeueInputBuffer(10_000)
+                if (inIdx < 0) { drain(false); continue }
+                val inBuf = enc.getInputBuffer(inIdx)
+                if (inBuf == null) { enc.queueInputBuffer(inIdx, 0, 0, ptsUs(), 0); continue }
+                val cap = inBuf.remaining()
+                val nn = minOf(len - off, cap)
+                inBuf.clear(); inBuf.put(data, off, nn)
+                enc.queueInputBuffer(inIdx, 0, nn, ptsUs(), 0)
+                totalBytes += nn
+                off += nn
+            }
+        }
+
         try {
+            val nr = reducer
             while (recording) {
                 val read = rec.read(pcm, 0, pcm.size)
                 if (read > 0) {
                     if (paused) continue // звук на паузе отбрасываем — файл без «дыры»
                     lastAmp = amplitudeOf(pcm, read)
-                    val inIdx = enc.dequeueInputBuffer(10_000)
-                    if (inIdx >= 0) {
-                        val inBuf = enc.getInputBuffer(inIdx)
-                        if (inBuf != null) {
-                            val n = minOf(read, inBuf.remaining())
-                            inBuf.clear(); inBuf.put(pcm, 0, n)
-                            enc.queueInputBuffer(inIdx, 0, n, ptsUs(), 0)
-                            totalBytes += n
+                    if (nr != null) {
+                        val processed = runCatching { nr.process(bytesToShorts(pcm, read), read / 2) }.getOrNull()
+                        if (processed != null) {
+                            if (processed.isNotEmpty()) feed(shortsToBytes(processed), processed.size * 2)
                         } else {
-                            enc.queueInputBuffer(inIdx, 0, 0, ptsUs(), 0)
+                            feed(pcm, read) // сбой шумодава — пишем сырой звук
                         }
+                    } else {
+                        feed(pcm, read)
                     }
                     drain(false)
                 }
+            }
+            if (nr != null) {
+                val tail = runCatching { nr.flush() }.getOrNull()
+                if (tail != null && tail.isNotEmpty()) feed(shortsToBytes(tail), tail.size * 2)
             }
             val inIdx = enc.dequeueInputBuffer(10_000)
             if (inIdx >= 0) {
@@ -266,6 +288,26 @@ class VoiceRecorder(context: Context) {
             runCatching { rec.stop() }
             runCatching { if (muxerStarted) muxer?.stop() }
         }
+    }
+
+    private fun bytesToShorts(b: ByteArray, len: Int): ShortArray {
+        val out = ShortArray(len / 2)
+        var i = 0
+        while (i + 1 < len) {
+            out[i / 2] = ((b[i].toInt() and 0xFF) or (b[i + 1].toInt() shl 8)).toShort()
+            i += 2
+        }
+        return out
+    }
+
+    private fun shortsToBytes(s: ShortArray): ByteArray {
+        val out = ByteArray(s.size * 2)
+        for (i in s.indices) {
+            val v = s[i].toInt()
+            out[i * 2] = (v and 0xFF).toByte()
+            out[i * 2 + 1] = ((v shr 8) and 0xFF).toByte()
+        }
+        return out
     }
 
     private fun amplitudeOf(buf: ByteArray, len: Int): Float {
@@ -290,6 +332,7 @@ class VoiceRecorder(context: Context) {
         codec = null
         runCatching { muxer?.release() }
         muxer = null
+        reducer = null
     }
 
     // ── Запасной путь: MediaRecorder с голосовым источником ─────────────────────

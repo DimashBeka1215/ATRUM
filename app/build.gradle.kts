@@ -39,8 +39,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 78
-        versionName = "3.9.0-beta65"
+        versionCode = 79
+        versionName = "3.9.1-beta66"
 
         // Включаем multidex чтобы не упереться в лимит 65k методов
         // когда много AndroidX/Material/Room/uCrop/browser библиотек
