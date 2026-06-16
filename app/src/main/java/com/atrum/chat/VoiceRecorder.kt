@@ -211,13 +211,16 @@ class VoiceRecorder(context: Context) {
     }
 
     /** Порог шумового фона (dBFS): громче — включаем нейрошумодав, тише — обычный. */
-    // Пороги шумового фона (dBFS) → «уровни применения» нейросети:
-    //   тише noiseLoDb        → МИНИМАЛЬНЫЙ (почти только спектральный, голос естественный)
-    //   между noiseLo и noiseHi → СРЕДНИЙ (плавный бленд двух алгоритмов)
-    //   громче noiseHiDb       → ВЫСОКИЙ (полностью нейросеть)
-    private val noiseLoDb = -50.0
-    private val noiseHiDb = -35.0
-    private val frameSamples = 960 // 20 мс @ 48 кГц
+    // «Уровни применения» нейросети по SNR (насколько голос ВЫШЕ фона — не зависит
+    // от усиления микрофона):
+    //   фон очень тихий (< absSilenceDb) → МИНИМАЛЬНЫЙ (только спектральный)
+    //   высокий SNR (>= snrHiDb)          → МИНИМАЛЬНЫЙ
+    //   средний SNR                       → СРЕДНИЙ (плавный бленд)
+    //   низкий SNR (<= snrLoDb)           → ВЫСОКИЙ (нейросеть)
+    private val snrLoDb = 14.0       // шумно: голос едва над фоном
+    private val snrHiDb = 28.0       // чисто: голос явно над фоном
+    private val absSilenceDb = -52.0 // тихий фон — нейросеть не нужна вообще
+    private val frameSamples = 960   // 20 мс @ 48 кГц
 
     private fun finalizeGtcrn(f: File?): Boolean {
         bufWorker?.let { runCatching { it.join(2500) } }; bufWorker = null
@@ -292,7 +295,9 @@ class VoiceRecorder(context: Context) {
             db[fr] = 20.0 * Math.log10((Math.sqrt(sum / frameSamples) + 1e-9) / 32768.0)
         }
         val half = 37 // ~0.75 с в каждую сторону окна
-        val floorDb = DoubleArray(nFrames)
+        val w = FloatArray(nFrames)
+        var sw = 0f
+        val alpha = 0.92f // временное сглаживание (~0.25 с) — без рывков
         val win = ArrayList<Double>(2 * half + 1)
         for (fr in 0 until nFrames) {
             win.clear()
@@ -300,14 +305,14 @@ class VoiceRecorder(context: Context) {
             val hi = (fr + half).coerceAtMost(nFrames - 1)
             for (k in lo..hi) win.add(db[k])
             win.sort()
-            floorDb[fr] = win[(win.size * 15 / 100).coerceIn(0, win.size - 1)]
-        }
-        val w = FloatArray(nFrames)
-        var sw = 0f
-        val alpha = 0.92f // временное сглаживание (~0.25 с) — без рывков
-        for (fr in 0 until nFrames) {
-            val t = ((floorDb[fr] - noiseLoDb) / (noiseHiDb - noiseLoDb)).coerceIn(0.0, 1.0)
-            val target = (t * t * (3 - 2 * t)).toFloat() // smoothstep
+            val floorDb = win[(win.size * 15 / 100).coerceIn(0, win.size - 1)]   // фон (тихие кадры)
+            val speechDb = win[(win.size * 90 / 100).coerceIn(0, win.size - 1)]  // речь (громкие кадры)
+            val snr = speechDb - floorDb
+            val target = if (floorDb < absSilenceDb) 0f else {
+                // низкий SNR → ближе к 1 (нейросеть), высокий SNR → ближе к 0 (спектральный)
+                val t = ((snrHiDb - snr) / (snrHiDb - snrLoDb)).coerceIn(0.0, 1.0)
+                (t * t * (3 - 2 * t)).toFloat() // smoothstep
+            }
             sw = alpha * sw + (1 - alpha) * target
             w[fr] = sw
         }
