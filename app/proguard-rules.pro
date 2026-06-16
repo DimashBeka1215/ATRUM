@@ -99,6 +99,7 @@
     public static int i(...);
 }
 
-# ── TensorFlow Lite (нейросетевой шумодав DTLN) ──────────────────────────────
--keep class org.tensorflow.lite.** { *; }
--dontwarn org.tensorflow.lite.**
+# ── sherpa-onnx (нейросетевой шумодав GTCRN) ─────────────────────────────────
+# JNI-классы вызываются нативной либой по имени — сохраняем целиком.
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+-dontwarn com.k2fsa.sherpa.onnx.**

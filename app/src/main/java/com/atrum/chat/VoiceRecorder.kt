@@ -16,19 +16,11 @@ import android.os.Build
 import java.io.File
 
 /**
- * Запись голосового сообщения в AAC/M4A с акцентом на качество и чистоту голоса.
- *
- * Основной путь — AudioRecord (48 кГц, стерео если поддерживается железом) + аппаратные
- * аудиоэффекты на сессии записи:
- *   • NoiseSuppressor      — подавление фонового шума (шумодав);
- *   • AutomaticGainControl — авто-усиление тихого голоса;
- *   • AcousticEchoCanceler — устранение эха.
- * Кодирование AAC-LC 128 кбит/с через MediaCodec + MediaMuxer.
- *
- * Запасной путь — MediaRecorder с источником VOICE_COMMUNICATION (встроенная голосовая
- * пред-обработка с шумоподавлением), если продвинутый путь не поднялся на устройстве.
- *
- * Публичный API (start/stop/cancel/elapsedMs/amplitude/isRecording) не менялся.
+ * Запись голосового. Три пути по приоритету:
+ *  1. GTCRN (нейросеть, sherpa-onnx) — давит крик/ТВ. Офлайн: буфер PCM 16к → чистка → кодек.
+ *  2. AudioRecord 48к + аппаратные эффекты + спектральное вычитание (потоковый AAC).
+ *  3. MediaRecorder (VOICE_COMMUNICATION) — запасной.
+ * Публичный API не менялся.
  */
 class VoiceRecorder(context: Context) {
 
@@ -42,23 +34,27 @@ class VoiceRecorder(context: Context) {
     @Volatile private var lastAmp = 0f
     private var outFile: File? = null
 
-    // Продвинутый путь.
     private var audioRecord: AudioRecord? = null
     private val effects = ArrayList<AudioEffect>()
+
+    private var gtcrn: GtcrnDenoiser? = null
+    private var gtcrnMode = false
+    private var bufWorker: Thread? = null
+    private val pcmChunks = ArrayList<ShortArray>()
+    private var pcmTotal = 0
+    private val pcmLock = Any()
+
     private var codec: MediaCodec? = null
     private var muxer: MediaMuxer? = null
     private var reducer: NoiseReducer? = null
-    private var dtln: DtlnDenoiser? = null
     private var worker: Thread? = null
 
-    // Запасной путь.
     private var mediaRecorder: MediaRecorder? = null
     private var usingFallback = false
 
     val isRecording: Boolean get() = recording
     val isPaused: Boolean get() = paused
 
-    /** Ставит запись на паузу: захват звука замораживается, файл остаётся цельным. */
     fun pause() {
         if (!recording || paused) return
         paused = true
@@ -66,7 +62,6 @@ class VoiceRecorder(context: Context) {
         if (usingFallback) runCatching { mediaRecorder?.pause() }
     }
 
-    /** Продолжает запись с того же места. */
     fun resume() {
         if (!recording || !paused) return
         if (pauseStartedAt > 0L) pausedAccumMs += System.currentTimeMillis() - pauseStartedAt
@@ -78,9 +73,17 @@ class VoiceRecorder(context: Context) {
     fun start(): Boolean {
         if (recording) return false
         val dir = File(appCtx.cacheDir, "voice_rec").apply { mkdirs() }
-        val f = File(dir, "rec_${System.currentTimeMillis()}.m4a")
+        val f = File(dir, "rec_" + System.currentTimeMillis() + ".m4a")
         outFile = f
         paused = false; pauseStartedAt = 0L; pausedAccumMs = 0L
+
+        gtcrn = GtcrnDenoiser.load(appCtx)
+        if (gtcrn != null && startGtcrn(f)) {
+            startedAt = System.currentTimeMillis(); return true
+        }
+        runCatching { gtcrn?.close() }; gtcrn = null
+        releaseCapture()
+
         if (startAdvanced(f)) {
             recording = true; startedAt = System.currentTimeMillis(); return true
         }
@@ -111,18 +114,30 @@ class VoiceRecorder(context: Context) {
         val dur = elapsedMs()
         recording = false
         val f = outFile
-        finishCommon()
-        startedAt = 0L; paused = false; pauseStartedAt = 0L; pausedAccumMs = 0L; usingFallback = false; outFile = null
-        return if (f != null && f.exists() && f.length() > 0 && dur >= minMs) f to dur
+        val ok = if (gtcrnMode) finalizeGtcrn(f) else { finishCommon(); f != null && f.exists() && f.length() > 0 }
+        resetState()
+        return if (ok && f != null && f.exists() && f.length() > 0 && dur >= minMs) f to dur
         else { runCatching { f?.delete() }; null }
     }
 
     fun cancel() {
         recording = false
         val f = outFile
-        finishCommon()
-        startedAt = 0L; paused = false; pauseStartedAt = 0L; pausedAccumMs = 0L; usingFallback = false; outFile = null
+        if (gtcrnMode) {
+            bufWorker?.let { runCatching { it.join(2500) } }; bufWorker = null
+            releaseCapture()
+            runCatching { gtcrn?.close() }; gtcrn = null
+            synchronized(pcmLock) { pcmChunks.clear(); pcmTotal = 0 }
+        } else {
+            finishCommon()
+        }
+        resetState()
         runCatching { f?.delete() }
+    }
+
+    private fun resetState() {
+        startedAt = 0L; paused = false; pauseStartedAt = 0L; pausedAccumMs = 0L
+        usingFallback = false; gtcrnMode = false; outFile = null
     }
 
     private fun finishCommon() {
@@ -136,17 +151,183 @@ class VoiceRecorder(context: Context) {
         cleanupAdvanced()
     }
 
-    // ── Продвинутый путь: AudioRecord + эффекты + AAC ───────────────────────────
+    // ── GTCRN: буфер PCM → офлайн-чистка → офлайн-кодек ─────────────────────────
+    private fun startGtcrn(f: File): Boolean {
+        try {
+            synchronized(pcmLock) { pcmChunks.clear(); pcmTotal = 0 }
+            val sampleRate = 16_000
+            val configs = listOf(
+                Triple(MediaRecorder.AudioSource.VOICE_COMMUNICATION, AudioFormat.CHANNEL_IN_MONO, 1),
+                Triple(MediaRecorder.AudioSource.MIC, AudioFormat.CHANNEL_IN_MONO, 1)
+            )
+            var found: AudioRecord? = null
+            for ((source, mask, _) in configs) {
+                val minBuf = AudioRecord.getMinBufferSize(sampleRate, mask, AudioFormat.ENCODING_PCM_16BIT)
+                if (minBuf <= 0) continue
+                val bs = maxOf(minBuf * 2, 8192)
+                val r = try {
+                    AudioRecord(source, sampleRate, mask, AudioFormat.ENCODING_PCM_16BIT, bs)
+                } catch (_: Throwable) { null }
+                if (r != null && r.state == AudioRecord.STATE_INITIALIZED) { found = r; break }
+                runCatching { r?.release() }
+            }
+            val rec = found ?: return false
+            audioRecord = rec
+            attachEffects(rec.audioSessionId)
+            rec.startRecording()
+            if (rec.recordingState != AudioRecord.RECORDSTATE_RECORDING) return false
+            recording = true
+            gtcrnMode = true
+            bufWorker = Thread { bufLoop(rec) }.apply { priority = Thread.MAX_PRIORITY; start() }
+            return true
+        } catch (_: Throwable) {
+            return false
+        }
+    }
+
+    private fun bufLoop(rec: AudioRecord) {
+        val chunk = ShortArray(2048)
+        try {
+            while (recording) {
+                val read = rec.read(chunk, 0, chunk.size)
+                if (read > 0) {
+                    if (paused) continue
+                    lastAmp = amplitudeOfShorts(chunk, read)
+                    val copy = chunk.copyOf(read)
+                    synchronized(pcmLock) { pcmChunks.add(copy); pcmTotal += read }
+                }
+            }
+        } catch (_: Throwable) {
+        } finally {
+            runCatching { rec.stop() }
+        }
+    }
+
+    private fun finalizeGtcrn(f: File?): Boolean {
+        bufWorker?.let { runCatching { it.join(2500) } }; bufWorker = null
+        releaseCapture()
+        val raw = flattenPcm()
+        synchronized(pcmLock) { pcmChunks.clear(); pcmTotal = 0 }
+        var ok = false
+        try {
+            if (f != null && raw.isNotEmpty()) {
+                val floats = FloatArray(raw.size) { raw[it] / 32768f }
+                val clean = gtcrn?.denoise(floats, 16_000)
+                val samples = if (clean != null) floatToShort(clean) else raw
+                val outRate = if (clean != null) (gtcrn?.outputRate ?: 16_000) else 16_000
+                ok = encodeM4a(samples, outRate, f)
+            }
+        } catch (_: Throwable) {
+            ok = false
+        }
+        runCatching { gtcrn?.close() }; gtcrn = null
+        return ok
+    }
+
+    private fun flattenPcm(): ShortArray = synchronized(pcmLock) {
+        val out = ShortArray(pcmTotal)
+        var off = 0
+        for (c in pcmChunks) { System.arraycopy(c, 0, out, off, c.size); off += c.size }
+        out
+    }
+
+    private fun floatToShort(f: FloatArray): ShortArray = ShortArray(f.size) {
+        val v = f[it] * 32768f
+        (when { v > 32767f -> 32767; v < -32768f -> -32768; else -> v.toInt() }).toShort()
+    }
+
+    private fun amplitudeOfShorts(buf: ShortArray, len: Int): Float {
+        var peak = 0
+        for (i in 0 until len) {
+            val a = if (buf[i] < 0) -buf[i].toInt() else buf[i].toInt()
+            if (a > peak) peak = a
+        }
+        return (peak.coerceIn(0, 32767)) / 32767f
+    }
+
+    private fun encodeM4a(samples: ShortArray, sampleRate: Int, file: File): Boolean {
+        if (samples.isEmpty()) return false
+        var enc: MediaCodec? = null
+        var mux: MediaMuxer? = null
+        try {
+            val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 1).apply {
+                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+                setInteger(MediaFormat.KEY_BIT_RATE, 96_000)
+                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
+            }
+            val c = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            c.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            c.start(); enc = c
+            val m = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4); mux = m
+            val info = MediaCodec.BufferInfo()
+            var trackIndex = -1
+            var muxerStarted = false
+            val pcm = shortsToBytes(samples)
+            var off = 0
+            var inDone = false
+            var outDone = false
+            while (!outDone) {
+                if (!inDone) {
+                    val inIdx = c.dequeueInputBuffer(10_000)
+                    if (inIdx >= 0) {
+                        val inBuf = c.getInputBuffer(inIdx)
+                        if (inBuf == null) {
+                            c.queueInputBuffer(inIdx, 0, 0, 0, 0)
+                        } else {
+                            val remaining = pcm.size - off
+                            if (remaining <= 0) {
+                                c.queueInputBuffer(inIdx, 0, 0, (off.toLong() / 2) * 1_000_000L / sampleRate, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                inDone = true
+                            } else {
+                                val nn = minOf(inBuf.capacity(), remaining)
+                                inBuf.clear(); inBuf.put(pcm, off, nn)
+                                val pts = (off.toLong() / 2) * 1_000_000L / sampleRate
+                                c.queueInputBuffer(inIdx, 0, nn, pts, 0)
+                                off += nn
+                            }
+                        }
+                    }
+                }
+                val outIdx = c.dequeueOutputBuffer(info, 10_000)
+                when {
+                    outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        if (!muxerStarted) { trackIndex = m.addTrack(c.outputFormat); m.start(); muxerStarted = true }
+                    }
+                    outIdx >= 0 -> {
+                        val outBuf = c.getOutputBuffer(outIdx)
+                        if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) info.size = 0
+                        if (info.size > 0 && muxerStarted && outBuf != null) {
+                            outBuf.position(info.offset)
+                            outBuf.limit(info.offset + info.size)
+                            runCatching { m.writeSampleData(trackIndex, outBuf, info) }
+                        }
+                        c.releaseOutputBuffer(outIdx, false)
+                        if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outDone = true
+                    }
+                }
+            }
+            runCatching { if (muxerStarted) m.stop() }
+            return file.exists() && file.length() > 0
+        } catch (_: Throwable) {
+            return false
+        } finally {
+            runCatching { enc?.stop() }; runCatching { enc?.release() }
+            runCatching { mux?.release() }
+        }
+    }
+
+    private fun releaseCapture() {
+        effects.forEach { runCatching { it.release() } }
+        effects.clear()
+        runCatching { audioRecord?.stop() }
+        runCatching { audioRecord?.release() }
+        audioRecord = null
+    }
+
+    // ── Спектральный потоковый путь (48 кГц) ────────────────────────────────────
     private fun startAdvanced(f: File): Boolean {
         try {
-            // Нейросетевой шумодав DTLN (если модели в assets) — фиксированно 16 кГц.
-            // Иначе обычный путь 48 кГц + спектральное вычитание.
-            dtln = DtlnDenoiser.load(appCtx)
-            val sampleRate = if (dtln != null) 16_000 else 48_000
-            // VOICE_COMMUNICATION = аппаратный голосовой тракт связи с агрессивным
-            // шумоподавлением и AEC/AGC — давит фон СИЛЬНО и независимо от того, доступен
-            // ли отдельный эффект NoiseSuppressor (на части устройств его нет вообще).
-            // Тракт моно: стерео сознательно уступаем ради максимального шумодава.
+            val sampleRate = 48_000
             val configs = listOf(
                 Triple(MediaRecorder.AudioSource.VOICE_COMMUNICATION, AudioFormat.CHANNEL_IN_MONO, 1),
                 Triple(MediaRecorder.AudioSource.MIC, AudioFormat.CHANNEL_IN_MONO, 1)
@@ -169,8 +350,7 @@ class VoiceRecorder(context: Context) {
             val rec = found ?: return false
             audioRecord = rec
             attachEffects(rec.audioSessionId)
-            // Спектральное вычитание — только если нет нейросети и моно.
-            reducer = if (dtln == null && channelCount == 1) NoiseReducer() else null
+            reducer = if (channelCount == 1) NoiseReducer() else null
 
             val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelCount).apply {
                 setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
@@ -258,23 +438,18 @@ class VoiceRecorder(context: Context) {
         }
 
         try {
-            val d = dtln
             val r = reducer
             while (recording) {
                 val read = rec.read(pcm, 0, pcm.size)
                 if (read > 0) {
-                    if (paused) continue // звук на паузе отбрасываем — файл без «дыры»
+                    if (paused) continue
                     lastAmp = amplitudeOf(pcm, read)
-                    val processed = when {
-                        d != null -> runCatching { d.process(bytesToShorts(pcm, read), read / 2) }.getOrNull()
-                        r != null -> runCatching { r.process(bytesToShorts(pcm, read), read / 2) }.getOrNull()
-                        else -> null
-                    }
-                    if (d != null || r != null) {
+                    if (r != null) {
+                        val processed = runCatching { r.process(bytesToShorts(pcm, read), read / 2) }.getOrNull()
                         if (processed != null) {
                             if (processed.isNotEmpty()) feed(shortsToBytes(processed), processed.size * 2)
                         } else {
-                            feed(pcm, read) // сбой шумодава — пишем сырой звук
+                            feed(pcm, read)
                         }
                     } else {
                         feed(pcm, read)
@@ -282,19 +457,16 @@ class VoiceRecorder(context: Context) {
                     drain(false)
                 }
             }
-            val tail = when {
-                d != null -> runCatching { d.flush() }.getOrNull()
-                r != null -> runCatching { r.flush() }.getOrNull()
-                else -> null
+            if (reducer != null) {
+                val tail = runCatching { reducer?.flush() }.getOrNull()
+                if (tail != null && tail.isNotEmpty()) feed(shortsToBytes(tail), tail.size * 2)
             }
-            if (tail != null && tail.isNotEmpty()) feed(shortsToBytes(tail), tail.size * 2)
             val inIdx = enc.dequeueInputBuffer(10_000)
             if (inIdx >= 0) {
                 enc.queueInputBuffer(inIdx, 0, 0, ptsUs(), MediaCodec.BUFFER_FLAG_END_OF_STREAM)
             }
             drain(true)
         } catch (_: Throwable) {
-            // best-effort: файл всё равно финализируем ниже
         } finally {
             runCatching { rec.stop() }
             runCatching { if (muxerStarted) muxer?.stop() }
@@ -344,11 +516,8 @@ class VoiceRecorder(context: Context) {
         runCatching { muxer?.release() }
         muxer = null
         reducer = null
-        runCatching { dtln?.close() }
-        dtln = null
     }
 
-    // ── Запасной путь: MediaRecorder с голосовым источником ─────────────────────
     private fun startFallback(f: File): Boolean {
         val sources = intArrayOf(
             MediaRecorder.AudioSource.VOICE_COMMUNICATION,
@@ -356,7 +525,7 @@ class VoiceRecorder(context: Context) {
         )
         for (source in sources) {
             val rec = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(appCtx)
-                      else @Suppress("DEPRECATION") MediaRecorder()
+            else @Suppress("DEPRECATION") MediaRecorder()
             try {
                 rec.setAudioSource(source)
                 rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
