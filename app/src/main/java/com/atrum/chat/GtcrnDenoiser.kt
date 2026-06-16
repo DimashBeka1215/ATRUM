@@ -3,21 +3,22 @@ package com.atrum.chat
 import android.content.Context
 import com.k2fsa.sherpa.onnx.OfflineSpeechDenoiser
 import com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserConfig
-import com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserGtcrnModelConfig
+import com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserDpdfNetModelConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserModelConfig
 
 /**
- * Нейросетевое шумоподавление GTCRN (ICASSP 2024) через sherpa-onnx. Давит и
- * нестационарный шум — речь из ТВ, крики. Офлайн: чистит весь клип за один run().
+ * Нейросетевое шумоподавление через sherpa-onnx. Модель — DeepFilterNet (DPDFNet2,
+ * полнополосный 48 кГц): давит и нестационарный шум (речь из ТВ, крики), бережно
+ * сохраняя голос за счёт «глубокой фильтрации» гармоник. Офлайн: чистит весь клип.
  *
- * Инстанс ОБЩИЙ на процесс и грузится один раз (модель тяжело инициализировать),
- * предзагрузка — в фоне из App. Если нет нативной либы или модели — остаётся null,
- * и запись идёт обычным путём (фолбэк).
+ * Имя класса историческое (раньше был GTCRN) — теперь это DeepFilterNet.
+ * Инстанс ОБЩИЙ на процесс, грузится один раз в фоне (App.preload). Нет нативной
+ * либы или модели в assets → остаётся null, запись идёт обычным путём (фолбэк).
  */
 class GtcrnDenoiser private constructor(private val impl: OfflineSpeechDenoiser) {
 
-    /** Частота на выходе модели (GTCRN — 16 кГц). */
-    var outputRate: Int = 16000
+    /** Частота на выходе модели (DeepFilterNet — 48 кГц). */
+    var outputRate: Int = 48000
         private set
 
     /** Чистит весь клип. Вход — моно float [-1..1] на [inputRate]. Возвращает чистые сэмплы или null. */
@@ -30,7 +31,8 @@ class GtcrnDenoiser private constructor(private val impl: OfflineSpeechDenoiser)
     }
 
     companion object {
-        private const val MODEL_ASSET = "gtcrn_simple.onnx"
+        /** DeepFilterNet2, 48 кГц (из релиза sherpa-onnx «speech-enhancement-models»). */
+        private const val MODEL_ASSET = "dpdfnet2_48khz_hr.onnx"
 
         @Volatile private var instance: GtcrnDenoiser? = null
         @Volatile private var loading = false
@@ -66,7 +68,7 @@ class GtcrnDenoiser private constructor(private val impl: OfflineSpeechDenoiser)
             context.assets.open(MODEL_ASSET).close() // нет модели → исключение → фолбэк
             val cfg = OfflineSpeechDenoiserConfig(
                 model = OfflineSpeechDenoiserModelConfig(
-                    gtcrn = OfflineSpeechDenoiserGtcrnModelConfig(model = MODEL_ASSET),
+                    dpdfnet = OfflineSpeechDenoiserDpdfNetModelConfig(model = MODEL_ASSET),
                     numThreads = 1,
                     provider = "cpu"
                 )

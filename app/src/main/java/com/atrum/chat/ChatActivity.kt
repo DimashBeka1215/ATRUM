@@ -3236,7 +3236,7 @@ class ChatActivity : SecureActivity() {
         /** Максимальное количество фото в коллаже за одну отправку. */
         const val MAX_COLLAGE_IMAGES = 10
         /** Максимальная длительность голосового (5 минут). */
-        private const val MAX_VOICE_MS = 3 * 60 * 1000L
+        private const val MAX_VOICE_MS = 2 * 60 * 1000L
         /** Максимальное количество одновременных загрузок изображений. */
         const val MAX_CONCURRENT = 3
     }

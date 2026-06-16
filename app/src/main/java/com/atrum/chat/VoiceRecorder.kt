@@ -17,7 +17,7 @@ import java.io.File
 
 /**
  * Запись голосового. Три пути по приоритету:
- *  1. GTCRN (нейросеть, sherpa-onnx) — давит крик/ТВ. Офлайн: буфер PCM 16к → чистка → кодек.
+ *  1. DeepFilterNet (нейросеть, sherpa-onnx) — давит крик/ТВ. Офлайн: буфер PCM 48к → чистка → кодек.
  *  2. AudioRecord 48к + аппаратные эффекты + спектральное вычитание (потоковый AAC).
  *  3. MediaRecorder (VOICE_COMMUNICATION) — запасной.
  * Публичный API не менялся.
@@ -154,7 +154,7 @@ class VoiceRecorder(context: Context) {
     private fun startGtcrn(f: File): Boolean {
         try {
             synchronized(pcmLock) { pcmChunks.clear(); pcmTotal = 0 }
-            val sampleRate = 16_000
+            val sampleRate = 48_000 // DeepFilterNet полнополосный
             val configs = listOf(
                 Triple(MediaRecorder.AudioSource.VOICE_COMMUNICATION, AudioFormat.CHANNEL_IN_MONO, 1),
                 Triple(MediaRecorder.AudioSource.MIC, AudioFormat.CHANNEL_IN_MONO, 1)
@@ -213,15 +213,17 @@ class VoiceRecorder(context: Context) {
     private fun finalizeGtcrn(f: File?): Boolean {
         bufWorker?.let { runCatching { it.join(2500) } }; bufWorker = null
         releaseCapture()
-        val raw = flattenPcm()
+        var raw: ShortArray? = flattenPcm()
         synchronized(pcmLock) { pcmChunks.clear(); pcmTotal = 0 }
         var ok = false
         try {
-            if (f != null && raw.isNotEmpty()) {
-                val floats = FloatArray(raw.size) { raw[it] / 32768f }
-                val clean = gtcrn?.denoise(floats, 16_000)
-                val samples = if (clean != null) floatToShort(clean) else raw
-                val outRate = if (clean != null) (gtcrn?.outputRate ?: 16_000) else 16_000
+            if (f != null && raw != null && raw!!.isNotEmpty()) {
+                var floats: FloatArray? = FloatArray(raw!!.size) { raw!![it] / 32768f }
+                raw = null // освобождаем PCM-буфер (на 48 кГц он крупный)
+                val clean = gtcrn?.denoise(floats!!, 48_000)
+                val samples = floatToShort(clean ?: floats!!)
+                floats = null // освобождаем вход до кодирования
+                val outRate = if (clean != null) (gtcrn?.outputRate ?: 48_000) else 48_000
                 ok = encodeM4a(samples, outRate, f)
             }
         } catch (_: Throwable) {
@@ -259,7 +261,7 @@ class VoiceRecorder(context: Context) {
         try {
             val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 1).apply {
                 setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                setInteger(MediaFormat.KEY_BIT_RATE, 32_000)
+                setInteger(MediaFormat.KEY_BIT_RATE, 64_000)
                 setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
             }
             val c = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
