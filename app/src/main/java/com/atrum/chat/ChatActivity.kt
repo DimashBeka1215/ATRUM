@@ -1884,15 +1884,22 @@ class ChatActivity : SecureActivity() {
         voiceUiJob?.cancel(); voiceUiJob = null
         val levelsSnapshot = ArrayList(recordLevels)
         restoreInputAfterRecording()
-        if (cancel) { voiceRecorder.cancel(); return }
-        val result = voiceRecorder.stop(minMs = 700L)
-        if (result == null) {
-            Toast.makeText(this, R.string.voice_too_short, Toast.LENGTH_SHORT).show()
+        if (cancel) {
+            lifecycleScope.launch(Dispatchers.IO) { runCatching { voiceRecorder.cancel() } }
             return
         }
-        val (file, durMs) = result
-        val wf = Message.encodeWaveform(downsampleLevels(levelsSnapshot, 40))
-        sendVoice(file, ((durMs + 500L) / 1000L).toInt().coerceAtLeast(1), wf)
+        // Чистка нейросетью + кодирование — тяжёлые, делаем в фоне, чтобы UI не залипал
+        // после «отправить». Поле ввода уже вернулось, пользователь не ждёт.
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) { voiceRecorder.stop(minMs = 700L) }
+            if (result == null) {
+                Toast.makeText(this@ChatActivity, R.string.voice_too_short, Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val (file, durMs) = result
+            val wf = Message.encodeWaveform(downsampleLevels(levelsSnapshot, 40))
+            sendVoice(file, ((durMs + 500L) / 1000L).toInt().coerceAtLeast(1), wf)
+        }
     }
 
     /** Сжимает накопленные уровни до target столбиков (берём пик в каждой корзине). */
