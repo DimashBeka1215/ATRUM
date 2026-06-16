@@ -388,20 +388,38 @@ class VoiceRecorder(context: Context) {
         return (peak.coerceIn(0, 32767)) / 32767f
     }
 
+    /**
+     * Кодирует клип. Сначала пробует Opus (Ogg) — заметно лучше звук на бит и меньше
+     * трафик через Gist; доступен с Android 10 (OGG-muxer). Если кодека/контейнера нет
+     * на устройстве — молча падаем на AAC (m4a), совместимо со всеми.
+     */
     private fun encodeM4a(samples: ShortArray, sampleRate: Int, file: File): Boolean {
         if (samples.isEmpty()) return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            encodeClip(samples, sampleRate, file, MediaFormat.MIMETYPE_AUDIO_OPUS,
+                MediaMuxer.OutputFormat.MUXER_OUTPUT_OGG, 28_000)
+        ) return true
+        return encodeClip(samples, sampleRate, file, MediaFormat.MIMETYPE_AUDIO_AAC,
+            MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4, 96_000)
+    }
+
+    private fun encodeClip(
+        samples: ShortArray, sampleRate: Int, file: File,
+        mime: String, muxerFormat: Int, bitRate: Int
+    ): Boolean {
         var enc: MediaCodec? = null
         var mux: MediaMuxer? = null
         try {
-            val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 1).apply {
-                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                setInteger(MediaFormat.KEY_BIT_RATE, 96_000)
+            val fmt = MediaFormat.createAudioFormat(mime, sampleRate, 1).apply {
+                if (mime == MediaFormat.MIMETYPE_AUDIO_AAC)
+                    setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+                setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
                 setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
             }
-            val c = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            val c = MediaCodec.createEncoderByType(mime)
             c.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             c.start(); enc = c
-            val m = MediaMuxer(file.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4); mux = m
+            val m = MediaMuxer(file.absolutePath, muxerFormat); mux = m
             val info = MediaCodec.BufferInfo()
             var trackIndex = -1
             var muxerStarted = false
@@ -450,8 +468,11 @@ class VoiceRecorder(context: Context) {
                 }
             }
             runCatching { if (muxerStarted) m.stop() }
-            return file.exists() && file.length() > 0
+            val okFile = file.exists() && file.length() > 0
+            if (!okFile) runCatching { file.delete() }
+            return okFile
         } catch (_: Throwable) {
+            runCatching { file.delete() } // битый файл не оставляем — даём шанс фолбэку
             return false
         } finally {
             runCatching { enc?.stop() }; runCatching { enc?.release() }
