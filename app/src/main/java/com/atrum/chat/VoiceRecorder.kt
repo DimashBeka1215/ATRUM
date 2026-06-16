@@ -210,6 +210,9 @@ class VoiceRecorder(context: Context) {
         gtcrn = null // shared
     }
 
+    /** Порог шумового фона (dBFS): громче — включаем нейрошумодав, тише — обычный. */
+    private val noiseFloorThresholdDb = -45.0
+
     private fun finalizeGtcrn(f: File?): Boolean {
         bufWorker?.let { runCatching { it.join(2500) } }; bufWorker = null
         releaseCapture()
@@ -218,21 +221,55 @@ class VoiceRecorder(context: Context) {
         var ok = false
         try {
             if (f != null && raw != null && raw!!.isNotEmpty()) {
-                var floats: FloatArray? = FloatArray(raw!!.size) { raw!![it] / 32768f }
-                raw = null // освобождаем PCM-буфер (на 48 кГц он крупный)
-                val clean = gtcrn?.denoise(floats!!, 48_000)
-                val src = clean ?: floats!!
-                applyAirShelf(src, if (clean != null) (gtcrn?.outputRate ?: 48_000) else 48_000)
-                val samples = floatToShort(src)
-                floats = null // освобождаем вход до кодирования
-                val outRate = if (clean != null) (gtcrn?.outputRate ?: 48_000) else 48_000
-                ok = encodeM4a(samples, outRate, f)
+                // Нейросеть — ТОЛЬКО если фон реально шумный. На тихой записи DFN зря
+                // «обрабатывает» голос и портит речь → используем обычный спектральный шумодав.
+                val noisy = gtcrn != null && isNoisy(raw!!)
+                val samples: ShortArray
+                if (noisy) {
+                    var floats: FloatArray? = FloatArray(raw!!.size) { raw!![it] / 32768f }
+                    raw = null
+                    val clean = gtcrn?.denoise(floats!!, 48_000)
+                    val proc = clean ?: floats!!
+                    applyAirShelf(proc, 48_000) // воздух только после нейрочистки
+                    samples = floatToShort(proc)
+                    floats = null
+                } else {
+                    // Тихо: обычный спектральный шумодав (естественный голос, без нейросети).
+                    val nr = NoiseReducer()
+                    val head = runCatching { nr.process(raw!!, raw!!.size) }.getOrNull() ?: raw!!
+                    val tail = runCatching { nr.flush() }.getOrNull() ?: ShortArray(0)
+                    samples = if (tail.isEmpty()) head else head + tail
+                    raw = null
+                }
+                ok = encodeM4a(samples, 48_000, f)
             }
         } catch (_: Throwable) {
             ok = false
         }
         gtcrn = null
         return ok
+    }
+
+    /** Шумный ли фон: оценка шумового порога по тихим кадрам. true → нужен нейрошумодав. */
+    private fun isNoisy(pcm: ShortArray): Boolean {
+        val frame = 960 // 20 мс @ 48 кГц
+        if (pcm.size < frame * 8) return false // слишком коротко — без нейросети
+        val frames = ArrayList<Double>(pcm.size / frame + 1)
+        var i = 0
+        while (i + frame <= pcm.size) {
+            var sum = 0.0
+            var j = i
+            val end = i + frame
+            while (j < end) { val v = pcm[j].toDouble(); sum += v * v; j++ }
+            frames.add(Math.sqrt(sum / frame))
+            i += frame
+        }
+        if (frames.isEmpty()) return false
+        frames.sort()
+        // 10-й перцентиль RMS ≈ фон в паузах между словами.
+        val noiseRms = frames[(frames.size / 10).coerceIn(0, frames.size - 1)]
+        val noiseDb = 20.0 * Math.log10((noiseRms + 1e-9) / 32768.0)
+        return noiseDb > noiseFloorThresholdDb
     }
 
     private fun flattenPcm(): ShortArray = synchronized(pcmLock) {
