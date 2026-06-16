@@ -156,8 +156,9 @@ class VoiceRecorder(context: Context) {
             synchronized(pcmLock) { pcmChunks.clear(); pcmTotal = 0 }
             val sampleRate = 48_000 // DeepFilterNet полнополосный
             val configs = listOf(
-                Triple(MediaRecorder.AudioSource.VOICE_COMMUNICATION, AudioFormat.CHANNEL_IN_MONO, 1),
-                Triple(MediaRecorder.AudioSource.MIC, AudioFormat.CHANNEL_IN_MONO, 1)
+                Triple(MediaRecorder.AudioSource.UNPROCESSED, AudioFormat.CHANNEL_IN_MONO, 1),
+                Triple(MediaRecorder.AudioSource.MIC, AudioFormat.CHANNEL_IN_MONO, 1),
+                Triple(MediaRecorder.AudioSource.VOICE_COMMUNICATION, AudioFormat.CHANNEL_IN_MONO, 1)
             )
             var found: AudioRecord? = null
             for ((source, mask, _) in configs) {
@@ -495,8 +496,9 @@ class VoiceRecorder(context: Context) {
         try {
             val sampleRate = 48_000
             val configs = listOf(
-                Triple(MediaRecorder.AudioSource.VOICE_COMMUNICATION, AudioFormat.CHANNEL_IN_MONO, 1),
-                Triple(MediaRecorder.AudioSource.MIC, AudioFormat.CHANNEL_IN_MONO, 1)
+                Triple(MediaRecorder.AudioSource.UNPROCESSED, AudioFormat.CHANNEL_IN_MONO, 1),
+                Triple(MediaRecorder.AudioSource.MIC, AudioFormat.CHANNEL_IN_MONO, 1),
+                Triple(MediaRecorder.AudioSource.VOICE_COMMUNICATION, AudioFormat.CHANNEL_IN_MONO, 1)
             )
             var found: AudioRecord? = null
             var channelCount = 1
@@ -543,10 +545,11 @@ class VoiceRecorder(context: Context) {
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun attachEffects(sessionId: Int) {
-        runCatching { if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(sessionId)?.also { it.enabled = true; effects.add(it) } }
-        runCatching { if (AutomaticGainControl.isAvailable()) AutomaticGainControl.create(sessionId)?.also { it.enabled = true; effects.add(it) } }
-        runCatching { if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(sessionId)?.also { it.enabled = true; effects.add(it) } }
+        // Пишем «сырой» сигнал и обрабатываем своей цепочкой (нейро/спектр + полировка).
+        // Аппаратные NS/AGC/AEC отключены: они дублируют нашу обработку, дают «комфортный
+        // шум» в тишине и узкополосный «звонковый» тембр (как с микрофона наушников).
     }
 
     private fun encodeLoop(rec: AudioRecord, enc: MediaCodec, sampleRate: Int, channelCount: Int, bufSize: Int) {
@@ -686,8 +689,9 @@ class VoiceRecorder(context: Context) {
 
     private fun startFallback(f: File): Boolean {
         val sources = intArrayOf(
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-            MediaRecorder.AudioSource.MIC
+            MediaRecorder.AudioSource.UNPROCESSED,
+            MediaRecorder.AudioSource.MIC,
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION
         )
         for (source in sources) {
             val rec = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(appCtx)

@@ -17,6 +17,7 @@ object AudioPolish {
         val x = FloatArray(samples.size) { samples[it] / 32768f }
         highPass(x, fs, 80.0)   // 1
         normalize(x)            // 2
+        gate(x, fs)             // 2b — давим остаточный шум в паузах
         deEss(x, fs)            // 3
         limiter(x)              // 4
         return ShortArray(x.size) {
@@ -50,10 +51,28 @@ object AudioPolish {
         rms.sort()
         // 90-й перцентиль RMS ≈ уровень речи (громкие кадры).
         val speech = rms[(rms.size * 90 / 100).coerceIn(0, rms.size - 1)]
-        if (speech < 1e-4f) return // тишина — не усиливаем шум
+        if (speech < 5e-4f) return // тишина — не усиливаем шум
         val target = 0.16f // ≈ -16 dBFS RMS речи
-        val gain = (target / speech).coerceIn(0.5f, 8f) // от -6 до +18 дБ
+        val gain = (target / speech).coerceIn(0.5f, 4f) // от -6 до +12 дБ (не задираем шум)
         for (k in x.indices) x[k] *= gain
+    }
+
+    // ── 2b. Мягкий downward-экспандер: тихие участки (паузы) приглушаем, чтобы
+    //        остаточный шум/шипение не было слышно «в тишине». Речь не трогаем. ──────
+    private fun gate(x: FloatArray, fs: Int) {
+        val atk = Math.exp(-1.0 / (0.005 * fs)).toFloat() // 5 мс
+        val rel = Math.exp(-1.0 / (0.090 * fs)).toFloat() // 90 мс — плавно, без чавканья
+        var env = 0f
+        val thrLo = 0.008f   // ниже — максимальное ослабление до floorG
+        val thrHi = 0.030f   // выше — речь, без ослабления
+        val floorG = 0.30f   // не глушим в ноль (~ -10 дБ) — естественнее
+        for (i in x.indices) {
+            val a = abs(x[i])
+            env = if (a > env) atk * env + (1 - atk) * a else rel * env + (1 - rel) * a
+            val t = ((env - thrLo) / (thrHi - thrLo)).coerceIn(0f, 1f)
+            val g = floorG + (1f - floorG) * (t * t * (3f - 2f * t)) // smoothstep
+            x[i] *= g
+        }
     }
 
     // ── 3. Де-эссер (вычитающий): на пиках сибилянтов убираем часть верхней полосы ─
