@@ -599,9 +599,19 @@ class MessageAdapter(
                     ContextCompat.getColor(ctx, R.color.text_tertiary)
                 )
             }
-            val levels = msg.voiceWaveform?.takeIf { it.isNotEmpty() }?.let { Message.decodeWaveform(it) }
+            val rawLevels = msg.voiceWaveform?.takeIf { it.isNotEmpty() }?.let { Message.decodeWaveform(it) }
                 ?: IntArray(24) { 28 }
-            voiceWaveform?.setSamples(levels)
+            // Ширина дорожки ∝ длительности (вариант A): короткое — узкий пузырёк,
+            // длинное — шире, с потолком; бары прореживаем под ширину (ровная плотность).
+            voiceWaveform?.let { wv ->
+                val d = wv.resources.displayMetrics.density
+                val wfDp = (24f + totalSec * 4.2f).coerceIn(30f, 140f)
+                val wPx = (wfDp * d).toInt()
+                val barCount = (wfDp / 4.5f).toInt().coerceIn(6, rawLevels.size.coerceAtLeast(6))
+                val lp = wv.layoutParams
+                if (lp.width != wPx) { lp.width = wPx; wv.layoutParams = lp }
+                wv.setSamples(downsampleWaveform(rawLevels, barCount))
+            }
 
             fun showLoading(loading: Boolean) {
                 voiceSpinner?.visibility = if (loading) View.VISIBLE else View.GONE
@@ -1029,4 +1039,21 @@ class MessageAdapter(
                 }
         }
     }
+}
+
+
+/** Прореживает огибающую до target столбиков (пик в каждой корзине) — для ширины дорожки ∝ длительности. */
+private fun downsampleWaveform(src: IntArray, target: Int): IntArray {
+    if (src.isEmpty() || target <= 0) return src
+    if (src.size <= target) return src
+    val out = IntArray(target)
+    val bucket = src.size.toFloat() / target
+    for (i in 0 until target) {
+        val start = (i * bucket).toInt()
+        val end = ((i + 1) * bucket).toInt().coerceAtMost(src.size).coerceAtLeast(start + 1)
+        var peak = 0
+        for (j in start until end) if (src[j] > peak) peak = src[j]
+        out[i] = peak
+    }
+    return out
 }
