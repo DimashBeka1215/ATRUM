@@ -256,7 +256,8 @@ class VoiceRecorder(context: Context) {
                         else spectral
                     }
                 }
-                ok = encodeM4a(samples, 48_000, f)
+                // Мастер-полировка: HPF + нормализация громкости + де-эссер + лимитер.
+                ok = encodeM4a(AudioPolish.polish(samples, 48_000), 48_000, f)
             }
         } catch (_: Throwable) {
             ok = false
