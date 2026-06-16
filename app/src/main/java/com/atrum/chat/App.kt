@@ -31,7 +31,14 @@ class App : Application() {
             NostrRelayPool.prewarm(NostrTransport.RELAYS)
         }
         // Подчищаем кадры стикеров прошлых версий формата (в фоне — это файловый I/O).
-        Thread { StickerDiskCache.cleanupOldVersions(cacheDir) }.start()
+        Thread {
+            StickerDiskCache.cleanupOldVersions(cacheDir)
+            // Кэш проигрывания голосовых не должен расти бесконечно.
+            runCatching { StickerDiskCache.trimDir(java.io.File(cacheDir, "voice_play"), 32L * 1024 * 1024, ".m4a") }
+        }.start()
+        // Предзагрузка нейрошумодава GTCRN в фоне (модель тяжело инициализировать) —
+        // чтобы первая запись не лагала на загрузке.
+        GtcrnDenoiser.preload(this)
         CrashHandler.install(this)
 
         // Если при прошлом запуске был краш и лог сохранился — показать сразу.

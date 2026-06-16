@@ -7,16 +7,12 @@ import com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserGtcrnModelConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeechDenoiserModelConfig
 
 /**
- * Нейросетевое шумоподавление GTCRN (ICASSP 2024, ультра-лёгкая модель ~48K параметров)
- * через sherpa-onnx (k2-fsa). Давит и НЕстационарный шум — речь из ТВ, крики.
+ * Нейросетевое шумоподавление GTCRN (ICASSP 2024) через sherpa-onnx. Давит и
+ * нестационарный шум — речь из ТВ, крики. Офлайн: чистит весь клип за один run().
  *
- * Это ОФЛАЙН-денойзер: обрабатывает весь клип целиком (run(samples, rate)). Поэтому
- * запись копится в буфер, а чистка идёт один раз в конце.
- *
- * Требует:
- *   • нативные либы sherpa-onnx-jni (jniLibs) — иначе [load] вернёт null (фолбэк);
- *   • модель assets/gtcrn_simple.onnx.
- * Модель из релиза sherpa-onnx «speech-enhancement-models».
+ * Инстанс ОБЩИЙ на процесс и грузится один раз (модель тяжело инициализировать),
+ * предзагрузка — в фоне из App. Если нет нативной либы или модели — остаётся null,
+ * и запись идёт обычным путём (фолбэк).
  */
 class GtcrnDenoiser private constructor(private val impl: OfflineSpeechDenoiser) {
 
@@ -33,15 +29,41 @@ class GtcrnDenoiser private constructor(private val impl: OfflineSpeechDenoiser)
         null
     }
 
-    fun close() { runCatching { impl.release() } }
-
     companion object {
         private const val MODEL_ASSET = "gtcrn_simple.onnx"
 
-        /** null — если нет нативной либы (UnsatisfiedLinkError) или модели в assets → фолбэк. */
-        fun load(context: Context): GtcrnDenoiser? = try {
-            // Быстрая проверка наличия модели — иначе не дёргаем нативный код зря.
-            context.assets.open(MODEL_ASSET).close()
+        @Volatile private var instance: GtcrnDenoiser? = null
+        @Volatile private var loading = false
+        @Volatile private var failed = false
+        private val lock = Any()
+
+        /** Общий инстанс или null (если ещё грузится / нет либы-модели). Триггерит фоновую загрузку. */
+        fun shared(context: Context): GtcrnDenoiser? {
+            instance?.let { return it }
+            preload(context)
+            return instance
+        }
+
+        /** Запускает фоновую загрузку модели один раз (вызывать из App.onCreate). */
+        fun preload(context: Context) {
+            if (instance != null || failed) return
+            val appCtx = context.applicationContext
+            synchronized(lock) {
+                if (instance != null || failed || loading) return
+                loading = true
+            }
+            Thread {
+                val d = loadBlocking(appCtx)
+                synchronized(lock) {
+                    instance = d
+                    if (d == null) failed = true
+                    loading = false
+                }
+            }.apply { isDaemon = true; start() }
+        }
+
+        private fun loadBlocking(context: Context): GtcrnDenoiser? = try {
+            context.assets.open(MODEL_ASSET).close() // нет модели → исключение → фолбэк
             val cfg = OfflineSpeechDenoiserConfig(
                 model = OfflineSpeechDenoiserModelConfig(
                     gtcrn = OfflineSpeechDenoiserGtcrnModelConfig(model = MODEL_ASSET),

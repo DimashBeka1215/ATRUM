@@ -1035,6 +1035,8 @@ class ChatActivity : SecureActivity() {
         // Освобождаем видео-плееры webm-стикеров (ExoPlayer/GL). Без этого они продолжают
         // крутиться в фоне и утекают между чатами -> рост памяти и OOM (в т.ч. при Argon2).
         try { binding.rvMessages.adapter = null } catch (_: Exception) {}
+        VoicePlayer.stop()
+        runCatching { if (voiceRecorder.isRecording) voiceRecorder.cancel() }
         stickerPanel?.destroy()
         stickerPanel = null
         suggestJob?.cancel()
@@ -1054,6 +1056,13 @@ class ChatActivity : SecureActivity() {
     override fun onPause() {
         super.onPause()
         isInForeground = false
+        // Голосовые: не держим открытым микрофон и не играем вне экрана.
+        if (voiceRecorder.isRecording) {
+            voiceUiJob?.cancel(); voiceUiJob = null
+            runCatching { voiceRecorder.cancel() }
+            restoreInputAfterRecording()
+        }
+        VoicePlayer.stop()
         pauseVisibleStickers()
         // Останавливаем SyncEngine и коллектор событий
         if (::syncEngine.isInitialized) syncEngine.stop()
@@ -1926,17 +1935,14 @@ class ChatActivity : SecureActivity() {
                 val b64 = withContext(Dispatchers.Default) {
                     Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
                 }
-                val encryptedContent = withContext(Dispatchers.Default) {
-                    CryptoHelper.encrypt(b64, chat.chatPassword, chat.gistId)
-                }
-                val contentRef = withContext(Dispatchers.IO) {
-                    transport.uploadImage(encryptedContent, chat.chatPassword)
-                }
-                // Кэшируем контент и копируем файл под ссылку → своё голосовое сразу «готово».
-                ImageCache.put(contentRef, b64, null)
-                runCatching {
-                    val playDir = File(cacheDir, "voice_play").apply { mkdirs() }
-                    file.copyTo(File(playDir, "v_" + Integer.toHexString(contentRef.hashCode()) + ".m4a"), overwrite = true)
+                // Имя контента генерируем локально → пузырёк показываем СРАЗУ, до загрузки.
+                val contentRef = Message.newImageFileName()
+                ImageCache.put(contentRef, b64, null) // своё голосовое сразу «готово»
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val playDir = File(cacheDir, "voice_play").apply { mkdirs() }
+                        file.copyTo(File(playDir, "v_" + Integer.toHexString(contentRef.hashCode()) + ".m4a"), overwrite = true)
+                    }
                 }
                 val plaintext = Message.composePlaintext(
                     senderName = prefs.myName,
@@ -1962,11 +1968,16 @@ class ChatActivity : SecureActivity() {
                     senderUserId = prefs.myUserId,
                     isPending = true
                 )
-                chatStore.addOptimistic(pendingMsg)
+                chatStore.addOptimistic(pendingMsg) // мгновенный пузырёк
+                stopTypingSignal()
+                // Контент + строку заливаем в фоне (пузырёк уже виден).
+                val encryptedContent = withContext(Dispatchers.Default) {
+                    CryptoHelper.encrypt(b64, chat.chatPassword, chat.gistId)
+                }
+                withContext(Dispatchers.IO) { transport.saveFileChunked(contentRef, encryptedContent, chat.chatPassword, null) }
                 withContext(Dispatchers.IO) { transport.appendLine(encryptedLine = encryptedMessage) }
                 chatStore.confirmSent(encryptedMessage)
                 syncEngine.forceSync(delayMs = 0L)
-                stopTypingSignal()
                 runCatching { file.delete() }
             } catch (e: Exception) {
                 Toast.makeText(this@ChatActivity,
@@ -3225,7 +3236,7 @@ class ChatActivity : SecureActivity() {
         /** Максимальное количество фото в коллаже за одну отправку. */
         const val MAX_COLLAGE_IMAGES = 10
         /** Максимальная длительность голосового (5 минут). */
-        private const val MAX_VOICE_MS = 5 * 60 * 1000L
+        private const val MAX_VOICE_MS = 3 * 60 * 1000L
         /** Максимальное количество одновременных загрузок изображений. */
         const val MAX_CONCURRENT = 3
     }

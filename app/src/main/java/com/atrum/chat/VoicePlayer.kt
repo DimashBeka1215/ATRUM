@@ -1,5 +1,6 @@
 package com.atrum.chat
 
+import android.media.AudioAttributes
 import android.media.MediaPlayer
 import java.io.File
 
@@ -7,43 +8,61 @@ import java.io.File
  * Единый плеер голосовых: в любой момент играет ОДНО сообщение. Общий на весь экран,
  * чтобы при старте нового голосового предыдущее останавливалось.
  *
- * Колбэки прогресса/завершения вызываются в главном потоке (MediaPlayer шлёт их туда).
+ * Колбэки прогресса/завершения вызываются в главном потоке.
  */
 object VoicePlayer {
 
     private var player: MediaPlayer? = null
-    /** Ключ играющего сейчас сообщения (msgId) — чтобы адаптер знал, какую ячейку анимировать. */
+    /** Ключ играющего сейчас сообщения (msgId). */
     @Volatile var currentKey: String? = null
         private set
 
     private var onProgress: ((key: String, posMs: Int, durMs: Int) -> Unit)? = null
     private var onComplete: ((key: String) -> Unit)? = null
 
-    /** Играет файл. Если этот же ключ уже играет — ставит на паузу (toggle). */
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /**
+     * Тап по голосовому. Играет → пауза. На паузе → ПРОДОЛЖАЕТ с того же места.
+     * Другое сообщение → останавливает текущее и играет новое с начала.
+     */
     fun toggle(
         key: String,
         file: File,
         onProgress: (key: String, posMs: Int, durMs: Int) -> Unit,
         onComplete: (key: String) -> Unit
     ) {
-        if (currentKey == key && player?.isPlaying == true) {
-            pause()
+        val mp = player
+        if (currentKey == key && mp != null) {
+            this.onProgress = onProgress
+            this.onComplete = onComplete
+            if (mp.isPlaying) {
+                pause()
+            } else {
+                runCatching { mp.start(); tick() } // продолжаем с паузы, не с начала
+            }
             return
         }
-        stop() // остановить предыдущее
+        stop() // остановить предыдущее (другой ключ)
         this.onProgress = onProgress
         this.onComplete = onComplete
         try {
-            val mp = MediaPlayer()
-            mp.setDataSource(file.absolutePath)
-            mp.setOnCompletionListener {
+            val np = MediaPlayer()
+            np.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            np.setDataSource(file.absolutePath)
+            np.setOnCompletionListener {
                 val k = currentKey
                 stop()
                 if (k != null) onComplete(k)
             }
-            mp.prepare()
-            mp.start()
-            player = mp
+            np.prepare()
+            np.start()
+            player = np
             currentKey = key
             tick()
         } catch (_: Exception) {
@@ -53,7 +72,7 @@ object VoicePlayer {
 
     fun isPlaying(key: String): Boolean = currentKey == key && player?.isPlaying == true
 
-    /** Перенаправляет колбэки прогресса на видимый сейчас holder (после переиспользования ячейки). */
+    /** Перенаправляет колбэки на видимый сейчас holder (после переиспользования ячейки). */
     fun rebind(
         key: String,
         onProgress: (key: String, posMs: Int, durMs: Int) -> Unit,
@@ -68,16 +87,14 @@ object VoicePlayer {
         try {
             onProgress?.invoke(k, mp.currentPosition, mp.duration.coerceAtLeast(1))
         } catch (_: Exception) {}
-        mp.setOnSeekCompleteListener(null)
         if (mp.isPlaying) {
             handler.postDelayed({ tick() }, 60L)
         }
     }
 
-    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
-
     fun pause() {
         runCatching { player?.pause() }
+        handler.removeCallbacksAndMessages(null)
     }
 
     fun stop() {

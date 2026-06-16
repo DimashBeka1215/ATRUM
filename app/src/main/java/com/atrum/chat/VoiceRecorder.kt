@@ -77,11 +77,11 @@ class VoiceRecorder(context: Context) {
         outFile = f
         paused = false; pauseStartedAt = 0L; pausedAccumMs = 0L
 
-        gtcrn = GtcrnDenoiser.load(appCtx)
+        gtcrn = GtcrnDenoiser.shared(appCtx)
         if (gtcrn != null && startGtcrn(f)) {
             startedAt = System.currentTimeMillis(); return true
         }
-        runCatching { gtcrn?.close() }; gtcrn = null
+        gtcrn = null // shared — не закрываем
         releaseCapture()
 
         if (startAdvanced(f)) {
@@ -114,7 +114,9 @@ class VoiceRecorder(context: Context) {
         val dur = elapsedMs()
         recording = false
         val f = outFile
-        val ok = if (gtcrnMode) finalizeGtcrn(f) else { finishCommon(); f != null && f.exists() && f.length() > 0 }
+        val ok = if (gtcrnMode) {
+            if (dur < minMs) { abortGtcrn(); false } else finalizeGtcrn(f)
+        } else { finishCommon(); f != null && f.exists() && f.length() > 0 }
         resetState()
         return if (ok && f != null && f.exists() && f.length() > 0 && dur >= minMs) f to dur
         else { runCatching { f?.delete() }; null }
@@ -124,10 +126,7 @@ class VoiceRecorder(context: Context) {
         recording = false
         val f = outFile
         if (gtcrnMode) {
-            bufWorker?.let { runCatching { it.join(2500) } }; bufWorker = null
-            releaseCapture()
-            runCatching { gtcrn?.close() }; gtcrn = null
-            synchronized(pcmLock) { pcmChunks.clear(); pcmTotal = 0 }
+            abortGtcrn()
         } else {
             finishCommon()
         }
@@ -203,6 +202,14 @@ class VoiceRecorder(context: Context) {
         }
     }
 
+    /** Прерывает GTCRN-запись без нейрочистки (отмена / слишком короткое). */
+    private fun abortGtcrn() {
+        bufWorker?.let { runCatching { it.join(2500) } }; bufWorker = null
+        releaseCapture()
+        synchronized(pcmLock) { pcmChunks.clear(); pcmTotal = 0 }
+        gtcrn = null // shared
+    }
+
     private fun finalizeGtcrn(f: File?): Boolean {
         bufWorker?.let { runCatching { it.join(2500) } }; bufWorker = null
         releaseCapture()
@@ -220,7 +227,7 @@ class VoiceRecorder(context: Context) {
         } catch (_: Throwable) {
             ok = false
         }
-        runCatching { gtcrn?.close() }; gtcrn = null
+        gtcrn = null
         return ok
     }
 
@@ -252,7 +259,7 @@ class VoiceRecorder(context: Context) {
         try {
             val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 1).apply {
                 setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                setInteger(MediaFormat.KEY_BIT_RATE, 96_000)
+                setInteger(MediaFormat.KEY_BIT_RATE, 32_000)
                 setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
             }
             val c = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
