@@ -24,7 +24,7 @@ object Schnorr {
     private val Gy = BigInteger("483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8", 16)
     private val G = ECPoint(Gx, Gy)
 
-    private val BI2 = BigInteger.TWO
+    private val BI2 = BigInteger.valueOf(2L)
     private val BI3 = BigInteger.valueOf(3)
 
     // ─── EC point arithmetic ─────────────────────────────────────────────────
