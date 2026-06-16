@@ -259,8 +259,10 @@ class VoiceRecorder(context: Context) {
                         else spectral
                     }
                 }
-                // Мастер-полировка: HPF + нормализация громкости + де-эссер + лимитер.
-                ok = encodeM4a(AudioPolish.polish(samples, 48_000), 48_000, f)
+                // Дереверберация (хвост эха комнаты) → мастер-полировка
+                // (HPF + нормализация громкости + де-эссер + лимитер).
+                val dry = Dereverb.process(samples, 48_000)
+                ok = encodeM4a(AudioPolish.polish(dry, 48_000), 48_000, f)
             }
         } catch (_: Throwable) {
             ok = false
