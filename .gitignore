@@ -37,3 +37,4 @@ local.properties
 *.env 
 /main
 app/release/ 
+/models/
