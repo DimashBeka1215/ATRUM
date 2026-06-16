@@ -211,7 +211,13 @@ class VoiceRecorder(context: Context) {
     }
 
     /** Порог шумового фона (dBFS): громче — включаем нейрошумодав, тише — обычный. */
-    private val noiseFloorThresholdDb = -45.0
+    // Пороги шумового фона (dBFS) → «уровни применения» нейросети:
+    //   тише noiseLoDb        → МИНИМАЛЬНЫЙ (почти только спектральный, голос естественный)
+    //   между noiseLo и noiseHi → СРЕДНИЙ (плавный бленд двух алгоритмов)
+    //   громче noiseHiDb       → ВЫСОКИЙ (полностью нейросеть)
+    private val noiseLoDb = -50.0
+    private val noiseHiDb = -35.0
+    private val frameSamples = 960 // 20 мс @ 48 кГц
 
     private fun finalizeGtcrn(f: File?): Boolean {
         bufWorker?.let { runCatching { it.join(2500) } }; bufWorker = null
@@ -221,25 +227,34 @@ class VoiceRecorder(context: Context) {
         var ok = false
         try {
             if (f != null && raw != null && raw!!.isNotEmpty()) {
-                // Нейросеть — ТОЛЬКО если фон реально шумный. На тихой записи DFN зря
-                // «обрабатывает» голос и портит речь → используем обычный спектральный шумодав.
-                val noisy = gtcrn != null && isNoisy(raw!!)
-                val samples: ShortArray
-                if (noisy) {
-                    var floats: FloatArray? = FloatArray(raw!!.size) { raw!![it] / 32768f }
-                    raw = null
-                    val clean = gtcrn?.denoise(floats!!, 48_000)
-                    val proc = clean ?: floats!!
-                    applyAirShelf(proc, 48_000) // воздух только после нейрочистки
-                    samples = floatToShort(proc)
-                    floats = null
-                } else {
-                    // Тихо: обычный спектральный шумодав (естественный голос, без нейросети).
-                    val nr = NoiseReducer()
-                    val head = runCatching { nr.process(raw!!, raw!!.size) }.getOrNull() ?: raw!!
-                    val tail = runCatching { nr.flush() }.getOrNull() ?: ShortArray(0)
-                    samples = if (tail.isEmpty()) head else head + tail
-                    raw = null
+                // Покадровый «уровень применения» нейросети 0..1, плавный во времени.
+                val w = computeMixWeights(raw!!)
+                val maxW = w.maxOrNull() ?: 0f
+                val minW = w.minOrNull() ?: 0f
+                val samples: ShortArray = when {
+                    // Тихо везде → только обычный (спектральный) шумодав; голос не трогаем нейросетью.
+                    gtcrn == null || maxW < 0.02f -> {
+                        val out = runSpectral(raw!!); raw = null; out
+                    }
+                    // Шумно везде → полностью нейросеть (+воздух).
+                    minW > 0.98f -> {
+                        var fin: FloatArray? = FloatArray(raw!!.size) { raw!![it] / 32768f }
+                        raw = null
+                        val ne = gtcrn?.denoise(fin!!, 48_000) ?: fin!!
+                        applyAirShelf(ne, 48_000)
+                        fin = null
+                        floatToShort(ne)
+                    }
+                    // Переход (например, ушёл из шума в тишину) → ПЛАВНЫЙ бленд двух алгоритмов.
+                    else -> {
+                        val spectral = runSpectral(raw!!)
+                        var fin: FloatArray? = FloatArray(raw!!.size) { raw!![it] / 32768f }
+                        raw = null
+                        val neural = gtcrn?.denoise(fin!!, 48_000)
+                        fin = null
+                        if (neural != null) { applyAirShelf(neural, 48_000); blend(spectral, neural, w) }
+                        else spectral
+                    }
                 }
                 ok = encodeM4a(samples, 48_000, f)
             }
@@ -250,26 +265,67 @@ class VoiceRecorder(context: Context) {
         return ok
     }
 
-    /** Шумный ли фон: оценка шумового порога по тихим кадрам. true → нужен нейрошумодав. */
-    private fun isNoisy(pcm: ShortArray): Boolean {
-        val frame = 960 // 20 мс @ 48 кГц
-        if (pcm.size < frame * 8) return false // слишком коротко — без нейросети
-        val frames = ArrayList<Double>(pcm.size / frame + 1)
-        var i = 0
-        while (i + frame <= pcm.size) {
+    /** Обычный (спектральный) шумодав по всему буферу. */
+    private fun runSpectral(pcm: ShortArray): ShortArray {
+        val nr = NoiseReducer()
+        val head = runCatching { nr.process(pcm, pcm.size) }.getOrNull() ?: pcm
+        val tail = runCatching { nr.flush() }.getOrNull() ?: ShortArray(0)
+        return if (tail.isEmpty()) head else head + tail
+    }
+
+    /**
+     * Покадровый «уровень применения» нейросети 0..1 по ЛОКАЛЬНОМУ шумовому фону.
+     * Фон оценивается 15-м перцентилем RMS в скользящем окне ~1.5 с (адаптируется в обе
+     * стороны), маппится smoothstep'ом и сглаживается во времени — для плавного перехода
+     * между алгоритмами, когда человек переходит из шумного места в тихое.
+     */
+    private fun computeMixWeights(pcm: ShortArray): FloatArray {
+        val nFrames = pcm.size / frameSamples
+        if (nFrames <= 0) return FloatArray(0)
+        val db = DoubleArray(nFrames)
+        for (fr in 0 until nFrames) {
             var sum = 0.0
-            var j = i
-            val end = i + frame
+            var j = fr * frameSamples
+            val end = j + frameSamples
             while (j < end) { val v = pcm[j].toDouble(); sum += v * v; j++ }
-            frames.add(Math.sqrt(sum / frame))
-            i += frame
+            db[fr] = 20.0 * Math.log10((Math.sqrt(sum / frameSamples) + 1e-9) / 32768.0)
         }
-        if (frames.isEmpty()) return false
-        frames.sort()
-        // 10-й перцентиль RMS ≈ фон в паузах между словами.
-        val noiseRms = frames[(frames.size / 10).coerceIn(0, frames.size - 1)]
-        val noiseDb = 20.0 * Math.log10((noiseRms + 1e-9) / 32768.0)
-        return noiseDb > noiseFloorThresholdDb
+        val half = 37 // ~0.75 с в каждую сторону окна
+        val floorDb = DoubleArray(nFrames)
+        val win = ArrayList<Double>(2 * half + 1)
+        for (fr in 0 until nFrames) {
+            win.clear()
+            val lo = (fr - half).coerceAtLeast(0)
+            val hi = (fr + half).coerceAtMost(nFrames - 1)
+            for (k in lo..hi) win.add(db[k])
+            win.sort()
+            floorDb[fr] = win[(win.size * 15 / 100).coerceIn(0, win.size - 1)]
+        }
+        val w = FloatArray(nFrames)
+        var sw = 0f
+        val alpha = 0.92f // временное сглаживание (~0.25 с) — без рывков
+        for (fr in 0 until nFrames) {
+            val t = ((floorDb[fr] - noiseLoDb) / (noiseHiDb - noiseLoDb)).coerceIn(0.0, 1.0)
+            val target = (t * t * (3 - 2 * t)).toFloat() // smoothstep
+            sw = alpha * sw + (1 - alpha) * target
+            w[fr] = sw
+        }
+        return w
+    }
+
+    /** Плавный бленд: out = (1-w)*спектральный + w*нейро, w покадрово (0..1). */
+    private fun blend(spectral: ShortArray, neural: FloatArray, w: FloatArray): ShortArray {
+        val n = minOf(spectral.size, neural.size)
+        val out = ShortArray(n)
+        val wLast = (w.size - 1).coerceAtLeast(0)
+        for (i in 0 until n) {
+            val wi = if (w.isEmpty()) 0f else w[(i / frameSamples).coerceIn(0, wLast)]
+            val sp = spectral[i] / 32768f
+            var v = ((1f - wi) * sp + wi * neural[i]) * 32768f
+            if (v > 32767f) v = 32767f else if (v < -32768f) v = -32768f
+            out[i] = v.toInt().toShort()
+        }
+        return out
     }
 
     private fun flattenPcm(): ShortArray = synchronized(pcmLock) {
