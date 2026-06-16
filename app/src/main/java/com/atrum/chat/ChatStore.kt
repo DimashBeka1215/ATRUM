@@ -51,6 +51,23 @@ class ChatStore {
         emit()
     }
 
+    /**
+     * Обновляет прогресс отправки голосового у pending-сообщения (на месте, §1.5).
+     * progress: VP_PROCESSING или 0..100. copy() меняет equals → StateFlow эмитит.
+     */
+    fun updateVoiceProgress(encryptedLine: String, progress: Int) {
+        val m = pendingByRaw[encryptedLine] ?: return
+        if (m.voiceProgress != progress) {
+            pendingByRaw[encryptedLine] = m.copy(voiceProgress = progress)
+            emit()
+        }
+    }
+
+    /** Убирает оптимистичное сообщение (например, запись оказалась слишком короткой). */
+    fun dropPending(encryptedLine: String) {
+        if (pendingByRaw.remove(encryptedLine) != null) emit()
+    }
+
     fun failSend(encryptedLine: String) {
         if (pendingByRaw.containsKey(encryptedLine)) {
             emit()

@@ -283,6 +283,7 @@ class MessageAdapter(
         private val voicePlayBtn: ImageView? = itemView.findViewById(R.id.btn_voice_play)
         private val voiceWaveform: WaveformView? = itemView.findViewById(R.id.voice_waveform)
         private val voiceSpinner: View? = itemView.findViewById(R.id.voice_spinner)
+        private val voiceRing: android.widget.ProgressBar? = itemView.findViewById(R.id.voice_progress_ring)
         private val voiceDur: TextView? = itemView.findViewById(R.id.tv_voice_dur)
         private val tickView: ImageView? = itemView.findViewById(R.id.iv_tick)
         /** The rounded bubble container — background changes between classic and glass modes. */
@@ -630,6 +631,26 @@ class MessageAdapter(
                 playBtn.setImageResource(R.drawable.ic_play)
                 voiceWaveform?.setProgress(0f)
             }
+
+            // Состояние отправки своего голосового: обработка → загрузка с прогрессом.
+            if (msg.isSelf && msg.isPending && msg.voiceProgress != Message.VP_NONE) {
+                voiceWaveform?.alpha = 0.45f
+                playBtn.visibility = View.INVISIBLE
+                playBtn.setOnClickListener(null)
+                if (msg.voiceProgress == Message.VP_PROCESSING) {
+                    voiceSpinner?.visibility = View.VISIBLE
+                    voiceRing?.visibility = View.GONE
+                    voiceDur?.text = voiceTime(totalSec * 1000)
+                } else {
+                    voiceSpinner?.visibility = View.GONE
+                    voiceRing?.visibility = View.VISIBLE
+                    voiceRing?.progress = msg.voiceProgress.coerceIn(0, 100)
+                    voiceDur?.text = msg.voiceProgress.coerceIn(0, 100).toString() + "%"
+                }
+                return
+            }
+            voiceRing?.visibility = View.GONE
+            voiceWaveform?.alpha = 1f
 
             // Индикатор готовности: файл уже скачан → play; иначе спиннер + фоновая загрузка.
             val cached = File(File(ctx.cacheDir, "voice_play"), "v_" + Integer.toHexString(ref.hashCode()) + ".m4a")

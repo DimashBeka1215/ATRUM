@@ -1892,23 +1892,25 @@ class ChatActivity : SecureActivity() {
     private fun finishVoiceRecording(cancel: Boolean) {
         voiceUiJob?.cancel(); voiceUiJob = null
         val levelsSnapshot = ArrayList(recordLevels)
+        val estDurMs = runCatching { voiceRecorder.elapsedMs() }.getOrDefault(0L)
         restoreInputAfterRecording()
         if (cancel) {
             lifecycleScope.launch(Dispatchers.IO) { runCatching { voiceRecorder.cancel() } }
             return
         }
-        // Чистка нейросетью + кодирование — тяжёлые, делаем в фоне, чтобы UI не залипал
-        // после «отправить». Поле ввода уже вернулось, пользователь не ждёт.
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) { voiceRecorder.stop(minMs = 700L) }
-            if (result == null) {
+        if (estDurMs < 700L) {
+            // Слишком коротко — просто останавливаем, пузырёк не показываем.
+            lifecycleScope.launch {
+                withContext(Dispatchers.IO) { runCatching { voiceRecorder.stop(minMs = 700L) } }
                 Toast.makeText(this@ChatActivity, R.string.voice_too_short, Toast.LENGTH_SHORT).show()
-                return@launch
             }
-            val (file, durMs) = result
-            val wf = Message.encodeWaveform(downsampleLevels(levelsSnapshot, 40))
-            sendVoice(file, ((durMs + 500L) / 1000L).toInt().coerceAtLeast(1), wf)
+            return
         }
+        // Длительность и дорожка известны сразу → пузырёк показываем мгновенно,
+        // обработку и загрузку делаем после (видно прогресс).
+        val durationSec = ((estDurMs + 500L) / 1000L).toInt().coerceAtLeast(1)
+        val wf = Message.encodeWaveform(downsampleLevels(levelsSnapshot, 40))
+        sendVoice(durationSec, wf)
     }
 
     /** Сжимает накопленные уровни до target столбиков (берём пик в каждой корзине). */
@@ -1927,23 +1929,14 @@ class ChatActivity : SecureActivity() {
         return out
     }
 
-    private fun sendVoice(file: File, durationSec: Int, waveform: String) {
+    private fun sendVoice(durationSec: Int, waveform: String) {
         if (sendManager.isPunished()) return
         val now = System.currentTimeMillis()
+        val contentRef = Message.newImageFileName()
         lifecycleScope.launch {
+            var pendingRaw: String? = null
             try {
-                val b64 = withContext(Dispatchers.Default) {
-                    Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
-                }
-                // Имя контента генерируем локально → пузырёк показываем СРАЗУ, до загрузки.
-                val contentRef = Message.newImageFileName()
-                ImageCache.put(contentRef, b64, null) // своё голосовое сразу «готово»
-                withContext(Dispatchers.IO) {
-                    runCatching {
-                        val playDir = File(cacheDir, "voice_play").apply { mkdirs() }
-                        file.copyTo(File(playDir, "v_" + Integer.toHexString(contentRef.hashCode()) + ".m4a"), overwrite = true)
-                    }
-                }
+                // 1) Шифруем строку и показываем пузырёк СРАЗУ — до обработки и загрузки (§1.5).
                 val plaintext = Message.composePlaintext(
                     senderName = prefs.myName,
                     senderUserId = prefs.myUserId,
@@ -1956,30 +1949,60 @@ class ChatActivity : SecureActivity() {
                 val encryptedMessage = withContext(Dispatchers.Default) {
                     CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.gistId)
                 }
-                val pendingMsg = Message(
-                    sender = prefs.myName,
-                    text = "",
-                    isSelf = true,
-                    rawEncrypted = encryptedMessage,
-                    timestampMs = now,
-                    voiceFileName = contentRef,
-                    voiceDurationSec = durationSec,
-                    voiceWaveform = waveform,
-                    senderUserId = prefs.myUserId,
-                    isPending = true
+                pendingRaw = encryptedMessage
+                chatStore.addOptimistic(
+                    Message(
+                        sender = prefs.myName,
+                        text = "",
+                        isSelf = true,
+                        rawEncrypted = encryptedMessage,
+                        timestampMs = now,
+                        voiceFileName = contentRef,
+                        voiceDurationSec = durationSec,
+                        voiceWaveform = waveform,
+                        senderUserId = prefs.myUserId,
+                        isPending = true,
+                        voiceProgress = Message.VP_PROCESSING
+                    )
                 )
-                chatStore.addOptimistic(pendingMsg) // мгновенный пузырёк
                 stopTypingSignal()
-                // Контент + строку заливаем в фоне (пузырёк уже виден).
+
+                // 2) Тяжёлая обработка (нейрошумодав + кодек) в фоне — кольцо «обработка».
+                val result = withContext(Dispatchers.IO) { voiceRecorder.stop(minMs = 700L) }
+                if (result == null) {
+                    chatStore.dropPending(encryptedMessage)
+                    Toast.makeText(this@ChatActivity, R.string.voice_too_short, Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                val file = result.first
+                val b64 = withContext(Dispatchers.Default) {
+                    Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
+                }
+                ImageCache.put(contentRef, b64, null) // своё голосовое сразу доступно для прослушивания
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val playDir = File(cacheDir, "voice_play").apply { mkdirs() }
+                        file.copyTo(File(playDir, "v_" + Integer.toHexString(contentRef.hashCode()) + ".m4a"), overwrite = true)
+                    }
+                }
+
+                // 3) Загрузка контента с прогрессом по чанкам — видно, сколько осталось.
+                chatStore.updateVoiceProgress(encryptedMessage, 0)
                 val encryptedContent = withContext(Dispatchers.Default) {
                     CryptoHelper.encrypt(b64, chat.chatPassword, chat.gistId)
                 }
-                withContext(Dispatchers.IO) { transport.saveFileChunked(contentRef, encryptedContent, chat.chatPassword, null) }
+                withContext(Dispatchers.IO) {
+                    transport.saveFileChunked(contentRef, encryptedContent, chat.chatPassword) { cur, total ->
+                        val pct = if (total > 0) (cur * 100 / total).coerceIn(0, 100) else 100
+                        chatStore.updateVoiceProgress(encryptedMessage, pct)
+                    }
+                }
                 withContext(Dispatchers.IO) { transport.appendLine(encryptedLine = encryptedMessage) }
                 chatStore.confirmSent(encryptedMessage)
                 syncEngine.forceSync(delayMs = 0L)
                 runCatching { file.delete() }
             } catch (e: Exception) {
+                pendingRaw?.let { chatStore.dropPending(it) }
                 Toast.makeText(this@ChatActivity,
                     getString(R.string.error_send) + "\n" + (e.message?.take(120) ?: "unknown"),
                     Toast.LENGTH_LONG).show()

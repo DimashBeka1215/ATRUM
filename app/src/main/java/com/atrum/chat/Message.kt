@@ -46,7 +46,13 @@ data class Message(
      * true = сообщение ещё не подтверждено сервером (отображается с иконкой часов).
      * Никогда не сохраняется в gist — только в памяти адаптера.
      */
-    val isPending: Boolean = false
+    val isPending: Boolean = false,
+    /**
+     * Прогресс отправки голосового (только UI, не синкается, не сохраняется в gist):
+     * VP_NONE — обычное состояние; VP_PROCESSING — идёт шумодав/кодек (неопредел. кольцо);
+     * 0..100 — процент загрузки. Сбрасывается после подтверждения отправки.
+     */
+    val voiceProgress: Int = VP_NONE
 ) {
     val isReply: Boolean get() = quotedSender != null
     /** Стабильный уникальный ключ сообщения для режима выбора. */
@@ -59,6 +65,10 @@ data class Message(
     val isMultiImage: Boolean get() = imageFileNames != null && imageFileNames.isNotEmpty()
 
     companion object {
+        /** Состояния voiceProgress. 0..100 — процент загрузки. */
+        const val VP_NONE = -1
+        const val VP_PROCESSING = -2
+
         private val US: Char = Char(0x1F)
         private val RS: Char = Char(0x1E)
         private val SOH: Char = Char(0x01)
