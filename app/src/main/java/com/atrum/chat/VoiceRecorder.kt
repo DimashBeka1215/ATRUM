@@ -221,7 +221,9 @@ class VoiceRecorder(context: Context) {
                 var floats: FloatArray? = FloatArray(raw!!.size) { raw!![it] / 32768f }
                 raw = null // освобождаем PCM-буфер (на 48 кГц он крупный)
                 val clean = gtcrn?.denoise(floats!!, 48_000)
-                val samples = floatToShort(clean ?: floats!!)
+                val src = clean ?: floats!!
+                applyAirShelf(src, if (clean != null) (gtcrn?.outputRate ?: 48_000) else 48_000)
+                val samples = floatToShort(src)
                 floats = null // освобождаем вход до кодирования
                 val outRate = if (clean != null) (gtcrn?.outputRate ?: 48_000) else 48_000
                 ok = encodeM4a(samples, outRate, f)
@@ -238,6 +240,39 @@ class VoiceRecorder(context: Context) {
         var off = 0
         for (c in pcmChunks) { System.arraycopy(c, 0, out, off, c.size); off += c.size }
         out
+    }
+
+    /**
+     * «Воздух»: мягкий high-shelf +3 дБ от ~7.5 кГц (RBJ biquad). Добавляет открытости/
+     * прозрачности голосу. Применяется к УЖЕ очищенному (DFN) звуку — без подъёма шума.
+     */
+    private fun applyAirShelf(x: FloatArray, fs: Int) {
+        if (x.isEmpty() || fs <= 0) return
+        val fc = 7500.0
+        val gainDb = 3.0
+        val q = 0.707
+        val a = Math.pow(10.0, gainDb / 40.0)
+        val w0 = 2.0 * Math.PI * fc / fs
+        val cosw = Math.cos(w0)
+        val sinw = Math.sin(w0)
+        val alpha = sinw / (2.0 * q)
+        val twoSqrtAAlpha = 2.0 * Math.sqrt(a) * alpha
+        val b0 = a * ((a + 1) + (a - 1) * cosw + twoSqrtAAlpha)
+        val b1 = -2.0 * a * ((a - 1) + (a + 1) * cosw)
+        val b2 = a * ((a + 1) + (a - 1) * cosw - twoSqrtAAlpha)
+        val a0 = (a + 1) - (a - 1) * cosw + twoSqrtAAlpha
+        val a1 = 2.0 * ((a - 1) - (a + 1) * cosw)
+        val a2 = (a + 1) - (a - 1) * cosw - twoSqrtAAlpha
+        val nb0 = (b0 / a0).toFloat(); val nb1 = (b1 / a0).toFloat(); val nb2 = (b2 / a0).toFloat()
+        val na1 = (a1 / a0).toFloat(); val na2 = (a2 / a0).toFloat()
+        var x1 = 0f; var x2 = 0f; var y1 = 0f; var y2 = 0f
+        for (i in x.indices) {
+            val xn = x[i]
+            var yn = nb0 * xn + nb1 * x1 + nb2 * x2 - na1 * y1 - na2 * y2
+            if (yn > 1f) yn = 1f else if (yn < -1f) yn = -1f
+            x2 = x1; x1 = xn; y2 = y1; y1 = yn
+            x[i] = yn
+        }
     }
 
     private fun floatToShort(f: FloatArray): ShortArray = ShortArray(f.size) {
@@ -261,7 +296,7 @@ class VoiceRecorder(context: Context) {
         try {
             val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 1).apply {
                 setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                setInteger(MediaFormat.KEY_BIT_RATE, 64_000)
+                setInteger(MediaFormat.KEY_BIT_RATE, 96_000)
                 setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
             }
             val c = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
