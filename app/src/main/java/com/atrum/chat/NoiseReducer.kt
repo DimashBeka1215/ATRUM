@@ -32,6 +32,8 @@ class NoiseReducer {
 
     private val noisePow = FloatArray(half + 1)
     private val gainSmooth = FloatArray(half + 1) { 1f }
+    private val gainRaw = FloatArray(half + 1) { 1f }
+    private val gainFreq = FloatArray(half + 1) { 1f }
     private var frame = 0
 
     // ── Параметры (консервативные — приоритет качеству голоса) ──────────────────
@@ -92,27 +94,30 @@ class NoiseReducer {
         for (i in 0 until n) { re[i] = pending[i] * window[i]; im[i] = 0f }
         fft(re, im, false)
 
+        // 1) Сырое усиление по бинам (спектральное вычитание со спектральным полом).
         for (k in 0..half) {
             val p = re[k] * re[k] + im[k] * im[k]
-            // Оценка шума.
             if (frame < initFrames) {
                 noisePow[k] = (noisePow[k] * frame + p) / (frame + 1)
             } else {
                 noisePow[k] = if (p < noisePow[k]) p else noisePow[k] * noiseRise
             }
-            // Спектральное вычитание со спектральным полом.
             val sub = p - overSub * noisePow[k]
             val cleanPow = if (sub > floorGain * floorGain * p) sub else floorGain * floorGain * p
             var g = if (p > 1e-12f) sqrt(cleanPow / p) else 1f
             if (g > 1f) g = 1f
-            // Сглаживание усиления во времени.
-            g = gainTimeSmooth * gainSmooth[k] + (1f - gainTimeSmooth) * g
+            gainRaw[k] = g
+        }
+        // 2) Частотное сглаживание усиления (3-точечное) — убирает бин-к-бину
+        //    дребезг, главный источник «металлического»/робот-призвука.
+        gainFreq[0] = gainRaw[0]; gainFreq[half] = gainRaw[half]
+        for (k in 1 until half) gainFreq[k] = 0.25f * gainRaw[k - 1] + 0.5f * gainRaw[k] + 0.25f * gainRaw[k + 1]
+        // 3) Временное сглаживание + применение (+ симметрия отрицательных частот).
+        for (k in 0..half) {
+            val g = gainTimeSmooth * gainSmooth[k] + (1f - gainTimeSmooth) * gainFreq[k]
             gainSmooth[k] = g
             re[k] *= g; im[k] *= g
-            // Симметрия для отрицательных частот.
-            if (k in 1 until half) {
-                re[n - k] *= g; im[n - k] *= g
-            }
+            if (k in 1 until half) { re[n - k] *= g; im[n - k] *= g }
         }
 
         fft(re, im, true)

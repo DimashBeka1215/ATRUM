@@ -22,7 +22,8 @@ object Dereverb {
     private const val T60 = 0.45         // предполагаемое время реверберации, c
     private const val LATE_MS = 0.048    // начало «поздней» части после прямого звука, c
     private const val BETA = 1.0f        // коэффициент вычитания
-    private const val GMIN = 0.32f       // нижний предел усиления (~−10 дБ) — мягко
+    private const val GMIN = 0.34f       // нижний предел усиления (~−9 дБ) — мягко
+    private const val GT = 0.55f         // сглаживание усиления во времени (анти musical-noise)
 
     fun process(samples: ShortArray, fs: Int): ShortArray {
         if (samples.size < N * 2) return samples
@@ -49,6 +50,9 @@ object Dereverb {
         val acc = FloatArray(samples.size)
         val re = FloatArray(N)
         val im = FloatArray(N)
+        val gRaw = FloatArray(nBins)
+        val gFreq = FloatArray(nBins)
+        val gPrev = FloatArray(nBins) { 1f } // усиление прошлого кадра (временное сглаживание)
 
         for (t in 0 until nFrames) {
             val start = t * HOP
@@ -58,15 +62,27 @@ object Dereverb {
             for (k in 0 until nBins) curPow[k] = re[k] * re[k] + im[k] * im[k]
             if (t >= delayFrames) {
                 val past = powHist[(t - delayFrames) % powHist.size]
+                // сырое усиление по бинам
                 for (k in 0 until nBins) {
                     val cur = curPow[k] + 1e-9f
                     val late = decayD * past[k]
                     var g = 1f - BETA * late / cur
                     if (g < GMIN) g = GMIN
                     if (g > 1f) g = 1f
-                    re[k] *= g; im[k] *= g
-                    if (k in 1 until N / 2) { re[N - k] *= g; im[N - k] *= g } // зеркальный бин
+                    gRaw[k] = g
                 }
+                // частотное сглаживание (3-точечное) — убирает бин-к-бину дребезг
+                gFreq[0] = gRaw[0]; gFreq[nBins - 1] = gRaw[nBins - 1]
+                for (k in 1 until nBins - 1) gFreq[k] = 0.25f * gRaw[k - 1] + 0.5f * gRaw[k] + 0.25f * gRaw[k + 1]
+                // временное сглаживание + применение (+ зеркальные бины)
+                for (k in 0 until nBins) {
+                    val g = GT * gPrev[k] + (1f - GT) * gFreq[k]
+                    gPrev[k] = g
+                    re[k] *= g; im[k] *= g
+                    if (k in 1 until N / 2) { re[N - k] *= g; im[N - k] *= g }
+                }
+            } else {
+                for (k in 0 until nBins) gPrev[k] = 1f // прогрев: без скачка при включении
             }
             fft(re, im, true)
             for (i in 0 until N) acc[start + i] += re[i] * win[i]
