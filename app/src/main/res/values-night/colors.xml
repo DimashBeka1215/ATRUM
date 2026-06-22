@@ -19,6 +19,8 @@
 
     <!-- Фиолетовая гамма -->
     <color name="accent">#9D4EDD</color>
+    <!-- Полупрозрачный accent для оверлея выделения поверх фото. -->
+    <color name="accent_overlay">#339D4EDD</color>
     <color name="accent_dark">#7B2CBF</color>
     <color name="accent_light">#C77DFF</color>
     <color name="accent_glow">#1F9D4EDD</color>
@@ -55,4 +57,6 @@
     <color name="warning_muted">#D49E5D</color>
     <!-- Тёмный текст/иконка поверх сплошной жёлтой плашки — янтарный фон одинаков в обеих темах. -->
     <color name="warning_on">#412402</color>
+    <color name="voice_limit_bg">#FFD23F</color>
+    <color name="voice_limit_on">#4A3500</color>
 </resources>

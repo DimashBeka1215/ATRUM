@@ -30,9 +30,16 @@ class PartnerProfileActivity : AppCompatActivity() {
         const val EXTRA_GIST_ID       = "gist_id"
         const val EXTRA_GIST_TOKEN    = "gist_token"
         const val EXTRA_CHAT_PASSWORD = "chat_password"
+        const val EXTRA_CHAT_ID       = "chat_id"
         const val EXTRA_IMAGE_REFS    = "image_refs"
+        const val EXTRA_IMAGE_MSGIDS  = "image_msgids"
+        const val EXTRA_IMAGE_SELF    = "image_self"
         const val EXTRA_VOICE_REFS    = "voice_refs"
+        const val EXTRA_VOICE_MSGIDS  = "voice_msgids"
+        const val EXTRA_VOICE_SELF    = "voice_self"
         const val EXTRA_LINKS         = "links"
+        const val EXTRA_LINK_MSGIDS   = "link_msgids"
+        const val EXTRA_LINK_SELF     = "link_self"
         const val EXTRA_IDENTITY_PUB          = "identity_pub"
         const val EXTRA_EPH_PUB               = "eph_pub"
         const val EXTRA_EPH_SIG               = "eph_sig"
@@ -41,6 +48,13 @@ class PartnerProfileActivity : AppCompatActivity() {
 
     private var shieldPulse: android.animation.Animator? = null
     private var activeVoiceIcon: ImageView? = null
+
+    // Данные для перехода в список медиа и к исходным сообщениям.
+    private var chatIdForMedia: Long = -1L
+    private var mGistId = ""; private var mGistToken = ""; private var mChatPassword = ""
+    private var photoRefsAll = ArrayList<String>(); private var photoMsgIds = ArrayList<String>(); private var photoSelf = ArrayList<String>()
+    private var voiceItemsAll = ArrayList<String>(); private var voiceMsgIds = ArrayList<String>(); private var voiceSelf = ArrayList<String>()
+    private var linkItemsAll = ArrayList<String>(); private var linkMsgIds = ArrayList<String>(); private var linkSelf = ArrayList<String>()
 
     // ── Взаимная сверка (живой статус) ─────────────────────────────────────────
     private var verifyGistId = ""
@@ -64,6 +78,18 @@ class PartnerProfileActivity : AppCompatActivity() {
         val imageRefs    = intent.getStringArrayListExtra(EXTRA_IMAGE_REFS) ?: arrayListOf()
         val voiceItems   = intent.getStringArrayListExtra(EXTRA_VOICE_REFS) ?: arrayListOf()
         val linkItems    = intent.getStringArrayListExtra(EXTRA_LINKS) ?: arrayListOf()
+
+        chatIdForMedia = intent.getLongExtra(EXTRA_CHAT_ID, -1L)
+        mGistId = gistId; mGistToken = gistToken; mChatPassword = chatPassword
+        photoRefsAll = imageRefs
+        photoMsgIds = intent.getStringArrayListExtra(EXTRA_IMAGE_MSGIDS) ?: arrayListOf()
+        photoSelf   = intent.getStringArrayListExtra(EXTRA_IMAGE_SELF) ?: arrayListOf()
+        voiceItemsAll = voiceItems
+        voiceMsgIds = intent.getStringArrayListExtra(EXTRA_VOICE_MSGIDS) ?: arrayListOf()
+        voiceSelf   = intent.getStringArrayListExtra(EXTRA_VOICE_SELF) ?: arrayListOf()
+        linkItemsAll = linkItems
+        linkMsgIds = intent.getStringArrayListExtra(EXTRA_LINK_MSGIDS) ?: arrayListOf()
+        linkSelf   = intent.getStringArrayListExtra(EXTRA_LINK_SELF) ?: arrayListOf()
 
         // Сохраняем для живой сверки (публикация подтверждения + опрос профиля партнёра).
         verifyGistId = gistId
@@ -168,7 +194,7 @@ class PartnerProfileActivity : AppCompatActivity() {
 
         if (more > 0) {
             allBtn.visibility = View.VISIBLE
-            allBtn.setOnClickListener { openPhotoGallery(refs, 0) }
+            allBtn.setOnClickListener { openMediaList("photos") }
         } else {
             allBtn.visibility = View.GONE
         }
@@ -202,10 +228,33 @@ class PartnerProfileActivity : AppCompatActivity() {
                 }
             }
 
-            cell.setOnClickListener {
-                openPhotoGallery(refs, refs.size - display.size + index)
+            if (index == display.lastIndex && more > 0) {
+                cell.setOnClickListener { openMediaList("photos") }
+            } else {
+                cell.setOnClickListener { openPhotoGallery(refs, refs.size - display.size + index) }
             }
         }
+    }
+
+    private fun openMediaList(mode: String) {
+        val items: ArrayList<String>; val msgIds: ArrayList<String>; val self: ArrayList<String>; val title: String
+        when (mode) {
+            "photos" -> { items = photoRefsAll; msgIds = photoMsgIds; self = photoSelf; title = getString(R.string.profile_photos_label) }
+            "voice"  -> { items = voiceItemsAll; msgIds = voiceMsgIds; self = voiceSelf; title = getString(R.string.profile_voice_label) }
+            else     -> { items = linkItemsAll; msgIds = linkMsgIds; self = linkSelf; title = getString(R.string.profile_links_label) }
+        }
+        val intent = android.content.Intent(this, MediaListActivity::class.java).apply {
+            putExtra(MediaListActivity.EXTRA_MODE, mode)
+            putExtra(MediaListActivity.EXTRA_TITLE, title)
+            putExtra(MediaListActivity.EXTRA_CHAT_ID, chatIdForMedia)
+            putExtra(MediaListActivity.EXTRA_GIST_ID, mGistId)
+            putExtra(MediaListActivity.EXTRA_GIST_TOKEN, mGistToken)
+            putExtra(MediaListActivity.EXTRA_CHAT_PASSWORD, mChatPassword)
+            putStringArrayListExtra(MediaListActivity.EXTRA_ITEMS, items)
+            putStringArrayListExtra(MediaListActivity.EXTRA_MSGIDS, msgIds)
+            putStringArrayListExtra(MediaListActivity.EXTRA_SELF, self)
+        }
+        startActivity(intent)
     }
 
     private fun openPhotoGallery(refs: List<String>, startIndex: Int) {
@@ -228,11 +277,7 @@ class PartnerProfileActivity : AppCompatActivity() {
         renderLinks(container, links.take(preview))
         if (links.size > preview) {
             allBtn.visibility = View.VISIBLE
-            var expanded = false
-            allBtn.setOnClickListener {
-                expanded = !expanded
-                renderLinks(container, if (expanded) links else links.take(preview))
-            }
+            allBtn.setOnClickListener { openMediaList("links") }
         } else allBtn.visibility = View.GONE
     }
 
@@ -281,11 +326,7 @@ class PartnerProfileActivity : AppCompatActivity() {
         renderVoice(container, parsed.take(preview), loader)
         if (parsed.size > preview) {
             allBtn.visibility = View.VISIBLE
-            var expanded = false
-            allBtn.setOnClickListener {
-                expanded = !expanded
-                renderVoice(container, if (expanded) parsed else parsed.take(preview), loader)
-            }
+            allBtn.setOnClickListener { openMediaList("voice") }
         } else allBtn.visibility = View.GONE
     }
 

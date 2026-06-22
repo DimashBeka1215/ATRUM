@@ -173,6 +173,10 @@ class ChatActivity : SecureActivity() {
     /** Последний загруженный список сообщений — для selection mode (copy/delete). */
     private var currentMessages: List<Message> = emptyList()
 
+    // Отложенные действия из списка медиа (применяются после загрузки сообщений).
+    private var pendingJumpMsgId: String? = null
+    private var pendingDeleteMsgId: String? = null
+
     // deletedTombstones перенесены в ChatStore (chatStore.addTombstone / removeTombstone)
 
     // ── Reactions ─────────────────────────────────────────────────────────────
@@ -306,6 +310,9 @@ class ChatActivity : SecureActivity() {
             finish()
             return
         }
+        // Отложенные действия из списка медиа — применятся, когда сообщения загрузятся.
+        pendingJumpMsgId = intent.getStringExtra(EXTRA_SCROLL_TO_MSGID)
+        pendingDeleteMsgId = intent.getStringExtra(EXTRA_DELETE_MSGID)
 
         lifecycleScope.launch {
           try {
@@ -558,20 +565,32 @@ class ChatActivity : SecureActivity() {
         val tag          = partner?.tag          ?: chat.partnerTag
         val status       = partner?.status
         val avatarBase64 = partner?.avatarBase64 ?: chat.partnerAvatarBase64
-        val refs = currentMessages
-            .mapNotNull { msg ->
-                when {
-                    msg.imageFileNames != null -> msg.imageFileNames
-                    msg.imageFileName != null -> listOf(msg.imageFileName)
-                    msg.imageBase64 != null -> listOf("base64:${msg.imageBase64}")
-                    else -> null
+        // Выровненные массивы: каждый медиа-элемент знает своё сообщение (msgId) и
+        // принадлежность (self) — нужно для перехода к сообщению и удаления из списка медиа.
+        val refs = ArrayList<String>(); val refMsgIds = ArrayList<String>(); val refSelf = ArrayList<String>()
+        currentMessages.forEach { msg ->
+            val list: List<String>? = when {
+                msg.imageFileNames != null -> msg.imageFileNames
+                msg.imageFileName != null -> listOf(msg.imageFileName)
+                msg.imageBase64 != null -> listOf("base64:${msg.imageBase64}")
+                else -> null
+            }
+            list?.forEach { refs.add(it); refMsgIds.add(msg.msgId); refSelf.add(if (msg.isSelf) "1" else "0") }
+        }
+        val voiceItems = ArrayList<String>(); val voiceMsgIds = ArrayList<String>(); val voiceSelf = ArrayList<String>()
+        currentMessages.filter { it.voiceFileName != null }.forEach { msg ->
+            voiceItems.add("${msg.voiceFileName}${msg.voiceDurationSec}")
+            voiceMsgIds.add(msg.msgId); voiceSelf.add(if (msg.isSelf) "1" else "0")
+        }
+        val linkItems = ArrayList<String>(); val linkMsgIds = ArrayList<String>(); val linkSelf = ArrayList<String>()
+        val seenLinks = HashSet<String>()
+        currentMessages.forEach { msg ->
+            extractUrls(msg.text).forEach { url ->
+                if (seenLinks.add(url)) {
+                    linkItems.add(url); linkMsgIds.add(msg.msgId); linkSelf.add(if (msg.isSelf) "1" else "0")
                 }
             }
-            .flatten()
-        val voiceItems = currentMessages
-            .filter { it.voiceFileName != null }
-            .map { "${it.voiceFileName}\u0001${it.voiceDurationSec}" }
-        val linkItems = currentMessages.flatMap { extractUrls(it.text) }.distinct()
+        }
         val intent = android.content.Intent(this, PartnerProfileActivity::class.java).apply {
             putExtra(PartnerProfileActivity.EXTRA_NAME, name)
             putExtra(PartnerProfileActivity.EXTRA_TAG, tag)
@@ -584,9 +603,16 @@ class ChatActivity : SecureActivity() {
             putExtra(PartnerProfileActivity.EXTRA_EPH_PUB, partner?.ephemeralPubKey)
             putExtra(PartnerProfileActivity.EXTRA_EPH_SIG, partner?.ephemeralSig)
             putExtra(PartnerProfileActivity.EXTRA_VERIFIED_PARTNER_IDK, partner?.verifiedPartnerIdk)
-            putStringArrayListExtra(PartnerProfileActivity.EXTRA_IMAGE_REFS, ArrayList(refs))
-            putStringArrayListExtra(PartnerProfileActivity.EXTRA_VOICE_REFS, ArrayList(voiceItems))
-            putStringArrayListExtra(PartnerProfileActivity.EXTRA_LINKS, ArrayList(linkItems))
+            putExtra(PartnerProfileActivity.EXTRA_CHAT_ID, chat.id)
+            putStringArrayListExtra(PartnerProfileActivity.EXTRA_IMAGE_REFS, refs)
+            putStringArrayListExtra(PartnerProfileActivity.EXTRA_IMAGE_MSGIDS, refMsgIds)
+            putStringArrayListExtra(PartnerProfileActivity.EXTRA_IMAGE_SELF, refSelf)
+            putStringArrayListExtra(PartnerProfileActivity.EXTRA_VOICE_REFS, voiceItems)
+            putStringArrayListExtra(PartnerProfileActivity.EXTRA_VOICE_MSGIDS, voiceMsgIds)
+            putStringArrayListExtra(PartnerProfileActivity.EXTRA_VOICE_SELF, voiceSelf)
+            putStringArrayListExtra(PartnerProfileActivity.EXTRA_LINKS, linkItems)
+            putStringArrayListExtra(PartnerProfileActivity.EXTRA_LINK_MSGIDS, linkMsgIds)
+            putStringArrayListExtra(PartnerProfileActivity.EXTRA_LINK_SELF, linkSelf)
         }
         startActivity(intent)
     }
@@ -744,6 +770,8 @@ class ChatActivity : SecureActivity() {
                 if (messages.isNotEmpty() && isAtBottom) {
                     binding.rvMessages.scrollToPosition(messages.size - 1)
                 }
+                // Отложенный переход/удаление из списка медиа (после рендера).
+                applyPendingMediaActions()
             }
         }
 
@@ -2957,6 +2985,49 @@ class ChatActivity : SecureActivity() {
 
     // ====== REPLY ======
 
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra(EXTRA_SCROLL_TO_MSGID)?.let { pendingJumpMsgId = it }
+        intent.getStringExtra(EXTRA_DELETE_MSGID)?.let { pendingDeleteMsgId = it }
+        if (::adapter.isInitialized) applyPendingMediaActions()
+    }
+
+    /**
+     * Применяет отложенные действия из списка медиа: переход к сообщению (с подсветкой)
+     * и удаление. Вызывается после каждого рендера сообщений и из onNewIntent — поэтому
+     * безопасно, если сообщения ещё грузятся (повторится на следующем тике, когда найдём).
+     */
+    private fun applyPendingMediaActions() {
+        if (!::adapter.isInitialized) return
+        pendingDeleteMsgId?.let { id ->
+            val msg = currentMessages.firstOrNull { it.msgId == id }
+            if (msg != null) {
+                pendingDeleteMsgId = null
+                if (msg.isSelf) performDelete(msg)
+                else Toast.makeText(this, R.string.media_delete_only_own, Toast.LENGTH_SHORT).show()
+            }
+        }
+        pendingJumpMsgId?.let { id ->
+            val idx = adapter.indexOfMsgId(id)
+            if (idx >= 0) {
+                pendingJumpMsgId = null
+                jumpToAdapterIndex(idx, id)
+            }
+        }
+    }
+
+    /** Скроллит к сообщению и подсвечивает его акцентом на ~2.5 сек. */
+    private fun jumpToAdapterIndex(index: Int, msgId: String) {
+        (binding.rvMessages.layoutManager as? LinearLayoutManager)
+            ?.scrollToPositionWithOffset(index, 100)
+        adapter.highlightMessage(msgId)
+        lifecycleScope.launch {
+            delay(2500)
+            if (adapter.highlightedMsgId == msgId) adapter.highlightMessage(null)
+        }
+    }
+
     private fun scrollToOriginal(msg: Message) {
         val qText = msg.quotedText ?: return
         val qSender = msg.quotedSender ?: return
@@ -3503,6 +3574,11 @@ class ChatActivity : SecureActivity() {
     companion object {
         /** Ключ intent-экстра: идентификатор чата (Long, из Room). */
         const val EXTRA_CHAT_ID = "extra_chat_id"
+
+        /** Перейти к сообщению по msgId (из списка медиа) и подсветить. */
+        const val EXTRA_SCROLL_TO_MSGID = "extra_scroll_to_msgid"
+        /** Удалить сообщение по msgId (из списка медиа). */
+        const val EXTRA_DELETE_MSGID = "extra_delete_msgid"
 
         // ── Polling ───────────────────────────────────────────────────────────
         // Интервал поллинга управляется SyncEngine.ACTIVE_INTERVAL_MS (5 сек).

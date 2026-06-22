@@ -71,6 +71,9 @@ class MessageAdapter(
         notifyDataSetChanged()
     }
 
+    /** Индекс сообщения с данным msgId в отображаемом списке, или -1. */
+    fun indexOfMsgId(msgId: String): Int = effectiveList().indexOfFirst { it.msgId == msgId }
+
     /**
      * Обновляет карту реакций. Вызывается из ChatActivity после каждого poll
      * или после оптимистичного обновления при постановке реакции.
@@ -497,7 +500,9 @@ class MessageAdapter(
             // ── Selection highlight ───────────────────────────────────────────
             when {
                 isSelected -> itemView.setBackgroundColor(0x28A855F7.toInt()) // полупрозрачный фиолетовый
-                isHighlighted -> itemView.setBackgroundColor(0x28FFFFFF.toInt()) // полупрозрачный белый (акцент)
+                isHighlighted -> itemView.setBackgroundColor(
+                    androidx.core.graphics.ColorUtils.setAlphaComponent(
+                        androidx.core.content.ContextCompat.getColor(itemView.context, R.color.accent), 0x40))
                 else -> itemView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
             }
 

@@ -728,4 +728,15 @@
     <string name="bt_wait_for_create_fmt">Waiting for %1$s to create the chat…</string>
     <string name="bt_wait_hint_exchange">Profiles exchanged. Ask the other person to tap “Create chat”.</string>
     <string name="join_err_bt">This invite is from a Bluetooth chat. It is local — connect nearby via QR/Bluetooth.</string>
+    <!-- Media list (photos/links/voice) -->
+    <string name="btn_back_desc">Back</string>
+    <string name="media_action_jump">Go to message</string>
+    <string name="media_action_copy">Copy</string>
+    <string name="media_action_delete">Delete</string>
+    <string name="media_selected_one">1 selected</string>
+    <string name="media_delete_only_own">You can only delete your own messages</string>
+    <plurals name="media_count">
+        <item quantity="one">%1$d item</item>
+        <item quantity="other">%1$d items</item>
+    </plurals>
 </resources>

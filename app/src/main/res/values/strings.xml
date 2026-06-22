@@ -758,4 +758,17 @@
     <string name="bt_wait_for_create_fmt">Ждём, пока %1$s создаст чат…</string>
     <string name="bt_wait_hint_exchange">Профилями обменялись. Попросите собеседника нажать «Создать чат».</string>
     <string name="join_err_bt">Это приглашение от Bluetooth-чата. Такой чат локальный — подключайтесь рядом через QR/Bluetooth.</string>
+    <!-- Список медиа (фото/ссылки/голосовые) -->
+    <string name="btn_back_desc">Назад</string>
+    <string name="media_action_jump">Перейти к сообщению</string>
+    <string name="media_action_copy">Копировать</string>
+    <string name="media_action_delete">Удалить</string>
+    <string name="media_selected_one">Выбран 1</string>
+    <string name="media_delete_only_own">Можно удалить только свои сообщения</string>
+    <plurals name="media_count">
+        <item quantity="one">%1$d элемент</item>
+        <item quantity="few">%1$d элемента</item>
+        <item quantity="many">%1$d элементов</item>
+        <item quantity="other">%1$d элементов</item>
+    </plurals>
 </resources>

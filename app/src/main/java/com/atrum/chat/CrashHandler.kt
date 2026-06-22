@@ -25,6 +25,25 @@ import java.util.Locale
 class CrashHandler(private val appContext: Context) : Thread.UncaughtExceptionHandler {
 
     override fun uncaughtException(crashThread: Thread, throwable: Throwable) {
+        // Шаг 0: фоновый сбой WebSocket внутри OkHttp/okio (permessage-deflate —
+        // MessageDeflater не потокобезопасен: failWebSocket из потока OkHttp Dispatcher
+        // гонится с writer-потоком -> NPE/AIOOBE в MessageDeflater.close). Это НЕ фатально:
+        // соединение с реле просто оборвётся, пул переподключится. НЕ показываем экран
+        // краша и НЕ убиваем процесс — иначе баг библиотеки роняет весь чат. Заголовок
+        // permessage-deflate мы и так вырезаем (NostrRelayPool) — это вторая линия защиты.
+        try {
+            if (isRecoverableLibraryCrash(crashThread, throwable)) {
+                try {
+                    val sw = StringWriter()
+                    throwable.printStackTrace(PrintWriter(sw))
+                    File(appContext.filesDir, "last_nonfatal.txt").writeText(
+                        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()) +
+                            "\n" + sw.toString(), Charsets.UTF_8)
+                } catch (_: Throwable) {}
+                return   // поток умрёт, процесс живёт — чат продолжает работать
+            }
+        } catch (_: Throwable) {}
+
         // Шаг 1: строим лог. Если не получилось — минимальный fallback.
         val log = try {
             buildLog(crashThread, throwable)
@@ -57,6 +76,25 @@ class CrashHandler(private val appContext: Context) : Thread.UncaughtExceptionHa
         try { Thread.sleep(500) } catch (_: Throwable) {}
 
         android.os.Process.killProcess(android.os.Process.myPid())
+    }
+
+    /**
+     * Распознаёт НЕфатальные фоновые сбои библиотек, которые не должны ронять приложение.
+     * Сейчас это краши WebSocket-стека OkHttp/okio (okhttp3.internal.ws.*) на потоке
+     * OkHttp Dispatcher — баг permessage-deflate (MessageDeflater не потокобезопасен).
+     */
+    private fun isRecoverableLibraryCrash(thread: Thread, throwable: Throwable): Boolean {
+        val name = thread.name ?: ""
+        if (!name.contains("OkHttp", ignoreCase = true)) return false
+        var t: Throwable? = throwable
+        var depth = 0
+        while (t != null && depth < 8) {
+            for (f in t.stackTrace) {
+                if ((f.className ?: "").startsWith("okhttp3.internal.ws.")) return true
+            }
+            t = t.cause; depth++
+        }
+        return false
     }
 
     private fun buildLog(crashThread: Thread, throwable: Throwable): String {
