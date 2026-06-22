@@ -103,7 +103,7 @@ object CryptoHelper {
         val nonce = ByteArray(GCM_NONCE_LEN).also { secureRandom.nextBytes(it) }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
-        val ct = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
+        val ct = cipher.doFinal(padBytes(plaintext.toByteArray(Charsets.UTF_8)))
 
         // Format: salt[16] + nonce[12] + ciphertext + tag[16]
         val body = ByteArray(SALT_LEN + GCM_NONCE_LEN + ct.size)
@@ -125,7 +125,7 @@ object CryptoHelper {
             val key = deriveArgon2KeyWithSalt(password, salt, ARGON2_PARALLEL_V4)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
-            val pt = String(cipher.doFinal(ct), Charsets.UTF_8)
+            val pt = String(unpadBytes(cipher.doFinal(ct)), Charsets.UTF_8)
             key.fill(0)
             pt
         } catch (_: Exception) {
@@ -217,9 +217,21 @@ object CryptoHelper {
         }
     }
 
-    // ─── V3/V4-S session key store: chatId → sessionKey ─────────────────────
-    private val sessionKeys     = HashMap<String, ByteArray>()
+    // ─── V3/V4-S session key store: chatId → кольцо сессионных ключей ─────────
+    // Кольцо (текущий спереди + несколько предыдущих) нужно для ротации: новые
+    // сообщения шифруются ТЕКУЩИМ ключом, а присланные в окне рукопожатия под
+    // прошлым ключом ещё расшифровываются. Вытесненные ключи затираются.
+    private const val SESSION_RING_MAX = 3
+    private val sessionKeys     = HashMap<String, ArrayDeque<ByteArray>>()
     private val sessionKeysLock = Any()
+
+    // ─── Хук локального шифр-архива истории (forward secrecy + сохранение истории) ──
+    interface FsArchiveHook {
+        fun remember(chatId: String, ciphertext: String, plaintext: String)
+        fun recall(chatId: String, ciphertext: String): String?
+    }
+    @Volatile private var fsArchive: FsArchiveHook? = null
+    fun setArchive(hook: FsArchiveHook?) { fsArchive = hook }
 
     // ─── Кэш результатов расшифровки (анти-шторм Argon2id) ──────────────────────
     // V5/V4/V2 деривируют Argon2id (64 МБ) НА КАЖДЫЙ вызов. При перезаходе/опросе
@@ -227,7 +239,7 @@ object CryptoHelper {
     // Шифртекст детерминированно даёт один и тот же plaintext (пароль/chatId стабильны),
     // поэтому мемоизируем результат. Сессионные V4-S/V3 НЕ кэшируем — их читаемость
     // зависит от живого сессионного ключа (forward secrecy).
-    private const val DECRYPT_CACHE_MAX = 600
+    private const val DECRYPT_CACHE_MAX = 1500 // ↑ с 600: меньше повторных Argon2 на больших чатах (память ≈ сотни КБ)
     private val decryptCacheLock = Any()
     private val decryptCache = object : LinkedHashMap<String, String>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: Map.Entry<String, String>): Boolean = size > DECRYPT_CACHE_MAX
@@ -243,7 +255,7 @@ object CryptoHelper {
      */
     fun encrypt(plaintext: String, password: String, chatId: String = ""): String {
         require(chatId.isNotBlank()) { "chatId must not be blank" }
-        val sk = synchronized(sessionKeysLock) { sessionKeys[chatId] }
+        val sk = synchronized(sessionKeysLock) { sessionKeys[chatId]?.firstOrNull() }
         if (sk != null) return encryptAesGcm(plaintext, sk, V4S_PREFIX)
         return encryptV5(plaintext, password)
     }
@@ -267,20 +279,19 @@ object CryptoHelper {
         if (cacheKey != null) {
             synchronized(decryptCacheLock) { decryptCache[cacheKey] }?.let { return it }
         }
-        val result = when {
+        var result = when {
             s.startsWith(V5_PREFIX)  -> decryptV5(s, password)
-            s.startsWith(V4S_PREFIX) -> {
-                val sk = synchronized(sessionKeysLock) { sessionKeys[chatId] }
-                if (sk != null) decryptAesGcm(s, sk, V4S_PREFIX) else null
-            }
-            s.startsWith(V3_PREFIX) -> {
-                // Старый V3 (CBC) — читаем для backward compat
-                val sk = synchronized(sessionKeysLock) { sessionKeys[chatId] }
-                if (sk != null) decryptAesCbc(s, sk, V3_PREFIX) else null
-            }
+            s.startsWith(V4S_PREFIX) -> decryptSessionMulti(s, chatId, V4S_PREFIX, gcm = true)
+            s.startsWith(V3_PREFIX)  -> decryptSessionMulti(s, chatId, V3_PREFIX, gcm = false)
             s.startsWith(V4_PREFIX) -> decryptV4(s, password, chatId)
             s.startsWith(V2_PREFIX) -> decryptV2(s, password, chatId)
             else                    -> decryptV1(s, password)
+        }
+        // FS-архив: успешную расшифровку запоминаем локально; если сессионный ключ
+        // уже ротирован и живой расшифровки нет — достаём текст из архива.
+        if (isSession) {
+            if (result != null) fsArchive?.remember(chatId, s, result)
+            else result = fsArchive?.recall(chatId, s)
         }
         if (cacheKey != null && result != null) {
             synchronized(decryptCacheLock) { decryptCache[cacheKey] = result }
@@ -361,7 +372,12 @@ object CryptoHelper {
      * Вызывать из ChatActivity после успешного ECDH-рукопожатия.
      */
     fun setSessionKey(chatId: String, key: ByteArray) {
-        synchronized(sessionKeysLock) { sessionKeys[chatId] = key.clone() }
+        synchronized(sessionKeysLock) {
+            val ring = sessionKeys.getOrPut(chatId) { ArrayDeque() }
+            if (ring.isNotEmpty() && ring.first().contentEquals(key)) return  // уже текущий
+            ring.addFirst(key.clone())
+            while (ring.size > SESSION_RING_MAX) ring.removeLast().fill(0)
+        }
     }
 
     /**
@@ -369,7 +385,7 @@ object CryptoHelper {
      * Вызывать из ChatActivity.onDestroy() — это момент утраты forward secrecy.
      */
     fun clearSessionKey(chatId: String) {
-        synchronized(sessionKeysLock) { sessionKeys.remove(chatId)?.fill(0) }
+        synchronized(sessionKeysLock) { sessionKeys.remove(chatId)?.forEach { it.fill(0) } }
     }
 
     /**
@@ -377,7 +393,7 @@ object CryptoHelper {
      * Используется в ChatActivity чтобы показать баннер о forward secrecy.
      */
     fun hasLockedV3Messages(content: String, chatId: String): Boolean {
-        val hasSessionKey = synchronized(sessionKeysLock) { sessionKeys.containsKey(chatId) }
+        val hasSessionKey = synchronized(sessionKeysLock) { sessionKeys[chatId]?.isNotEmpty() == true }
         if (hasSessionKey) return false
         return content.lineSequence().any { line ->
             val t = line.trim()
@@ -387,11 +403,11 @@ object CryptoHelper {
 
     /** Установлен ли сессионный ключ (V4-S) для чата. */
     fun hasSessionKey(chatId: String): Boolean =
-        synchronized(sessionKeysLock) { sessionKeys.containsKey(chatId) }
+        synchronized(sessionKeysLock) { sessionKeys[chatId]?.isNotEmpty() == true }
 
     fun getSessionKeyFingerprint(chatId: String): String? {
         synchronized(sessionKeysLock) {
-            val key = sessionKeys[chatId] ?: return null
+            val key = sessionKeys[chatId]?.firstOrNull() ?: return null
             return computeFingerprint(key)
         }
     }
@@ -462,15 +478,68 @@ object CryptoHelper {
     }
 
     // ═════════════════════════════════════════════════════════════════════════
+    // INTERNAL — Паддинг размера (скрытие длины сообщения от реле)
+    // ═════════════════════════════════════════════════════════════════════════
+    // Длина события напрямую выдаёт длину текста. Добиваем открытый текст до
+    // фиксированной "корзины" ПЕРЕД шифрованием и отрезаем ПОСЛЕ расшифровки —
+    // паддинг попадает под GCM, реле видит только выровненный размер.
+    // Обратная совместимость: старые сообщения без маркера возвращаются как есть.
+    private val PAD_MAGIC = byteArrayOf(0x01, 0x41, 0x50, 0x01) // SOH A P SOH — не бывает в начале UTF-8 текста
+
+    private fun bucketFor(n: Int): Int = when {
+        n <= 128  -> 128
+        n <= 512  -> 512
+        n <= 2048 -> 2048
+        else      -> ((n / 2048) + 1) * 2048
+    }
+
+    /** MAGIC(4) + LEN(4, big-endian) + plaintext + нулевая добивка до корзины. */
+    private fun padBytes(pt: ByteArray): ByteArray {
+        val bucket = bucketFor(pt.size)
+        val out = ByteArray(PAD_MAGIC.size + 4 + bucket)
+        System.arraycopy(PAD_MAGIC, 0, out, 0, PAD_MAGIC.size)
+        val off = PAD_MAGIC.size
+        out[off]     = ((pt.size ushr 24) and 0xFF).toByte()
+        out[off + 1] = ((pt.size ushr 16) and 0xFF).toByte()
+        out[off + 2] = ((pt.size ushr 8) and 0xFF).toByte()
+        out[off + 3] = (pt.size and 0xFF).toByte()
+        System.arraycopy(pt, 0, out, off + 4, pt.size)
+        return out
+    }
+
+    /** Снимает паддинг если в начале стоит MAGIC; иначе возвращает как есть (back-compat). */
+    private fun unpadBytes(b: ByteArray): ByteArray {
+        if (b.size < PAD_MAGIC.size + 4) return b
+        for (i in PAD_MAGIC.indices) if (b[i] != PAD_MAGIC[i]) return b
+        val off = PAD_MAGIC.size
+        val len = ((b[off].toInt() and 0xFF) shl 24) or
+                  ((b[off + 1].toInt() and 0xFF) shl 16) or
+                  ((b[off + 2].toInt() and 0xFF) shl 8) or
+                  (b[off + 3].toInt() and 0xFF)
+        if (len < 0 || len > b.size - (off + 4)) return b // повреждено — fail-safe
+        return b.copyOfRange(off + 4, off + 4 + len)
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
     // INTERNAL — AES-GCM helpers (V4, V4-S)
     // ═════════════════════════════════════════════════════════════════════════
+
+    /** Пробует ВСЕ ключи кольца сессии (текущий + предыдущие) — GCM/CBC сам отбракует неверные. */
+    private fun decryptSessionMulti(s: String, chatId: String, prefix: String, gcm: Boolean): String? {
+        val ring = synchronized(sessionKeysLock) { sessionKeys[chatId]?.toList() } ?: return null
+        for (k in ring) {
+            val pt = if (gcm) decryptAesGcm(s, k, prefix) else decryptAesCbc(s, k, prefix)
+            if (pt != null) return pt
+        }
+        return null
+    }
 
     /** Шифрует с произвольным ключом через AES-256-GCM, добавляет [prefix] перед base64. */
     private fun encryptAesGcm(plaintext: String, key: ByteArray, prefix: String): String {
         val nonce = ByteArray(GCM_NONCE_LEN).also { secureRandom.nextBytes(it) }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
-        val ct = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
+        val ct = cipher.doFinal(padBytes(plaintext.toByteArray(Charsets.UTF_8)))
         // ct содержит ciphertext + 16-байтный auth tag в конце
         val body = ByteArray(GCM_NONCE_LEN + ct.size)
         System.arraycopy(nonce, 0, body, 0, GCM_NONCE_LEN)
@@ -488,7 +557,7 @@ object CryptoHelper {
             val ct    = body.copyOfRange(GCM_NONCE_LEN, body.size)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
-            String(cipher.doFinal(ct), Charsets.UTF_8)
+            String(unpadBytes(cipher.doFinal(ct)), Charsets.UTF_8)
         } catch (_: Exception) {
             null
         }

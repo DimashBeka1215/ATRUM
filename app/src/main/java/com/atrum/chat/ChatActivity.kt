@@ -5,6 +5,10 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkRequest
+import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.util.Base64
 import android.view.View
@@ -15,7 +19,6 @@ import android.annotation.SuppressLint
 import java.io.File
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.ItemTouchHelper
@@ -24,8 +27,8 @@ import com.atrum.chat.data.AppDatabase
 import com.atrum.chat.data.Chat
 import com.atrum.chat.databinding.ActivityChatBinding
 import com.atrum.chat.transport.AllGistData
-import com.atrum.chat.transport.ChatAndReactions
 import com.atrum.chat.transport.ChatTransport
+import com.atrum.chat.transport.BluetoothTransport
 import com.atrum.chat.transport.TransportFactory
 import android.text.Editable
 import android.text.TextWatcher
@@ -37,9 +40,6 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.collectLatest
 import android.content.res.Configuration
 import android.graphics.BitmapFactory
-import android.graphics.Shader
-import android.graphics.drawable.BitmapDrawable
-import android.view.Gravity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -47,7 +47,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 
 class ChatActivity : SecureActivity() {
@@ -57,6 +56,7 @@ class ChatActivity : SecureActivity() {
     private lateinit var db: AppDatabase
     private val voiceRecorder by lazy { VoiceRecorder(this) }
     private var voiceUiJob: Job? = null
+    private val hideVoiceLimitRunnable = Runnable { hideVoiceLimitBanner() }
     private var recordCancelled = false
     private var recordStartX = 0f
     private var recordStartY = 0f
@@ -92,6 +92,14 @@ class ChatActivity : SecureActivity() {
 
     /** Единый ETag-polling engine. Заменяет pollJob. */
     private lateinit var syncEngine: SyncEngine
+    /** BT-чат (локальный по Bluetooth): голос/медиа отключены, доставка по BLE. */
+    private var btMode: Boolean = false
+    /** Подписка на входящие BLE-строки для мгновенного обновления. */
+    private var btWatch: AutoCloseable? = null
+    /** Мониторинг сети: восстановление доставки при возврате связи (§1.5). */
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    @Volatile private var networkWasLost = false
 
     /** Сериализованная очередь всех PATCH-запросов. Заменяет прямые saveFile/appendLine вызовы. */
     private lateinit var patchQueue: PatchQueue
@@ -138,10 +146,16 @@ class ChatActivity : SecureActivity() {
      * Два падения в пределах 2 сек считаются одной ошибкой.
      */
     private var lastFailureEventMs = 0L
-    /** Счётчик последовательных poll'ов с V3-сообщениями без сессионного ключа.
-     * Баннер forward secrecy появляется только после 2+ таких poll'ов, чтобы
-     * не мигать во время ECDH-рукопожатия (обычно завершается за 1–3 сек). */
+    /** Счётчик последовательных poll'ов с V4-S/V3-сообщениями без сессионного ключа. */
     private var lockedV3ConsecutiveCount = 0
+    /**
+     * Сколько подряд таких тиков должно пройти, прежде чем показать FS-баннер.
+     * Через Tor ECDH-handshake (обмен ephemeral-ключами через profiles.txt) может
+     * занимать заметно больше прежних 18 c → баннер вылетал ложно, хотя история не
+     * терялась. 24 тика ≈ 72 c (при 3-сек поллинге) — баннер только если ключ реально
+     * не устанавливается долго (партнёр ушёл / старый клиент), а не из-за медленной сети.
+     */
+    private val FS_BANNER_MIN_TICKS = 24
 
     // pollJob заменён на syncEngine (см. выше)
     private var lastContent: String = ""
@@ -234,6 +248,13 @@ class ChatActivity : SecureActivity() {
      */
     private var isInForeground = false
 
+    /** Последний полученный профиль партнёра — основа для presence-тикера. */
+    @Volatile private var lastPartnerProfile: Profile? = null
+    /** Тикер: раз в секунду пере-вычисляет онлайн/печать/запись по таймауту. */
+    private var presenceTickerJob: Job? = null
+    /** true пока МЫ записываем голосовое — шлём это партнёру в presence. */
+    @Volatile private var isRecordingVoice = false
+
     /**
      * Последний снимок профилей из gist (обновляется в doRefreshPartnerReadIndex).
      * Используется для write-only typing/online пушей — 1 запрос вместо 2.
@@ -276,6 +297,8 @@ class ChatActivity : SecureActivity() {
         setContentView(binding.root)
 
         prefs = Prefs(this)
+        // FS: подключаем локальный шифр-архив истории к CryptoHelper (fail-safe).
+        try { CryptoHelper.setArchive(FsArchive(applicationContext, prefs.getOrCreateArchiveKey())) } catch (_: Exception) {}
         db = AppDatabase.get(this)
 
         val chatId = intent.getLongExtra(EXTRA_CHAT_ID, -1L)
@@ -312,18 +335,28 @@ class ChatActivity : SecureActivity() {
                 CryptoHelper.warmUp(chat.chatPassword, chat.gistId)
             }
             // Восстанавливаем или генерируем X25519 пару ключей для forward secrecy.
-            // Приватный ключ живёт в памяти до onDestroy, но теперь также дублируется в БД
-            // для непрерывности сессии V3 при перезаходах в чат.
-            if (chat.myEphemeralPrivKeyB64 != null && chat.myEphemeralPubKeyB64 != null) {
-                myEphemeralPrivKey = Base64.decode(chat.myEphemeralPrivKeyB64, Base64.NO_WRAP)
+            // FORWARD SECRECY: приватный эфемерный ключ хранится ТОЛЬКО в Keystore-
+            // шифрованном Prefs (не в открытой Room-БД). Pub остаётся в БД. Сессия
+            // переживает перезаход (ключ не пересоздаётся), но при краже БД он недоступен.
+            val storedEphPriv = prefs.getEphemeralPriv(chat.gistId)
+            if (storedEphPriv != null && chat.myEphemeralPubKeyB64 != null) {
+                myEphemeralPrivKey = storedEphPriv
                 myCurrentEphemeralPubKey = chat.myEphemeralPubKeyB64
+            } else if (chat.myEphemeralPrivKeyB64 != null && chat.myEphemeralPubKeyB64 != null) {
+                // МИГРАЦИЯ старого чата: priv лежал в открытой БД — переносим в Keystore-Prefs
+                // и СТИРАЕМ из БД (pub оставляем). Так старые чаты тоже становятся защищёнными.
+                val migrated = Base64.decode(chat.myEphemeralPrivKeyB64, Base64.NO_WRAP)
+                myEphemeralPrivKey = migrated
+                myCurrentEphemeralPubKey = chat.myEphemeralPubKeyB64
+                prefs.setEphemeralPriv(chat.gistId, migrated)
+                db.chatDao().updateMyEphemeralKeys(chat.id, null, chat.myEphemeralPubKeyB64)
             } else {
                 val (privKey, pubKeyB64) = CryptoHelper.generateEphemeralKeyPair()
                 myEphemeralPrivKey = privKey
                 myCurrentEphemeralPubKey = pubKeyB64
-                // Сохраняем в БД — теперь сессия не сбросится при Activity.finish()
-                db.chatDao().updateMyEphemeralKeys(chat.id,
-                    Base64.encodeToString(privKey, Base64.NO_WRAP), pubKeyB64)
+                prefs.setEphemeralPriv(chat.gistId, privKey)
+                // В БД пишем ТОЛЬКО публичный ключ; приватный — никогда.
+                db.chatDao().updateMyEphemeralKeys(chat.id, null, pubKeyB64)
             }
             // Подписываем свой эфемерный ключ долговременным identity-ключом (защита от MITM).
             myEphemeralSig = computeEphemeralSig(myCurrentEphemeralPubKey, chat.gistId)
@@ -333,6 +366,9 @@ class ChatActivity : SecureActivity() {
             if (chat.partnerEphemeralPubKeyB64 != null) {
                 tryEstablishSessionKey(chat.partnerEphemeralPubKeyB64)
             }
+            // FS: периодическая ротация эфемерного ключа (раз в сутки) — настоящий
+            // forward secrecy с окном; история сохраняется в локальном шифр-архиве.
+            maybeRotateEphemeral()
             // Держим overlay до завершения рукопожатия (с таймаутом) — чтобы при входе
             // в чат сессия и проверка идентичности уже были готовы.
             startHandshakeGate()
@@ -562,6 +598,7 @@ class ChatActivity : SecureActivity() {
         )
         // Стартуем с Gist напрямую (без проверки) — UI не ждёт
         transport = transportFactory.instant()
+        btMode = chat.gistToken == BluetoothTransport.BT_TOKEN
         // В фоне проверяем реальную доступность — переключимся на Nostr если нужно
         lifecycleScope.launch { resolveTransport() }
 
@@ -656,6 +693,11 @@ class ChatActivity : SecureActivity() {
         // ── Инициализируем новую архитектуру ─────────────────────────────────
         syncEngine = SyncEngine(transport)
         patchQueue = PatchQueue(transport, lifecycleScope)
+
+        // BT-чат: входящая строка по BLE → немедленный форс-синк (мгновенно на месте).
+        if (transport is BluetoothTransport) {
+            btWatch = transport.watchMessages { syncEngine.forceSync(0L) }
+        }
 
         // Подписка на ChatStore: UI обновляется мгновенно при любом изменении state.
         // collect (не collectLatest): каждый emit обрабатывается до конца — нет отмены
@@ -780,8 +822,15 @@ class ChatActivity : SecureActivity() {
             binding.btnMore.visibility = View.GONE
         }
         binding.btnSend.setOnClickListener { sendMessage() }
-        setupVoiceInput()
-        binding.btnAttach.setOnClickListener { pickImages.launch("image/*") }
+        if (btMode) {
+            // BT-чат — только текст: ни голосовых, ни вложений.
+            binding.btnVoice.visibility = View.GONE
+            binding.btnAttach.visibility = View.GONE
+            binding.btnSend.visibility = View.VISIBLE
+        } else {
+            setupVoiceInput()
+            binding.btnAttach.setOnClickListener { pickImages.launch("image/*") }
+        }
         binding.btnCancelReply.setOnClickListener { clearReply() }
 
         // ── Sticker panel ────────────────────────────────────────────────────
@@ -973,9 +1022,11 @@ class ChatActivity : SecureActivity() {
         if (::chat.isInitialized) {
             // Re-ensure: при возврате в Tor-чат поднимаем Tor, если он «уснул» в фоне.
             if (!chat.isFavorites &&
+                chat.gistToken != BluetoothTransport.BT_TOKEN &&
                 chat.gistToken != com.atrum.chat.transport.NostrTransport.NOSTR_DIRECT_TOKEN) {
                 TorManager.start(this)
             }
+            registerNetworkMonitoring()
             // Сбрасываем кэши — при возврате в чат гарантируем:
             //  1. lastContent="" → loadMessages всегда парсит заново
             //  2. lastPushedReadIndex=-1 → read receipt отправится даже если контент не изменился
@@ -1030,6 +1081,51 @@ class ChatActivity : SecureActivity() {
         }
     }
 
+    // ── Мониторинг сети ──────────────────────────────────────────────────────────
+    // При ВОЗВРАТЕ связи восстанавливаем доставку прямо на экране чата, без перезахода
+    // (§1.5): сбрасываем мёртвые сокеты к реле, чисто ре-bootstrap'им Tor (лечит
+    // «залипший» READY на мёртвом SOCKS) и сразу форсим тик опроса.
+    private fun registerNetworkMonitoring() {
+        if (networkCallback != null) return                 // уже зарегистрировано
+        if (!::chat.isInitialized || chat.isFavorites) return
+        if (chat.gistToken == BluetoothTransport.BT_TOKEN) return  // BT — без сети
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        connectivityManager = cm
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onLost(network: Network) { networkWasLost = true }
+            override fun onAvailable(network: Network) {
+                // Только РЕАЛЬНЫЙ возврат после потери — не дёргаем Tor на первом коннекте.
+                if (!networkWasLost) return
+                networkWasLost = false
+                onNetworkRegained()
+            }
+        }
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        runCatching { cm.registerNetworkCallback(request, cb) }
+            .onSuccess { networkCallback = cb }
+    }
+
+    private fun unregisterNetworkMonitoring() {
+        val cm = connectivityManager
+        val cb = networkCallback
+        if (cm != null && cb != null) runCatching { cm.unregisterNetworkCallback(cb) }
+        networkCallback = null
+        networkWasLost = false
+    }
+
+    /** Возврат сети: сброс мёртвых сокетов + ре-bootstrap Tor + немедленный опрос. */
+    private fun onNetworkRegained() {
+        runCatching { com.atrum.chat.nostr.NostrRelayPool.shutdown() }
+        if (!chat.isFavorites &&
+            chat.gistToken != BluetoothTransport.BT_TOKEN &&
+            chat.gistToken != com.atrum.chat.transport.NostrTransport.NOSTR_DIRECT_TOKEN) {
+            TorManager.restart(applicationContext)
+        }
+        if (::syncEngine.isInitialized) syncEngine.forceSync(0L)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         // Освобождаем видео-плееры webm-стикеров (ExoPlayer/GL). Без этого они продолжают
@@ -1051,6 +1147,9 @@ class ChatActivity : SecureActivity() {
         if (::transport.isInitialized) {
             try { CryptoHelper.clearCachedKey(transport.chatId, chat.chatPassword) } catch (_: Exception) {}
         }
+        //  3. BT-чат: закрываем подписку и рвём BLE только при реальном выходе из чата.
+        runCatching { btWatch?.close() }; btWatch = null
+        if (btMode && isFinishing) runCatching { BleManager.shutdown(applicationContext) }
     }
 
     override fun onPause() {
@@ -1066,6 +1165,7 @@ class ChatActivity : SecureActivity() {
         pauseVisibleStickers()
         // Останавливаем SyncEngine и коллектор событий
         if (::syncEngine.isInitialized) syncEngine.stop()
+        unregisterNetworkMonitoring()
         syncCollectorJob?.cancel()
         syncCollectorJob = null
         markAsReadJob?.cancel()
@@ -1075,6 +1175,8 @@ class ChatActivity : SecureActivity() {
         isCurrentlyTyping = false
         stopTypingJob?.cancel(); stopTypingJob = null
         presenceJob?.cancel(); presenceJob = null
+        presenceTickerJob?.cancel(); presenceTickerJob = null
+        lastPartnerProfile = null
         if (::transport.isInitialized) {
             val capturedTransport  = transport
             val capturedPassword   = chat.chatPassword
@@ -1086,21 +1188,27 @@ class ChatActivity : SecureActivity() {
             val capturedSig        = myEphemeralSig
             val capturedConfirmed  = prefs.getConfirmedPartnerIdentity(chat.gistId)
             AppScope.launch {
-                try {
-                    ProfileSync.pushPresence(
-                        api               = capturedTransport,
-                        password          = capturedPassword,
-                        myUserId          = capturedUserId,
-                        typingTs          = 0L,
-                        onlineTs          = 0L,
-                        myEphemeralPubKey = capturedEphKey,
-                        myName            = capturedName,
-                        myAvatarBase64    = capturedAvatar,
-                        myIdentityPubKey     = capturedIdentity,
-                        myEphemeralSig       = capturedSig,
-                        myVerifiedPartnerIdk = capturedConfirmed
-                    )
-                } catch (_: Exception) {}
+                // Уход из приложения → офлайн. Ретрай: по Tor единичный PATCH часто
+                // не доходит, и партнёр видел бы «в сети» ещё долго после ухода.
+                repeat(3) {
+                    val ok = try {
+                        ProfileSync.pushPresence(
+                            api               = capturedTransport,
+                            password          = capturedPassword,
+                            myUserId          = capturedUserId,
+                            typingTs          = 0L,
+                            onlineTs          = 0L,
+                            myEphemeralPubKey = capturedEphKey,
+                            myName            = capturedName,
+                            myAvatarBase64    = capturedAvatar,
+                            myIdentityPubKey     = capturedIdentity,
+                            myEphemeralSig       = capturedSig,
+                            myVerifiedPartnerIdk = capturedConfirmed
+                        )
+                    } catch (_: Exception) { false }
+                    if (ok) return@launch
+                    delay(1_500)
+                }
             }
         }
     }
@@ -1176,20 +1284,8 @@ class ChatActivity : SecureActivity() {
             adapter.setPartnerLastReadIndex(partner.lastReadIndex)
         }
 
-        val now = System.currentTimeMillis()
-
-        // Удалённый профиль не показывает typing/online
-        if (partner.deleted) {
-            updateTypingIndicator(false)
-            updateOnlineIndicator(false)
-            return
-        }
-
-        val isTyping = partner.typingTs > 0L && now - partner.typingTs < TYPING_EXPIRY_MS
-        updateTypingIndicator(isTyping)
-
-        val isOnline = partner.onlineTs > 0L && now - partner.onlineTs < ONLINE_EXPIRY_MS
-        updateOnlineIndicator(isOnline)
+        lastPartnerProfile = partner
+        applyPresence()
 
         // Пока партнёр онлайн — держим быстрый интервал поллинга сообщений (BASE_MS).
     }
@@ -1253,18 +1349,8 @@ class ChatActivity : SecureActivity() {
             adapter.setPartnerLastReadIndex(partner.lastReadIndex)
         }
 
-        if (partner.deleted) {
-            updateTypingIndicator(false)
-            updateOnlineIndicator(false)
-            return
-        }
-
-        val now = System.currentTimeMillis()
-        val isTyping = partner.typingTs > 0L && now - partner.typingTs < TYPING_EXPIRY_MS
-        updateTypingIndicator(isTyping)
-
-        val isOnline = partner.onlineTs > 0L && now - partner.onlineTs < ONLINE_EXPIRY_MS
-        updateOnlineIndicator(isOnline)
+        lastPartnerProfile = partner
+        applyPresence()
     }
 
     /**
@@ -1334,13 +1420,17 @@ class ChatActivity : SecureActivity() {
         if (reactionsRaw != lastReactionsRaw) {
             lastReactionsRaw = reactionsRaw
             // Расшифровываем и парсим реакции в фоновом потоке (V4/Argon2id тяжелый)
-            val parsedReactions = withContext(Dispatchers.Default) {
-                val decrypted = if (reactionsRaw.isBlank()) reactionsRaw
-                else CryptoHelper.decrypt(reactionsRaw, chat.chatPassword, chat.gistId) ?: reactionsRaw
-                parseReactions(decrypted)
+            val decrypted = withContext(Dispatchers.Default) {
+                if (reactionsRaw.isBlank()) ""
+                else CryptoHelper.decrypt(reactionsRaw, chat.chatPassword, chat.gistId) ?: ""
             }
+            val parsedReactions = withContext(Dispatchers.Default) { parseReactions(decrypted) }
             currentReactions = parsedReactions
-            lastReactionsContent = ""
+            // ВАЖНО: храним РАСШИФРОВАННЫЙ текущий набор реакций, а НЕ "".
+            // Раньше сбрасывали в "" → следующий локальный toggle строил новый
+            // reactions.txt с нуля и затирал ВСЕ остальные реакции. Теперь toggle
+            // делает read-modify-write поверх реального актуального набора.
+            lastReactionsContent = decrypted
             // Обновляем реакции в адаптере ТОЛЬКО при реальном изменении — иначе
             // notifyDataSetChanged на каждый опрос перерисовывает список и стикеры мигают.
             withContext(Dispatchers.Main) {
@@ -1389,11 +1479,17 @@ class ChatActivity : SecureActivity() {
             }
         }
 
-        // Forward secrecy баннер (V3 сообщения без сессионного ключа).
-        // Порог 6 тиков (~9 сек) — даём время на обмен ephemeral ключами при старте.
+        // Forward secrecy баннер (V4-S/V3 сообщения без активного сессионного ключа).
+        // ВАЖНО: это окно — НОРМА на старте, пока идёт ECDH-handshake (обмен ephemeral
+        // ключами через profiles.txt). Через Tor он легко занимает > 18 c (бутстрап +
+        // раунд-трипы профилей), поэтому прежний порог 6 тиков (~18 c) давал ЛОЖНЫЙ
+        // баннер: ключ ещё не установлен, но история не потеряна — расшифруется, как
+        // только handshake завершится. Поднят до FS_BANNER_MIN_TICKS, чтобы баннер
+        // показывался только если ключ реально НЕ устанавливается долго (партнёр ушёл/
+        // старый клиент), а не из-за медленного рукопожатия.
         if (CryptoHelper.hasLockedV3Messages(chatContent, chat.gistId)) {
             if (firstLoadComplete) lockedV3ConsecutiveCount++
-            if (lockedV3ConsecutiveCount >= 6 && activeWarning != WarningType.FORWARD_SECRECY) {
+            if (lockedV3ConsecutiveCount >= FS_BANNER_MIN_TICKS && activeWarning != WarningType.FORWARD_SECRECY) {
                 showChatWarning(WarningType.FORWARD_SECRECY)
             }
         } else {
@@ -1464,6 +1560,13 @@ class ChatActivity : SecureActivity() {
                     lastReadIndex = totalLines,
                     onlineTs = if (isInForeground) System.currentTimeMillis() else 0L,
                     ephemeralPubKey = myCurrentEphemeralPubKey,
+                    // ВАЖНО: identity-поля обязательно дублируем здесь. pushMyProfile
+                    // делает ПОЛНУЮ замену объекта профиля, поэтому без них read receipt
+                    // обнулял бы identityPubKey/ephemeralSig/verifiedPartnerIdk у меня в gist
+                    // → у партнёра мигал бы щит верификации до следующего presence-тика.
+                    identityPubKey = prefs.myIdentityPubKey,
+                    ephemeralSig = myEphemeralSig,
+                    verifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.gistId),
                     status = prefs.myStatus.takeIf { it.isNotBlank() }
                 )
                 val currentTransport = transport
@@ -1734,6 +1837,12 @@ class ChatActivity : SecureActivity() {
 
     /** Пустое поле → кнопка микрофона; есть текст → кнопка отправки. */
     private fun updateSendVoiceButtons(text: String) {
+        if (btMode) {
+            // В BT-чате микрофона нет — всегда кнопка отправки.
+            binding.btnSend.visibility = View.VISIBLE
+            binding.btnVoice.visibility = View.GONE
+            return
+        }
         val hasText = text.trim().isNotEmpty()
         binding.btnSend.visibility = if (hasText) View.VISIBLE else View.GONE
         binding.btnVoice.visibility = if (hasText) View.GONE else View.VISIBLE
@@ -1840,6 +1949,8 @@ class ChatActivity : SecureActivity() {
         }
         voiceLocked = false
         recordCancelled = false
+        isRecordingVoice = true
+        lifecycleScope.launch { doPushPresence(0L, System.currentTimeMillis(), System.currentTimeMillis()) }
         recordLevels.clear()
         binding.waveformRecord.reset()
         binding.btnVoice.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
@@ -1858,8 +1969,14 @@ class ChatActivity : SecureActivity() {
         binding.btnRecSend.visibility = View.GONE
         voiceUiJob?.cancel()
         voiceUiJob = lifecycleScope.launch {
+            var warnedLimit = false
             while (voiceRecorder.isRecording) {
                 val ms = voiceRecorder.elapsedMs()
+                // Предупреждение за минуту до лимита записи (один раз).
+                if (!warnedLimit && ms >= MAX_VOICE_MS - 60_000L && ms < MAX_VOICE_MS) {
+                    warnedLimit = true
+                    showVoiceLimitBanner()
+                }
                 val sec = (ms / 1000).toInt()
                 binding.tvRecTime.text = String.format(Locale.ROOT, "%d:%02d", sec / 60, sec % 60)
                 if (!voiceRecorder.isPaused) {
@@ -1874,6 +1991,13 @@ class ChatActivity : SecureActivity() {
     }
 
     private fun restoreInputAfterRecording() {
+        if (isRecordingVoice) {
+            isRecordingVoice = false
+            lifecycleScope.launch {
+                doPushPresence(0L, if (isInForeground) System.currentTimeMillis() else 0L, 0L)
+            }
+        }
+        hideVoiceLimitBanner()
         binding.recordingRow.visibility = View.GONE
         binding.btnAttach.visibility = View.VISIBLE
         binding.btnSticker.visibility = View.VISIBLE
@@ -1986,18 +2110,19 @@ class ChatActivity : SecureActivity() {
                     }
                 }
 
-                // 3) Загрузка контента с прогрессом по чанкам — видно, сколько осталось.
-                chatStore.updateVoiceProgress(encryptedMessage, 0)
+                // 3) Голос доставляем ТЕМ ЖЕ путём, что и фото (проверенный, работает):
+                //    зашифрованное аудио летит ВЛОЖЕНИЕМ в той же appendLine. Отдельного
+                //    saveFileChunked + второго fetch у получателя нет — раз строка дошла,
+                //    дошёл и файл (одна публикация, одна сборка как у изображений).
                 val encryptedContent = withContext(Dispatchers.Default) {
-                    CryptoHelper.encrypt(b64, chat.chatPassword, chat.gistId)
+                    CryptoHelper.encrypt(b64, chat.chatPassword, transport.chatId)
                 }
                 withContext(Dispatchers.IO) {
-                    transport.saveFileChunked(contentRef, encryptedContent, chat.chatPassword) { cur, total ->
-                        val pct = if (total > 0) (cur * 100 / total).coerceIn(0, 100) else 100
-                        chatStore.updateVoiceProgress(encryptedMessage, pct)
-                    }
+                    transport.appendLine(
+                        encryptedLine = encryptedMessage,
+                        extraFiles = mapOf(contentRef to encryptedContent)
+                    )
                 }
-                withContext(Dispatchers.IO) { transport.appendLine(encryptedLine = encryptedMessage) }
                 chatStore.confirmSent(encryptedMessage)
                 syncEngine.forceSync(delayMs = 0L)
                 runCatching { file.delete() }
@@ -2019,6 +2144,36 @@ class ChatActivity : SecureActivity() {
      * под тёмную/светлую тему (сплошной янтарь) и glass-режим (тёмный оверлей + янтарный текст).
      * Всё обновляется на месте, без перезахода (§1.5).
      */
+    /**
+     * Жёлтая плашка «скоро лимит записи» (за минуту до MAX_VOICE_MS). Выезжает над полем
+     * ввода, сама прячется через 5 с. Адаптируется под тёмную/светлую (сплошной жёлтый)
+     * и glass-режим (тёмный оверлей + жёлтый текст/иконка) — §0/§5.
+     */
+    private fun showVoiceLimitBanner() {
+        val isGlass = prefs.chatUiStyle == Prefs.CHAT_UI_GLASS
+        binding.voiceLimitBanner.setBackgroundResource(
+            if (isGlass) R.drawable.bg_voice_limit_banner_glass else R.drawable.bg_voice_limit_banner)
+        val onColor = ContextCompat.getColor(
+            this, if (isGlass) R.color.voice_limit_bg else R.color.voice_limit_on)
+        binding.ivVoiceLimitIcon.setColorFilter(onColor)
+        binding.tvVoiceLimitTitle.setTextColor(onColor)
+        binding.tvVoiceLimitMsg.setTextColor(onColor)
+        if (binding.voiceLimitBanner.visibility != View.VISIBLE) {
+            binding.voiceLimitBanner.alpha = 0f
+            binding.voiceLimitBanner.visibility = View.VISIBLE
+            binding.voiceLimitBanner.animate().alpha(1f).setDuration(200L).start()
+        }
+        binding.voiceLimitBanner.removeCallbacks(hideVoiceLimitRunnable)
+        binding.voiceLimitBanner.postDelayed(hideVoiceLimitRunnable, 5000L)
+    }
+
+    private fun hideVoiceLimitBanner() {
+        binding.voiceLimitBanner.removeCallbacks(hideVoiceLimitRunnable)
+        if (binding.voiceLimitBanner.visibility != View.VISIBLE) return
+        binding.voiceLimitBanner.animate().alpha(0f).setDuration(180L)
+            .withEndAction { binding.voiceLimitBanner.visibility = View.GONE }.start()
+    }
+
     private fun showRateLimitBanner(durationMs: Long) {
         if (durationMs <= 0L) { hideRateLimitBanner(); return }
 
@@ -2129,6 +2284,39 @@ class ChatActivity : SecureActivity() {
         }
     }
 
+    private val ephemeralRotationMs = 24L * 60 * 60 * 1000  // ротация эфемерного ключа раз в сутки
+
+    /**
+     * Периодическая ротация эфемерного X25519-ключа (forward secrecy с окном).
+     * Новые сообщения шифруются новым ключом; прошлый сессионный ключ ещё живёт в
+     * кольце CryptoHelper для расшифровки присланного в окне рукопожатия; вся история
+     * читается из локального FS-архива. Старый шифртекст на реле становится
+     * нерасшифровываемым — это и есть FS против реле/сети. Fail-safe.
+     */
+    private fun maybeRotateEphemeral() {
+        try {
+            val now = System.currentTimeMillis()
+            val last = prefs.getEphemeralRotatedAt(chat.gistId)
+            if (last == 0L) { prefs.setEphemeralRotatedAt(chat.gistId, now); return }  // первый раз — только метка
+            if (now - last < ephemeralRotationMs) return
+            val (newPriv, newPub) = CryptoHelper.generateEphemeralKeyPair()
+            val old = myEphemeralPrivKey
+            myEphemeralPrivKey = newPriv
+            myCurrentEphemeralPubKey = newPub
+            myEphemeralSig = computeEphemeralSig(newPub, chat.gistId)
+            prefs.setEphemeralPriv(chat.gistId, newPriv)
+            prefs.setEphemeralRotatedAt(chat.gistId, now)
+            // Пересчитываем сессионный ключ под текущий pub партнёра (добавится в кольцо).
+            lastPartnerEphemeralPubKey = null
+            chat.partnerEphemeralPubKeyB64?.let { tryEstablishSessionKey(it) }
+            old?.fill(0)
+            // В БД пишем только новый публичный ключ; приватный — никогда.
+            lifecycleScope.launch {
+                try { db.chatDao().updateMyEphemeralKeys(chat.id, null, newPub) } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+    }
+
     private fun tryEstablishSessionKey(partnerPubKey: String?) {
         if (partnerPubKey == null) return
         if (partnerPubKey == lastPartnerEphemeralPubKey) return   // ключ не изменился
@@ -2229,10 +2417,19 @@ class ChatActivity : SecureActivity() {
         presenceJob = lifecycleScope.launch {
             while (true) {
                 val typingTs = if (isCurrentlyTyping) System.currentTimeMillis() else 0L
-                doPushPresence(typingTs, System.currentTimeMillis())
+                val recTs = if (isRecordingVoice) System.currentTimeMillis() else 0L
+                doPushPresence(typingTs, System.currentTimeMillis(), recTs)
                 // ±20% джиттер скрывает ритм presence-пульса от анализа трафика
                 val jitter = (PRESENCE_INTERVAL_MS * 0.2 * (Math.random() * 2 - 1)).toLong()
                 delay(PRESENCE_INTERVAL_MS + jitter)
+            }
+        }
+        // Локальный тикер: гасит/показывает статусы по таймауту даже без новых данных.
+        presenceTickerJob?.cancel()
+        presenceTickerJob = lifecycleScope.launch {
+            while (true) {
+                delay(PRESENCE_TICK_MS)
+                applyPresence()
             }
         }
     }
@@ -2240,15 +2437,16 @@ class ChatActivity : SecureActivity() {
     /**
      * Шлёт один presence-PATCH (typingTs + onlineTs).
      *
-     * Оптимизированная версия: использует кэш lastKnownProfiles для write-only PATCH
-     * (без GET). Кэш обновляется из единого polling loop каждые POLL_INTERVAL_MS, поэтому
-     * максимальное "протухание" данных партнёра — один тик (8 сек). ephemeralPubKey
-     * партнёра сохраняется нетронутым — берётся прямо из кэша, not overwritten.
+     * ВСЕГДА делает полный GET+merge+PATCH (НЕ write-only из кэша). Причина:
+     * profiles.txt — общий файл, который пишут оба участника, а Nostr-чтение берёт
+     * одно последнее replaceable-событие. Запись из устаревшего кэша затирала бы
+     * профиль собеседника (его ephemeralPubKey/onlineTs) → ломала forward-secrecy
+     * handshake и «зависала» онлайн партнёра. Свежий pull+merge сохраняет обе стороны.
      *
-     * Fallback на полный GET+PATCH только если наш профиль ещё не попал в кэш
-     * (первые секунды после открытия чата, до первого успешного poll).
+     * Расход: 1 GET + 1 PATCH каждые PRESENCE_INTERVAL_MS (5с). Историческая
+     * «write-only из кэша» оптимизация удалена именно из-за порчи данных партнёра.
      */
-    private suspend fun doPushPresence(typingTs: Long, onlineTs: Long) {
+    private suspend fun doPushPresence(typingTs: Long, onlineTs: Long, recordingTs: Long = 0L) {
         if (!::transport.isInitialized) return
         val myUserId = prefs.myUserId
 
@@ -2262,6 +2460,7 @@ class ChatActivity : SecureActivity() {
                 myUserId          = myUserId,
                 typingTs          = typingTs,
                 onlineTs          = onlineTs,
+                recordingTs       = recordingTs,
                 myEphemeralPubKey = myCurrentEphemeralPubKey,
                 myName            = prefs.myName,
                 myTag             = prefs.myTag,
@@ -2275,7 +2474,7 @@ class ChatActivity : SecureActivity() {
         // Обновляем локальный кэш сразу — следующий write-only push будет корректным
         if (ok) {
             lastKnownProfiles[myUserId]?.let { current ->
-                lastKnownProfiles[myUserId] = current.copy(typingTs = typingTs, onlineTs = onlineTs)
+                lastKnownProfiles[myUserId] = current.copy(typingTs = typingTs, onlineTs = onlineTs, recordingTs = recordingTs)
             }
         }
     }
@@ -2366,6 +2565,29 @@ class ChatActivity : SecureActivity() {
         }
     }
 
+    /**
+     * Единая отрисовка presence партнёра (онлайн / печатает / записывает голосовое)
+     * по последнему профилю и ТЕКУЩЕМУ времени. Вызывается и при приходе данных, и
+     * раз в секунду из presence-тикера — статусы гаснут по таймауту даже без новых
+     * данных (точность) и не «залипают». Приоритет подписи: запись > печать > обычная.
+     */
+    private fun applyPresence() {
+        val p = lastPartnerProfile
+        val now = System.currentTimeMillis()
+        val alive = p != null && !p.deleted
+        val isRecording = alive && p!!.recordingTs > 0L && now - p.recordingTs < RECORDING_EXPIRY_MS
+        val isTyping    = alive && p!!.typingTs   > 0L && now - p.typingTs   < TYPING_EXPIRY_MS
+        val isOnline    = alive && p!!.onlineTs   > 0L && now - p.onlineTs   < ONLINE_EXPIRY_MS
+        if (isRecording) {
+            binding.tvChatSubtitle.text = getString(R.string.recording_indicator)
+            binding.tvChatSubtitle.setTextColor(ContextCompat.getColor(this, R.color.accent))
+            binding.tvChatSubtitle.setOnClickListener(null)
+        } else {
+            updateTypingIndicator(isTyping)
+        }
+        updateOnlineIndicator(isOnline)
+    }
+
 
     // ====== UI-блокировка во время загрузки изображений ======
 
@@ -2451,7 +2673,7 @@ class ChatActivity : SecureActivity() {
 
                 // 3. Шифруем изображение для пакетной отправки
                 val encryptedImage = withContext(Dispatchers.Default) {
-                    CryptoHelper.encrypt(base64, chat.chatPassword, chat.gistId)
+                    CryptoHelper.encrypt(base64, chat.chatPassword, transport.chatId)
                 }
 
                 // 4. Отправляем сообщение и изображение ОДНИМ запросом (Batch PATCH)
@@ -2557,7 +2779,7 @@ class ChatActivity : SecureActivity() {
                         launch {
                             val b64 = base64s[index] ?: return@launch
                             val encrypted = withContext(Dispatchers.Default) {
-                                CryptoHelper.encrypt(b64, chat.chatPassword, chat.gistId)
+                                CryptoHelper.encrypt(b64, chat.chatPassword, transport.chatId)
                             }
                             synchronized(extraFiles) {
                                 extraFiles[fileName] = encrypted
@@ -2710,6 +2932,7 @@ class ChatActivity : SecureActivity() {
     /** Текст для цитаты/превью: сам текст, либо метка типа (стикер/фото) если текста нет. */
     private fun quoteLabel(msg: Message): String = when {
         msg.text.isNotBlank()           -> msg.text
+        msg.isVoice                     -> getString(R.string.msg_preview_voice)
         msg.isSticker                   -> getString(R.string.msg_preview_sticker)
         msg.isMultiImage || msg.isImage -> getString(R.string.msg_preview_photo)
         else                            -> msg.text
@@ -3232,14 +3455,18 @@ class ChatActivity : SecureActivity() {
         const val MAX_MS = 30_000L
 
         // ── Presence ──────────────────────────────────────────────────────────
-        /** Период presence-цикла: один write-only PATCH каждые N мс. */
-        const val PRESENCE_INTERVAL_MS = 2_000L
         /**
-         * Через сколько мс без обновления партнёр считается офлайн.
-         * 32 сек = PRESENCE_INTERVAL_MS (12) + poll interval (8) + сеть (4) + запас (8).
-         * Гарантирует что партнёр не "мигает" при задержках сети.
+         * Период presence-цикла (heartbeat): один write-only PATCH каждые N мс.
+         * Поднято с 2с до 5с: частый presence+poll заставлял публичные Nostr-реле
+         * резать запросы. 5с — баланс «онлайн» без миганий и нагрузки на реле.
          */
-        const val ONLINE_EXPIRY_MS = 20_000L
+        const val PRESENCE_INTERVAL_MS = 5_000L
+        /** Через сколько мс без обновления партнёр считается офлайн. */
+        const val ONLINE_EXPIRY_MS = 12_000L
+        /** Через сколько мс без обновления статус «записывает голосовое» считается устаревшим. */
+        const val RECORDING_EXPIRY_MS = 8_000L
+        /** Период локального тикера пере-вычисления presence по таймауту. */
+        const val PRESENCE_TICK_MS = 1_000L
         /** Через сколько мс без обновления typing-сигнал считается устаревшим. */
         const val TYPING_EXPIRY_MS = 14_000L
         /** Задержка после последнего нажатия клавиши до отправки «перестал печатать». */
@@ -3258,8 +3485,8 @@ class ChatActivity : SecureActivity() {
         // ── Media ─────────────────────────────────────────────────────────────
         /** Максимальное количество фото в коллаже за одну отправку. */
         const val MAX_COLLAGE_IMAGES = 10
-        /** Максимальная длительность голосового (5 минут). */
-        private const val MAX_VOICE_MS = 2 * 60 * 1000L
+        /** Максимальная длительность голосового. */
+        private const val MAX_VOICE_MS = 15 * 60 * 1000L
         /** Максимальное количество одновременных загрузок изображений. */
         const val MAX_CONCURRENT = 3
     }

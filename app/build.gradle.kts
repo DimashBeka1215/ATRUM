@@ -39,18 +39,37 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 97
-        versionName = "3.18.2-beta84"
+        versionCode = 146
+        versionName = "3.19.19-beta133"
 
         // Включаем multidex чтобы не упереться в лимит 65k методов
         // когда много AndroidX/Material/Room/uCrop/browser библиотек
         multiDexEnabled = true
+
+        // Оставляем только русскую (default) и английскую локали. AppCompat/Material
+        // тянут строковые ресурсы на ~80 языков — приложение их не использует.
+        // Чистит resources.arsc без потери функций (UI только RU/EN).
+        resourceConfigurations += setOf("en", "ru")
+
+        // Только arm64-v8a: покрывает практически все телефоны с ~2017.
+        // Отрезаем x86/x86_64 (эмуляторы) и armeabi-v7a (старые 32-бит) —
+        // их нативные .so (libgojni/libtor и пр.) зря раздували APK на десятки МБ.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     // Исключаем типичные duplicate-файлы из META-INF которые часто
     // дают конфликты при mergeDex (uCrop / kotlin libs / okhttp)
     packagingOptions {
         jniLibs {
+            // true → .so СЖИМАЮТСЯ (DEFLATE) внутри APK → меньше размер скачивания.
+            // (false означает несжатые page-aligned либы — APK раздувается: наши
+            // libonnxruntime/libgojni/libtor лежали без сжатия ~68 МБ. Со сжатием
+            // раздел lib/ ужимается примерно вдвое.)
+            // Цена: при установке .so извлекаются на диск (extractNativeLibs=true) —
+            // чуть больше места на устройстве и чуть медленнее первый старт. Для
+            // прямой раздачи APK (не через Play) важен размер скачивания — берём true.
             useLegacyPackaging = true
         }
         resources {
@@ -65,7 +84,12 @@ android {
                 "META-INF/ASL2.0",
                 "META-INF/*.kotlin_module",
                 "META-INF/AL2.0",
-                "META-INF/LGPL2.1"
+                "META-INF/LGPL2.1",
+                // Мёртвые ресурсы BouncyCastle: используется ТОЛЬКО Argon2id
+                // (org.bouncycastle.crypto.generators) — это чистый код без ресурсов.
+                // Пост-квантовые таблицы (Picnic/lowmc и пр.) не используются, но R8
+                // не вырезает .bin/.properties (это ресурсы, не классы) — режем тут (~1.3 МБ).
+                "org/bouncycastle/pqc/**"
             )
         }
     }
@@ -167,5 +191,17 @@ dependencies {
     // Biometric — системный отпечаток (BiometricPrompt). Биометрия НЕ хранится
     // в приложении: запрос идёт в системную подсистему телефона (на Samsung — Knox/TEE).
     implementation("androidx.biometric:biometric:1.1.0")
+
+    // IPtProxy — pluggable transports (Lyrebird=obfs4/meek/webtunnel + Snowflake) для
+    // обхода блокировки Tor. Нативные бинари под все ABI уже внутри AAR. Используется
+    // в TorManager для запуска мостов, когда обычный Tor не поднимается (цензура).
+    implementation("com.netzarchitekten:IPtProxy:5.5.0")
+
+    // CameraX — превью камеры + анализ кадров для QR-сканера (Bluetooth-подключение по QR).
+    val cameraX = "1.3.4"
+    implementation("androidx.camera:camera-core:$cameraX")
+    implementation("androidx.camera:camera-camera2:$cameraX")
+    implementation("androidx.camera:camera-lifecycle:$cameraX")
+    implementation("androidx.camera:camera-view:$cameraX")
 
 }

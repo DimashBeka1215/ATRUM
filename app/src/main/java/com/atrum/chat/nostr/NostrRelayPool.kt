@@ -1,5 +1,6 @@
 package com.atrum.chat.nostr
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -45,6 +46,30 @@ object NostrRelayPool {
             .connectTimeout(if (useTor) 45L else 15L, TimeUnit.SECONDS) // Tor дольше; direct — быстрый фейл
             .readTimeout(0, TimeUnit.MILLISECONDS) // долгоживущее соединение — без read-таймаута
             .pingInterval(20, TimeUnit.SECONDS)    // keep-alive сквозь NAT
+            // Отключаем сжатие WebSocket (permessage-deflate). Это лечит краш
+            // ArrayIndexOutOfBoundsException в MessageDeflater.close при обрыве соединения
+            // (баг okhttp/okio: deflater не потокобезопасен, failWebSocket закрывает
+            // writer с deflater'ом из потока OkHttp Dispatcher).
+            //
+            // Вырезаем заголовок в ДВУХ местах:
+            //   1) из запроса — убираем наш offer, корректное реле не включит сжатие;
+            //   2) из ОТВЕТА upgrade-рукопожатия — даже если реле (вопреки RFC 7692)
+            //      вернёт permessage-deflate без нашего offer, OkHttp его не увидит:
+            //      WebSocketExtensions.parse(response.headers) → perMessageDeflate=false
+            //      → MessageDeflater вообще не создаётся → краш физически невозможен.
+            // Nostr-сообщения малы и уже зашифрованы (не сжимаются) — потеря сжатия некритична.
+            .addNetworkInterceptor { chain ->
+                val resp = chain.proceed(
+                    chain.request().newBuilder()
+                        .removeHeader("Sec-WebSocket-Extensions")
+                        .build()
+                )
+                if (resp.header("Sec-WebSocket-Extensions") != null) {
+                    resp.newBuilder().removeHeader("Sec-WebSocket-Extensions").build()
+                } else {
+                    resp
+                }
+            }
         if (useTor) {
             // Через локальный SOCKS-прокси встроенного Tor. createUnresolved — чтобы JVM
             // не резолвила адрес прокси заранее.
@@ -174,6 +199,19 @@ private class RelayConn(private val url: String, private val client: OkHttpClien
         } catch (_: Exception) { }
     }
 
+    /**
+     * Принудительный сброс сокета — ТОЛЬКО если он всё ещё текущий (===). Защита от
+     * гонки: если параллельная корутина уже переподключила соединение, мы не рвём
+     * новое живое. Используется когда query/publish не получили ответа за таймаут —
+     * мёртвое соединение нужно отбраковать, не дожидаясь медленного okhttp-пинга.
+     */
+    private fun resetIfCurrent(sock: WebSocket) {
+        if (ws === sock) {
+            runCatching { sock.cancel() }
+            drop(RuntimeException("relay reset: stale socket $url"))
+        }
+    }
+
     /** Обрыв соединения: сбрасываем сокет и завершаем все ожидания, чтобы они ретраились. */
     private fun drop(cause: Throwable) {
         ws = null
@@ -192,9 +230,26 @@ private class RelayConn(private val url: String, private val client: OkHttpClien
             try {
                 val req = JSONArray().apply { put("REQ"); put(subId); put(filter) }.toString()
                 if (!sock.send(req)) throw RuntimeException("ws send failed")
-                try { withTimeout(timeoutMs) { sub.eose.await() } } catch (_: TimeoutCancellationException) { }
-                sock.send(JSONArray().apply { put("CLOSE"); put(subId) }.toString())
+                try {
+                    withTimeout(timeoutMs) { sub.eose.await() }
+                } catch (_: TimeoutCancellationException) {
+                    // EOSE так и не пришёл за timeoutMs → сокет, скорее всего, мёртв
+                    // (мёртвая Tor-цепочка / half-open соединение, которое okhttp-пинг
+                    // ещё не отбраковал). Сбрасываем его, чтобы СЛЕДУЮЩИЙ запрос
+                    // переподключился, и сигналим вызывателю ошибкой — иначе пустой
+                    // ответ зомби-сокета засчитается как «реле ответило» и опрос
+                    // молча застрянет навсегда (sync «не происходит»).
+                    resetIfCurrent(sock)
+                    throw RuntimeException("relay query timeout (no EOSE): $url")
+                }
+                runCatching { sock.send(JSONArray().apply { put("CLOSE"); put(subId) }.toString()) }
                 synchronized(sub.events) { sub.events.toList() }
+            } catch (ce: CancellationException) {
+                // Внешняя отмена (мягкий дедлайн queryAllRelays) ДО прихода EOSE — тоже
+                // признак залипшего сокета. Сбрасываем, чтобы следующий тик опроса
+                // переподключился к этому реле, а не переиспользовал мёртвое соединение.
+                if (!sub.eose.isCompleted) resetIfCurrent(sock)
+                throw ce
             } finally {
                 subs.remove(subId)
             }
@@ -227,6 +282,9 @@ private class RelayConn(private val url: String, private val client: OkHttpClien
             try {
                 withTimeout(timeoutMs) { waiter.await() }
             } catch (_: TimeoutCancellationException) {
+                // Нет "OK" за таймаут → сокет, вероятно, мёртв. Сбрасываем, чтобы
+                // следующая отправка переподключилась, а не зависала на зомби-сокете.
+                resetIfCurrent(sock)
                 throw RuntimeException("Relay $url publish timeout")
             }
         } finally {

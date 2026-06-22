@@ -7,8 +7,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -32,9 +30,33 @@ class NostrTransport(
     gistId: String,
     private val chatPassword: String,
     private val myUserId: String,
-    /** true — соединение к реле через встроенный Tor (SOCKS); false — напрямую. */
-    private val useTor: Boolean = true
+    /** Предпочитать Tor. Фактический режим ([useTor]) — динамический (см. ниже). */
+    private val preferTor: Boolean = true
 ) : ChatTransport {
+
+    /**
+     * ФАКТИЧЕСКИЙ режим подключения к реле.
+     *  • preferTor=false (чат помечен NOSTR_DIRECT_TOKEN) → всегда напрямую.
+     *  • Tor READY → через Tor (приватность).
+     *  • Tor FAILED, либо не дошёл до READY за [TOR_FALLBACK_MS] от старта → ПРЯМОЕ
+     *    подключение к публичным реле. Это даёт работу Nostr там, где Tor заблокирован,
+     *    БЕЗ VPN. На синхронизацию не влияет: channelId и шифрование от способа
+     *    подключения не зависят — меняется только «труба».
+     */
+    private val useTor: Boolean
+        get() {
+            if (!preferTor) return false
+            return when (com.atrum.chat.TorManager.status.value) {
+                com.atrum.chat.TorManager.TorStatus.READY  -> true
+                com.atrum.chat.TorManager.TorStatus.FAILED -> false
+                else -> {
+                    val started = com.atrum.chat.TorManager.startedAtMs
+                    // Пока ждём Tor в пределах дедлайна — через Tor; вышли за дедлайн
+                    // (Tor, видимо, заблокирован) — переходим на прямое подключение.
+                    started == 0L || System.currentTimeMillis() - started < TOR_FALLBACK_MS
+                }
+            }
+        }
 
     override val displayName: String get() = "Nostr P2P"
     override val displayIcon: String get() = "⚡"
@@ -48,6 +70,12 @@ class NostrTransport(
     @Volatile private var lastAllHash: String? = null
 
     private val privkey: ByteArray = sha256("atrum_nostr_v1_${chatPassword}_${myUserId}")
+
+    init {
+        // Сообщаем долговечному стору пароль канала — он проверяет подлинность
+        // clear/del-маркеров (защита от подделки очистки/удаления через знание channelId).
+        NostrMessageStore.registerChannel(channelId, chatPassword)
+    }
 
     /** Последний УСПЕШНО прочитанный снапшот — отдаём его, если реле не ответили (анти-очистка). */
     @Volatile private var lastGoodAll: AllGistData? = null
@@ -131,6 +159,24 @@ class NostrTransport(
     /** Хеш шифртекста для «надгробий» удаления (детерминирован, стабилен между ретраями). */
     private fun delHash(content: String): String = sha256("atrum_del_$content").toHex().take(32)
 
+    // ─── Скрытие имён файлов от реле ─────────────────────────────────────────────
+    // Имя файла раньше уходило в тегах ["file", name]/["d", name] открыто — реле
+    // читало "profiles.txt"/"img_…". wireName деривирует непрозрачный токен из имени
+    // и пароля чата: реле (знает channelId, НЕ знает пароль) не восстановит имя, а оба
+    // телефона считают одинаковый токен → фильтрация/получение по-прежнему работают.
+    private fun wireName(name: String): String =
+        sha256("atrum_file_v1_${chatPassword}_$name").toHex().take(24)
+
+    /** Совпадает ли file/d-тег события с именем [name] — принимает И старый
+     *  cleartext-тег, И новый wireName (обратная совместимость чтения истории). */
+    private fun eventHasFileName(ev: NostrEvent, name: String): Boolean {
+        val w = wireName(name)
+        return ev.tags.any { t ->
+            val k = t.firstOrNull(); val v = t.getOrNull(1)
+            (k == "file" || k == "d") && (v == name || v == w)
+        }
+    }
+
     /**
      * Кэширует контент неизменяемых файловых событий (img_/stk_), пришедших в ОСНОВНОМ
      * опросе. Эти события и так скачиваются (chatFilter запрашивает kind FILE_KIND),
@@ -140,9 +186,12 @@ class NostrTransport(
     private fun cacheMediaFrom(events: List<NostrEvent>) {
         for (ev in events) {
             if (ev.kind != FILE_KIND) continue
-            val name = ev.tags.firstOrNull { it.firstOrNull() == "file" }?.getOrNull(1) ?: continue
-            if (!isImmutableFile(name)) continue
-            if (mediaCache.get(name) == null) mediaCache.put(name, ev.content)
+            // Имя на проводе скрыто (wireName) — реальное имя из тега не восстановить,
+            // поэтому кэшируем по ЗНАЧЕНИЮ тега (cleartext старых ИЛИ wireName новых).
+            // loadFile ищет в кэше по тем же ключам и отдаёт ТОЛЬКО неизменяемые
+            // (img_/stk_), поэтому случайно закэшированные profiles/reactions не мешают.
+            val tagVal = ev.tags.firstOrNull { it.firstOrNull() == "file" }?.getOrNull(1) ?: continue
+            if (mediaCache.get(tagVal) == null) mediaCache.put(tagVal, ev.content)
         }
     }
 
@@ -157,9 +206,21 @@ class NostrTransport(
         )
     }
 
+    /**
+     * Возвращает контент САМОГО СВЕЖЕГО события-файла [name].
+     *
+     * ⚠️ ИЗВЕСТНОЕ ОГРАНИЧЕНИЕ (profiles.txt / reactions.txt): это NIP-78 replaceable-
+     * события, по ОДНОМУ на pubkey, т.е. у каждого участника свой слот. Здесь берётся
+     * только новейший слот — слияния двух слотов нет. Поэтому при ОДНОВРЕМЕННОЙ записи
+     * с двух устройств правка более «старого» писателя может потеряться (lost update):
+     * presence-мерцание, откат галочек, потеря одновременной реакции. Смягчено
+     * read-modify-write + sticky-кэшем (ProfileSync.known) и тем, что reactions-toggle
+     * теперь мёржит полный набор. Полное решение — слот-на-пользователя с union при
+     * чтении; требует протокольной миграции и тестов на двух устройствах (см. аудит).
+     */
     private fun latestFile(events: List<NostrEvent>, name: String): String =
         events
-            .filter { ev -> ev.tags.any { t -> t.firstOrNull() == "file" && t.getOrNull(1) == name } }
+            .filter { ev -> eventHasFileName(ev, name) }
             .maxByOrNull { it.created_at }
             ?.content ?: ""
 
@@ -190,7 +251,7 @@ class NostrTransport(
                 // ПОСЛЕДНЮЮ версию на (pubkey, kind, d=name). Так profiles.txt/reactions.txt,
                 // переписываемые каждые ~2с, НЕ копятся и не забивают ленту сообщений.
                 kind = FILE_KIND,
-                tags = listOf(listOf("t", channelId), listOf("file", name), listOf("d", name)),
+                tags = listOf(listOf("t", channelId), listOf("file", wireName(name)), listOf("d", wireName(name))),
                 content = content
             )
         )
@@ -239,14 +300,17 @@ class NostrTransport(
     }
 
     override suspend fun loadFile(name: String): String {
-        if (isImmutableFile(name)) mediaCache.get(name)?.let { return it }
+        if (isImmutableFile(name)) {
+            mediaCache.get(wireName(name))?.let { return it }
+            mediaCache.get(name)?.let { return it } // старые события с cleartext-именем
+        }
         val events = queryAllRelays(fileFilter(name)) ?: emptyList()
         val content = events
-            .filter { ev -> ev.tags.any { t -> t.firstOrNull() == "file" && t.getOrNull(1) == name } }
+            .filter { ev -> eventHasFileName(ev, name) }
             .maxByOrNull { it.created_at }
             ?.content
             ?: throw RuntimeException("Файл '$name' не найден в Nostr (channel=$channelId)")
-        if (isImmutableFile(name)) mediaCache.put(name, content)
+        if (isImmutableFile(name)) mediaCache.put(wireName(name), content)
         return content
     }
 
@@ -262,10 +326,16 @@ class NostrTransport(
      * клиента скрывают сообщение детерминированно. Плюс best-effort NIP-09 удаление.
      */
     override suspend fun deleteLine(line: String): Boolean {
+        val h = delHash(line)
         val marker = NostrEvent.create(
             privkeyBytes = privkey,
             kind = 1,
-            tags = listOf(listOf("t", channelId), listOf("del", delHash(line))),
+            tags = listOf(
+                listOf("t", channelId),
+                listOf("del", h),
+                // Токен подлинности: доказывает знание пароля чата — чужой не подделает удаление.
+                listOf("auth", NostrMessageStore.ctrlToken(chatPassword, "del|$channelId|$h"))
+            ),
             content = ""
         )
         publishToAnyRelay(marker)
@@ -282,11 +352,19 @@ class NostrTransport(
      * даже если реле не исполняют NIP-09. Плюс best-effort NIP-09 удаление событий.
      */
     override suspend fun clearHistory() {
+        // created_at и токен считаются от ОДНОГО значения времени: токен привязан
+        // к метке, поэтому подделать «очистку с будущим cutoff» без пароля нельзя.
+        val now = System.currentTimeMillis() / 1000L
         val marker = NostrEvent.create(
             privkeyBytes = privkey,
             kind = 1,
-            tags = listOf(listOf("t", channelId), listOf("clear", "")),
-            content = ""
+            tags = listOf(
+                listOf("t", channelId),
+                listOf("clear", ""),
+                listOf("auth", NostrMessageStore.ctrlToken(chatPassword, "clear|$channelId|$now"))
+            ),
+            content = "",
+            createdAt = now
         )
         publishToAnyRelay(marker)
         NostrMessageStore.merge(channelId, listOf(marker)) // cutoff сразу локально
@@ -357,7 +435,7 @@ class NostrTransport(
         put("kinds", JSONArray().put(1).put(FILE_KIND))
         put("#t", JSONArray().put(channelId))
         // Точечно по имени файла/чанка через индексируемый тег #d.
-        put("#d", JSONArray().put(name))
+        put("#d", JSONArray().put(name).put(wireName(name))) // старые cleartext + новые blinded
         put("limit", 100)
     }
 
@@ -423,6 +501,13 @@ class NostrTransport(
 
         /** Маркер чата, который ходит к реле НАПРЯМУЮ (без Tor). Всё остальное → через Tor. */
         const val NOSTR_DIRECT_TOKEN = "nostrdirect"
+
+        /**
+         * Сколько ждать READY от Tor, прежде чем перейти на ПРЯМОЕ подключение к реле.
+         * Если Tor заблокирован в сети, он не доходит до READY — после этого окна
+         * транспорт автоматически идёт напрямую, чтобы Nostr работал без VPN.
+         */
+        private const val TOR_FALLBACK_MS = 20_000L
 
         /** Kind параметризованного replaceable-события (NIP-78) для файлов — реле хранит latest. */
         const val FILE_KIND = 30078

@@ -90,6 +90,17 @@ class Prefs(context: Context) {
         set(v) = prefs.edit().putString(KEY_AVATAR, v).apply()
 
 
+    var isScreenshotsAllowed: Boolean
+        get() = prefs.getBoolean(KEY_SCREENSHOTS_ALLOWED, false)
+        set(v) = prefs.edit().putBoolean(KEY_SCREENSHOTS_ALLOWED, v).apply()
+
+    var testerPasswordHash: String?
+        get() = prefs.getString(KEY_TESTER_PWD_HASH, null)
+        set(v) {
+            if (v == null) prefs.edit().remove(KEY_TESTER_PWD_HASH).apply()
+            else prefs.edit().putString(KEY_TESTER_PWD_HASH, v).apply()
+        }
+
     /** Unix-мс последней смены баннера — для rate-limit (30 сек между сменами). */
     var lastBannerChangeTime: Long
         get() = prefs.getLong(KEY_BANNER_CHANGED_AT, 0L)
@@ -357,27 +368,84 @@ class Prefs(context: Context) {
         prefs.edit()
             .remove("chat_token_$chatId")
             .remove("chat_pwd_$chatId")
+            .remove("eph_priv_$chatId")
+            .remove("eph_rot_$chatId")
             .apply()
+    }
+
+    // ─── Forward secrecy: эфемерный приватный X25519-ключ ────────────────────────
+    // Хранится ТОЛЬКО здесь (EncryptedSharedPreferences / Keystore), НИКОГДА в открытой
+    // Room-БД. Это и есть forward secrecy при краже устройства/базы: без ключа из
+    // Keystore прошлую переписку не расшифровать. Pub-ключ (публичный) может жить в БД.
+    fun getEphemeralPriv(chatId: String): ByteArray? =
+        prefs.getString("eph_priv_$chatId", null)
+            ?.let { android.util.Base64.decode(it, android.util.Base64.NO_WRAP) }
+
+    fun setEphemeralPriv(chatId: String, priv: ByteArray) {
+        prefs.edit()
+            .putString("eph_priv_$chatId",
+                android.util.Base64.encodeToString(priv, android.util.Base64.NO_WRAP))
+            .apply()
+    }
+
+    /** Метка времени последней ротации эфемерного ключа (для периодической ротации). */
+    fun getEphemeralRotatedAt(chatId: String): Long = prefs.getLong("eph_rot_$chatId", 0L)
+    fun setEphemeralRotatedAt(chatId: String, ts: Long) {
+        prefs.edit().putLong("eph_rot_$chatId", ts).apply()
+    }
+
+    /**
+     * Ключ локального шифр-архива истории (AES-256, один на устройство).
+     * Архив хранит расшифрованный текст FS-сообщений локально, чтобы история
+     * читалась после ротации сессионного ключа. Сам ключ — в Keystore-Prefs.
+     */
+    fun getOrCreateArchiveKey(): ByteArray {
+        prefs.getString("fs_archive_key", null)?.let {
+            return android.util.Base64.decode(it, android.util.Base64.NO_WRAP)
+        }
+        val key = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        prefs.edit().putString("fs_archive_key",
+            android.util.Base64.encodeToString(key, android.util.Base64.NO_WRAP)).apply()
+        return key
     }
 
     // ─── Local password ────────────────────────────────────────────────────────
 
     /** Установить локальный пароль. Передай null чтобы удалить. */
     fun setLocalPassword(plaintext: String?) {
+        setHashedPassword(KEY_LOCAL_PWD_HASH, plaintext)
+    }
+
+    /** Установить пароль тестера. Передай null чтобы удалить. */
+    fun setTesterPassword(plaintext: String?) {
+        setHashedPassword(KEY_TESTER_PWD_HASH, plaintext)
+    }
+
+    private fun setHashedPassword(key: String, plaintext: String?) {
         if (plaintext == null) {
-            localPasswordHash = null
+            prefs.edit().remove(key).apply()
             return
         }
         val salt = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }
         val hash = argon2Hash(plaintext, salt)
         val saltB64 = android.util.Base64.encodeToString(salt, android.util.Base64.NO_WRAP)
         val hashB64 = android.util.Base64.encodeToString(hash, android.util.Base64.NO_WRAP)
-        localPasswordHash = "argon2id:$hashB64:$saltB64"
+        prefs.edit().putString(key, "argon2id:$hashB64:$saltB64").apply()
     }
 
     /** Проверить введённый пароль против сохранённого хэша. */
     fun checkLocalPassword(plaintext: String): Boolean {
-        val saved = localPasswordHash ?: return true
+        return checkHashedPassword(localPasswordHash, plaintext)
+    }
+
+    /** Проверить введённый пароль тестера. */
+    fun checkTesterPassword(plaintext: String): Boolean {
+        val saved = testerPasswordHash ?: return plaintext == "atrum-T3st3r-S3cur3-2024!" // Default password if not set
+        return checkHashedPassword(saved, plaintext)
+    }
+
+    private fun checkHashedPassword(saved: String?, plaintext: String): Boolean {
+        if (saved == null) return true
         // Support legacy sha256 hashes
         if (!saved.startsWith("argon2id:")) {
             return sha256(plaintext) == saved
@@ -510,6 +578,8 @@ class Prefs(context: Context) {
         private const val KEY_INTRO_SHOWN = "intro_shown"
         private const val KEY_STICKER_ONBOARDING = "sticker_onboarding_shown"
         private const val KEY_STICKER_BOT_TOKEN   = "sticker_bot_token"
+        private const val KEY_SCREENSHOTS_ALLOWED = "screenshots_allowed"
+        private const val KEY_TESTER_PWD_HASH    = "tester_pwd_hash"
 
         private const val KEY_THEME = "app_theme"
         private const val KEY_LANGUAGE = "app_language"
