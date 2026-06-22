@@ -50,7 +50,21 @@ object ProfileSync {
     private fun unionWithKnown(chatId: String, read: Map<String, Profile>): MutableMap<String, Profile> {
         val result = LinkedHashMap<String, Profile>()
         known[chatId]?.let { result.putAll(it) }   // ранее виденные (в т.ч. партнёр)
-        result.putAll(read)                          // актуальное с реле перекрывает
+        // Монотонное слияние: поля профиля (имя/аватар/ключи) берём по большему updatedAt,
+        // чтобы УСТАРЕВШИЙ опрос (реле отдало старую копию слота при флаки-Tor) НЕ откатывал
+        // уже показанный свежий аватар. Presence — из свежего чтения (быстрый «не в сети»),
+        // lastReadIndex — монотонно (галочки не едут назад).
+        for ((uid, p) in read) {
+            val cur = result[uid]
+            if (cur == null) { result[uid] = p; continue }
+            val profileBase = if (p.updatedAt >= cur.updatedAt) p else cur
+            result[uid] = profileBase.copy(
+                onlineTs      = p.onlineTs,
+                typingTs      = p.typingTs,
+                recordingTs   = p.recordingTs,
+                lastReadIndex = maxOf(cur.lastReadIndex, p.lastReadIndex)
+            )
+        }
         return result
     }
 
@@ -89,6 +103,32 @@ object ProfileSync {
      * Используется в doRefreshPartnerReadIndex когда сырой контент уже есть
      * (загружен для hash-проверки) — избегаем повторного сетевого запроса.
      */
+    /**
+     * UNION-чтение (Фаза 1): объединяет ВСЕ слоты profiles.txt (по одному событию на
+     * участника). Для каждого uid берёт запись с наибольшим updatedAt (имя/аватар/ключи),
+     * а presence-таймстампы — максимумом по слотам. Убирает lost-update: свежая правка
+     * одного участника физически не может быть затёрта устаревшей копией из чужого слота.
+     * Обратносовместимо: старый общий блоб — это просто слот с несколькими uid.
+     */
+    fun unionProfileSlots(slots: List<String>, password: String, chatId: String): Map<String, Profile> {
+        val best = LinkedHashMap<String, Profile>()
+        for (slotEnc in slots) {
+            val parsed = parseProfiles(slotEnc, password, chatId)
+            for ((uid, p) in parsed) {
+                val cur = best[uid]
+                if (cur == null) { best[uid] = p; continue }
+                val base = if (p.updatedAt >= cur.updatedAt) p else cur
+                best[uid] = base.copy(
+                    onlineTs      = maxOf(cur.onlineTs, p.onlineTs),
+                    typingTs      = maxOf(cur.typingTs, p.typingTs),
+                    recordingTs   = maxOf(cur.recordingTs, p.recordingTs),
+                    lastReadIndex = maxOf(cur.lastReadIndex, p.lastReadIndex)
+                )
+            }
+        }
+        return best
+    }
+
     fun parseProfiles(rawEncrypted: String, password: String, chatId: String): Map<String, Profile> {
         if (rawEncrypted.isBlank()) return emptyMap()
         val decrypted = CryptoHelper.decrypt(rawEncrypted, password, chatId) ?: return emptyMap()
@@ -166,6 +206,7 @@ object ProfileSync {
         myUserId: String,
         typingTs: Long,
         onlineTs: Long,
+        recordingTs: Long = 0L,
         myEphemeralPubKey: String? = null,
         myName: String = "",
         myTag: String? = null,
@@ -188,6 +229,7 @@ object ProfileSync {
             existing[myUserId] = base.copy(
                 typingTs           = typingTs,
                 onlineTs           = onlineTs,
+                recordingTs        = recordingTs,
                 ephemeralPubKey    = myEphemeralPubKey ?: base.ephemeralPubKey,
                 // identity-поля всегда заново вставляем — чтобы presence-пуш их не терял
                 identityPubKey     = myIdentityPubKey ?: base.identityPubKey,

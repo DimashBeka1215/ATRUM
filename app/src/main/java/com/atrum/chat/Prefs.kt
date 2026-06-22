@@ -18,7 +18,7 @@ import java.util.UUID
  *  - localPasswordHash — SHA-256 хэш локального пароля (если задан).
  *  - isOnboarded — прошёл ли пользователь онбординг.
  */
-class Prefs(context: Context) {
+class Prefs(private val context: Context) {
 
     private val prefs: SharedPreferences = createEncryptedPrefs(context)
 
@@ -399,15 +399,109 @@ class Prefs(context: Context) {
      * Архив хранит расшифрованный текст FS-сообщений локально, чтобы история
      * читалась после ротации сессионного ключа. Сам ключ — в Keystore-Prefs.
      */
-    fun getOrCreateArchiveKey(): ByteArray {
-        prefs.getString("fs_archive_key", null)?.let {
-            return android.util.Base64.decode(it, android.util.Base64.NO_WRAP)
+    // Окно (сек), в течение которого после разблокировки устройства ключ архива
+    // пригоден без повторной авторизации. Короче — безопаснее при изъятии, но больше
+    // трения. Архив fail-safe: если окно истекло, история из архива просто не покажется.
+    private val archiveAuthWindowSec = 30
+    private var archiveKekInvalidated = false
+    private val ARCHIVE_KEK_ALIAS = "atrum_archive_kek"
+
+    /**
+     * Ключ локального FS-архива. Привязан к PIN/биометрии: 32-байтовый ключ хранится
+     * ОБЁРНУТЫМ Keystore-ключом (StrongBox где есть), который требует недавней
+     * авторизации устройства. Возвращает null, если ключ недоступен (нет свежей
+     * авторизации) — тогда архив в этой сессии просто отключается (live-переписка цела).
+     */
+    fun getOrCreateArchiveKey(): ByteArray? {
+        // 1) Обёрнутый ключ (новый формат, привязан к авторизации).
+        prefs.getString("fs_archive_key_wrapped", null)?.let { wrapped ->
+            archiveKekUnwrap(wrapped)?.let { return it }
+            if (!archiveKekInvalidated) return null  // нет свежей авторизации → архив недоступен сейчас
+            // Ключ инвалидирован (сменили экран блокировки) — старый архив уже не прочесть, чистим.
+            try { androidKeyStore()?.deleteEntry(ARCHIVE_KEK_ALIAS) } catch (_: Exception) {}
+            prefs.edit().remove("fs_archive_key_wrapped").apply()
+            archiveKekInvalidated = false
         }
+        // 2) Legacy raw-ключ (старые установки) — мигрируем в обёрнутый формат.
+        prefs.getString("fs_archive_key", null)?.let {
+            val raw = android.util.Base64.decode(it, android.util.Base64.NO_WRAP)
+            archiveKekWrap(raw)?.let { w ->
+                prefs.edit().putString("fs_archive_key_wrapped", w).remove("fs_archive_key").apply()
+            }
+            return raw
+        }
+        // 3) Первый раз — генерируем и оборачиваем (или fallback на raw, если KEK недоступен).
         val key = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
-        prefs.edit().putString("fs_archive_key",
+        val w = archiveKekWrap(key)
+        if (w != null) prefs.edit().putString("fs_archive_key_wrapped", w).apply()
+        else prefs.edit().putString("fs_archive_key",
             android.util.Base64.encodeToString(key, android.util.Base64.NO_WRAP)).apply()
         return key
     }
+
+    private fun androidKeyStore(): java.security.KeyStore? = try {
+        java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    } catch (_: Exception) { null }
+
+    /** KEK в Keystore: StrongBox где есть, user-auth если на устройстве есть экран блокировки. */
+    private fun getOrCreateArchiveKek(): javax.crypto.SecretKey? {
+        return try {
+            val ks = androidKeyStore() ?: return null
+            (ks.getKey(ARCHIVE_KEK_ALIAS, null) as? javax.crypto.SecretKey)?.let { return it }
+            val secure = try {
+                (context.getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager).isDeviceSecure
+            } catch (_: Exception) { false }
+            fun build(strongBox: Boolean): javax.crypto.SecretKey {
+                val b = android.security.keystore.KeyGenParameterSpec.Builder(
+                    ARCHIVE_KEK_ALIAS,
+                    android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or
+                        android.security.keystore.KeyProperties.PURPOSE_DECRYPT)
+                    .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .setKeySize(256)
+                if (secure) {
+                    b.setUserAuthenticationRequired(true)
+                    @Suppress("DEPRECATION")
+                    b.setUserAuthenticationValidityDurationSeconds(archiveAuthWindowSec)
+                }
+                if (strongBox && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    b.setIsStrongBoxBacked(true)
+                }
+                val kg = javax.crypto.KeyGenerator.getInstance(
+                    android.security.keystore.KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+                kg.init(b.build())
+                return kg.generateKey()
+            }
+            try { build(strongBox = true) } catch (_: Exception) { build(strongBox = false) }
+        } catch (_: Exception) { null }
+    }
+
+    private fun archiveKekWrap(raw: ByteArray): String? = try {
+        val kek = getOrCreateArchiveKek() ?: return null
+        val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        c.init(javax.crypto.Cipher.ENCRYPT_MODE, kek)
+        val iv = c.iv
+        val ct = c.doFinal(raw)
+        val body = ByteArray(1 + iv.size + ct.size)
+        body[0] = iv.size.toByte()
+        System.arraycopy(iv, 0, body, 1, iv.size)
+        System.arraycopy(ct, 0, body, 1 + iv.size, ct.size)
+        android.util.Base64.encodeToString(body, android.util.Base64.NO_WRAP)
+    } catch (_: Exception) { null }
+
+    private fun archiveKekUnwrap(wrapped: String): ByteArray? = try {
+        val ks = androidKeyStore() ?: return null
+        val kek = ks.getKey(ARCHIVE_KEK_ALIAS, null) as? javax.crypto.SecretKey ?: return null
+        val body = android.util.Base64.decode(wrapped, android.util.Base64.NO_WRAP)
+        val ivLen = body[0].toInt()
+        val iv = body.copyOfRange(1, 1 + ivLen)
+        val ct = body.copyOfRange(1 + ivLen, body.size)
+        val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        c.init(javax.crypto.Cipher.DECRYPT_MODE, kek, javax.crypto.spec.GCMParameterSpec(128, iv))
+        c.doFinal(ct)
+    } catch (e: android.security.keystore.KeyPermanentlyInvalidatedException) {
+        archiveKekInvalidated = true; null
+    } catch (_: Exception) { null }
 
     // ─── Local password ────────────────────────────────────────────────────────
 

@@ -17,7 +17,10 @@ data class ChatAndReactions(
 data class AllGistData(
     val chatContent: String,
     val reactionsContent: String,
-    val profilesContent: String
+    val profilesContent: String,
+    /** Все слоты profiles.txt (по одному событию на участника) — для union-чтения
+     *  (Фаза 1: убирает lost-update). Пусто для не-Nostr транспортов. */
+    val profileSlots: List<String> = emptyList()
 )
 
 /**
@@ -61,6 +64,10 @@ interface ChatTransport {
      * «стоп» — закрыть при завершении. По умолчанию заглушка (стрима нет).
      */
     fun watchMessages(onNew: () -> Unit): AutoCloseable = AutoCloseable {}
+
+    /** Потоковая подписка на изменения профиля собеседника (аватар/ник) для
+     *  мгновенного обновления. По умолчанию no-op (не-Nostr транспорты). */
+    fun watchProfiles(onProfile: (String) -> Unit): AutoCloseable = AutoCloseable { }
 
     /**
      * Загружает содержимое chat.txt только если оно изменилось с последнего запроса.

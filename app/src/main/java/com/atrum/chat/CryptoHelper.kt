@@ -368,6 +368,21 @@ object CryptoHelper {
     }
 
     /**
+     * Устанавливает сессионный ключ из эфемерных ключей, ЕСЛИ он ещё не установлен.
+     * Нужен фоновым контекстам (служба уведомлений, опрос списка чатов), чтобы они
+     * могли расшифровать V4-S сообщения собеседника (иначе непрочитанные/превью/пуши
+     * не видят forward-secrecy сообщений). Дёшево: X25519 ECDH + HKDF, без Argon2.
+     */
+    fun ensureSessionKey(chatId: String, myEphemeralPriv: ByteArray?, partnerEphemeralPub: String?) {
+        if (hasSessionKey(chatId)) return
+        if (myEphemeralPriv == null || partnerEphemeralPub.isNullOrBlank()) return
+        computeSessionKey(myEphemeralPriv, partnerEphemeralPub, chatId)?.let {
+            setSessionKey(chatId, it)
+            it.fill(0)
+        }
+    }
+
+    /**
      * Регистрирует сессионный ключ для чата. После этого все encrypt() → V4-S (GCM).
      * Вызывать из ChatActivity после успешного ECDH-рукопожатия.
      */

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Скелетон-плашка превью (мерцает альфой в коде). Серый, виден на свой/чужой пузырьке. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#66999999" />
+    <corners android:radius="6dp" />
+</shape>

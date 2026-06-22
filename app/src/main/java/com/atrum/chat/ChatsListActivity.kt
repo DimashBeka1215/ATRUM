@@ -11,12 +11,12 @@ import android.content.res.ColorStateList
 import android.os.Bundle
 import android.view.View
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.atrum.chat.data.AppDatabase
 import com.atrum.chat.nostr.NostrRelayPool
+import com.atrum.chat.transport.BluetoothTransport
 import com.atrum.chat.transport.NostrTransport
 import com.atrum.chat.transport.TransportFactory
 import com.atrum.chat.data.Chat
@@ -40,6 +40,9 @@ class ChatsListActivity : SecureActivity() {
 
     /** Полный список чатов из базы — для фильтрации при поиске */
     private var allChats: List<Chat> = emptyList()
+    // Foreground-стримы профилей: мгновенное обновление аватара/ника партнёра в списке.
+    private val profileWatches = java.util.concurrent.ConcurrentHashMap<Long, AutoCloseable>()
+    private val profileBusy = java.util.concurrent.ConcurrentHashMap<Long, Boolean>()
     private var isSearchActive = false
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var networkDotAnimator: ObjectAnimator? = null
@@ -135,12 +138,21 @@ class ChatsListActivity : SecureActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Прогреваем соединения с Nostr-реле заранее: пока пользователь в списке
-        // чатов, TLS-рукопожатия уже выполнены — открытие чата и подключение по
-        // приглашению происходят без задержки на установку соединения.
-        if (TorManager.status.value != TorManager.TorStatus.IDLE) NostrRelayPool.prewarm(NostrTransport.RELAYS)
+        // Заранее поднимаем Tor и прогреваем соединения с реле, ПОКА пользователь в списке:
+        // к моменту открытия чата сеть уже готова (Tor забутстрапился, TLS-рукопожатия к
+        // реле выполнены), и свежие сообщения приходят сразу — без холодного старта Tor
+        // (10–40 c) при первом открытии чата. Делаем только если есть сетевой чат
+        // (не только «Избранное»), чтобы зря не поднимать Tor.
+        lifecycleScope.launch {
+            val hasNetChat = withContext(Dispatchers.IO) { db.chatDao().getAll().any { !it.isFavorites } }
+            if (hasNetChat) {
+                TorManager.start(this@ChatsListActivity)                 // идемпотентно
+                NostrRelayPool.prewarm(NostrTransport.RELAYS)            // греет сокеты, когда Tor поднимется
+            }
+        }
         refreshMyAvatar()
         startUnreadPolling()
+        startProfileWatches()
         cleanupExpiredChats()
     }
 
@@ -225,6 +237,57 @@ class ChatsListActivity : SecureActivity() {
         super.onPause()
         unreadPollJob?.cancel()
         unreadPollJob = null
+        stopProfileWatches()
+    }
+
+    /** Foreground-стрим профилей: мгновенно ловит смену аватара/ника партнёра. */
+    private fun startProfileWatches() {
+        lifecycleScope.launch {
+            val myUserId = prefs.myUserId
+            for (chat in withContext(Dispatchers.IO) { db.chatDao().getAll() }) {
+                if (chat.isFavorites) continue
+                if (profileWatches.containsKey(chat.id)) continue
+                try {
+                    val token = prefs.getChatToken(chat.gistId).takeIf { it.isNotEmpty() }
+                        ?: @Suppress("DEPRECATION") chat.gistToken
+                    val password = prefs.getChatPassword(chat.gistId).takeIf { it.isNotEmpty() }
+                        ?: @Suppress("DEPRECATION") chat.chatPassword
+                    val api = TransportFactory.forChat(applicationContext, chat.gistId, token, password, myUserId)
+                    val chatId = chat.id
+                    profileWatches[chatId] = api.watchProfiles { content ->
+                        onProfileStream(chatId, api, password, content)
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    private fun stopProfileWatches() {
+        profileWatches.values.forEach { runCatching { it.close() } }
+        profileWatches.clear()
+    }
+
+    /** Слот профиля партнёра из стрима → расшифровка + обновление БД (→ Flow → UI). */
+    private fun onProfileStream(chatId: Long, api: com.atrum.chat.transport.ChatTransport, password: String, content: String) {
+        // Защита от наложения дорогих Argon2-расшифровок одного чата.
+        if (profileBusy.putIfAbsent(chatId, true) != null) return
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val parsed = ProfileSync.parseProfiles(content, password, api.chatId)
+                if (parsed.isNotEmpty()) {
+                    val all = ProfileSync.unionAndRemember(api.chatId, parsed)
+                    val partner = ProfileSync.findPartner(all, prefs.myUserId, prefs.myName)
+                    val fresh = db.chatDao().getById(chatId)
+                    if (partner != null && fresh != null && partner.name.isNotBlank() &&
+                        (partner.name != fresh.partnerName || partner.tag != fresh.partnerTag ||
+                            partner.avatarBase64 != fresh.partnerAvatarBase64)) {
+                        db.chatDao().updatePartnerProfile(chatId, partner.name, partner.tag, partner.avatarBase64)
+                    }
+                }
+            } catch (_: Exception) {} finally {
+                profileBusy.remove(chatId)
+            }
+        }
     }
 
     private fun refreshMyAvatar() {
@@ -376,16 +439,24 @@ class ChatsListActivity : SecureActivity() {
                     .takeIf { it.isNotEmpty() }
                     ?: @Suppress("DEPRECATION") chat.chatPassword
                 val api = TransportFactory.forChat(applicationContext, chat.gistId, chatToken, chatPassword, myUserId)
-                val content = withContext(Dispatchers.IO) { api.loadContent() }
+                // Один запрос на всё (chat + profiles) — надёжнее и легче для реле, чем
+                // loadContent + отдельный pull profiles.txt. Аватар/профиль обновляются в
+                // том же снапшоте, что и сообщения → авто-обновление аватара в списке.
+                val all = withContext(Dispatchers.IO) { api.loadAll() }
+                val content = all.chatContent
                 val lines = content.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
                 val totalLines = lines.size
 
                 // В параллель: подтянуть профиль собеседника
-                withContext(Dispatchers.IO) {
-                    val parsedProfiles = ProfileSync.pullProfiles(api, chatPassword)
+                val partnerEphPub = withContext(Dispatchers.IO) {
+                    // Фаза 1: union всех слотов profiles.txt (за флагом) — надёжный аватар/ник.
+                    val parsedProfiles = if (ChatActivity.SLOT_UNION_PROFILES && all.profileSlots.isNotEmpty())
+                        ProfileSync.unionProfileSlots(all.profileSlots, chatPassword, api.chatId)
+                    else ProfileSync.parseProfiles(all.profilesContent, chatPassword, api.chatId)
                     // «Липкий» партнёр: флаки-чтение profiles.txt не теряет аву/ник.
                     val allProfiles = ProfileSync.unionAndRemember(api.chatId, parsedProfiles)
                     val partner = ProfileSync.findPartner(allProfiles, myUserId, myName)
+                    var ephPub: String? = chat.partnerEphemeralPubKeyB64
                     if (partner != null) {
                         val profileChanged = partner.name != chat.partnerName ||
                                 partner.avatarBase64 != chat.partnerAvatarBase64
@@ -399,8 +470,20 @@ class ChatsListActivity : SecureActivity() {
                         if (partner.deleted != chat.partnerDeleted) {
                             db.chatDao().updatePartnerDeleted(chat.id, partner.deleted)
                         }
+                        // СОХРАНЯЕМ эфемерный ключ партнёра — чтобы фон (список/пуши) строил
+                        // сессионный ключ и расшифровывал FS-сообщения БЕЗ захода в чат.
+                        if (!partner.ephemeralPubKey.isNullOrBlank() &&
+                            partner.ephemeralPubKey != chat.partnerEphemeralPubKeyB64) {
+                            db.chatDao().updatePartnerEphemeralKey(chat.id, partner.ephemeralPubKey)
+                        }
+                        if (!partner.ephemeralPubKey.isNullOrBlank()) ephPub = partner.ephemeralPubKey
                     }
+                    ephPub
                 }
+
+                // FS: устанавливаем сессионный ключ, чтобы список мог расшифровать V4-S
+                // сообщения собеседника для подсчёта непрочитанных и превью.
+                CryptoHelper.ensureSessionKey(chat.gistId, prefs.getEphemeralPriv(chat.gistId), partnerEphPub)
 
                 if (totalLines <= chat.lastSeenLineCount) {
                     // Ничего нового — если unreadCount был не 0, сбросим
@@ -474,7 +557,10 @@ class ChatsListActivity : SecureActivity() {
                     togglePin(chat)
                 })
 
-                if (!chat.isFavorites) {
+                // BT-чат — локальный по Bluetooth: присоединение по приглашению невозможно,
+                // пункт «Поделиться приглашением» не показываем вовсе.
+                val isBtChat = prefs.getChatToken(chat.gistId) == BluetoothTransport.BT_TOKEN
+                if (!chat.isFavorites && !isBtChat) {
                     add(NeonDialog.Item(shareLabel, isDisabled = chat.partnerJoined) {
                         if (chat.partnerJoined) {
                             android.widget.Toast.makeText(
@@ -485,6 +571,8 @@ class ChatsListActivity : SecureActivity() {
                             shareInvite(chat)
                         }
                     })
+                }
+                if (!chat.isFavorites) {
                     add(NeonDialog.Item(getString(R.string.action_delete_chat), isDestructive = true) {
                         confirmDelete(chat)
                     })

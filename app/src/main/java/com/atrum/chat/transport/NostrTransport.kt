@@ -202,7 +202,12 @@ class NostrTransport(
         return AllGistData(
             chatContent = NostrMessageStore.render(channelId),
             reactionsContent = latestFile(events, "reactions.txt"),
-            profilesContent = latestFile(events, "profiles.txt")
+            profilesContent = latestFile(events, "profiles.txt"),
+            // Все слоты profiles.txt (по одному на участника) — источник union-чтения.
+            profileSlots = events
+                .filter { ev -> eventHasFileName(ev, "profiles.txt") }
+                .sortedByDescending { it.created_at }
+                .map { it.content }
         )
     }
 
@@ -225,7 +230,8 @@ class NostrTransport(
             ?.content ?: ""
 
     private fun hashAll(d: AllGistData): String =
-        sha256(d.chatContent + " : " + d.reactionsContent + " : " + d.profilesContent).toHex()
+        sha256(d.chatContent + " : " + d.reactionsContent + " : " + d.profilesContent +
+            " : " + d.profileSlots.joinToString("|")).toHex()
 
     // ─── запись ──────────────────────────────────────────────────────────────────
 
@@ -424,6 +430,43 @@ class NostrTransport(
         }
     }
 
+    // Мой Nostr-pubkey (hex) — чтобы в стриме профилей пропускать СВОЙ слот
+    // (не тратить дорогой Argon2-decrypt на собственные presence-пуши).
+    private val myPubkeyHex: String by lazy {
+        com.atrum.chat.nostr.Schnorr.pubkeyFromPrivkey(privkey).toHex()
+    }
+
+    /** Фильтр стрима профилей: НОВЫЕ FILE_KIND-слоты profiles.txt этого канала. */
+    private fun profileStreamFilter(sinceSec: Long): JSONObject = JSONObject().apply {
+        put("kinds", JSONArray().put(FILE_KIND))
+        put("#t", JSONArray().put(channelId))
+        put("#d", JSONArray().put(wireName("profiles.txt")).put("profiles.txt"))
+        put("since", sinceSec)
+    }
+
+    override fun watchProfiles(onProfile: (String) -> Unit): AutoCloseable {
+        val subId = "atrump_$channelId"
+        val sinceSec = System.currentTimeMillis() / 1000
+        val onEvent: (NostrEvent) -> Unit = { ev ->
+            // Только слот ПАРТНЁРА (свой пропускаем — экономим Argon2 на своих presence-пушах).
+            if (ev.kind == FILE_KIND && ev.pubkey != myPubkeyHex) onProfile(ev.content)
+        }
+        val job = watchScope.launch {
+            while (isActive) {
+                for (url in RELAYS) {
+                    if (!NostrRelayPool.hasSub(url, subId, useTor)) {
+                        runCatching { NostrRelayPool.subscribe(url, subId, profileStreamFilter(sinceSec), useTor, onEvent) }
+                    }
+                }
+                delay(RESUBSCRIBE_MS)
+            }
+        }
+        return AutoCloseable {
+            job.cancel()
+            for (url in RELAYS) runCatching { NostrRelayPool.unsubscribe(url, subId, useTor) }
+        }
+    }
+
     private fun chatFilter(): JSONObject = JSONObject().apply {
         // kind:1 — сообщения (хранятся), kind FILE_KIND — файлы (replaceable). Один запрос на всё.
         put("kinds", JSONArray().put(1).put(FILE_KIND))
@@ -529,7 +572,7 @@ class NostrTransport(
         }
 
         private fun isImmutableFile(name: String): Boolean =
-            name.startsWith("img_") || name.startsWith("stk_")
+            name.startsWith("img_") || name.startsWith("stk_") || name.startsWith("lp_")
 
         /** Публичные Nostr-реле (NIP-01, NIP-09). */
         val RELAYS = listOf(

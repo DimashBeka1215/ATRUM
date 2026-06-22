@@ -5,11 +5,15 @@
         <exclude domain="sharedpref" path="." />
         <!-- Исключаем Room DB — содержит chatPassword и gistToken всех чатов -->
         <exclude domain="database" path="." />
+        <!-- Исключаем файлы приложения — здесь лежит FS-архив истории (fsarch_*) и last_crash -->
+        <exclude domain="file" path="." />
     </cloud-backup>
     <device-transfer>
         <!-- Исключаем все SharedPreferences — содержат токены и хэши паролей -->
         <exclude domain="sharedpref" path="." />
         <!-- Исключаем Room DB — содержит chatPassword и gistToken всех чатов -->
         <exclude domain="database" path="." />
+        <!-- Исключаем файлы приложения — здесь лежит FS-архив истории (fsarch_*) и last_crash -->
+        <exclude domain="file" path="." />
     </device-transfer>
 </data-extraction-rules>

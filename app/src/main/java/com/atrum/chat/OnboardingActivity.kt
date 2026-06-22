@@ -10,7 +10,7 @@ import com.atrum.chat.databinding.ActivityOnboardingBinding
 /**
  * Onboarding в 2 шага:
  *  1) Ввод ника
- *  2) Локальный пароль (опционально — можно пропустить)
+ *  2) Локальный пароль (ОБЯЗАТЕЛЕН — защита данных на устройстве)
  *
  * После завершения: помечает isOnboarded=true и открывает ChatsListActivity.
  */
@@ -27,8 +27,7 @@ class OnboardingActivity : AppCompatActivity() {
 
         showStep1()
         binding.btnNext.setOnClickListener { nextFromNameStep() }
-        binding.btnFinish.setOnClickListener { finishOnboarding(setPassword = true) }
-        binding.btnSkipPwd.setOnClickListener { finishOnboarding(setPassword = false) }
+        binding.btnFinish.setOnClickListener { finishOnboarding() }
     }
 
     override fun onBackPressed() {
@@ -69,23 +68,20 @@ class OnboardingActivity : AppCompatActivity() {
         showStep2()
     }
 
-    private fun finishOnboarding(setPassword: Boolean) {
-        if (setPassword) {
-            val pwd = binding.etPwd.text.toString()
-            val pwdRepeat = binding.etPwdRepeat.text.toString()
-            if (pwd.length < 4) {
-                Toast.makeText(this, R.string.error_pwd_short, Toast.LENGTH_SHORT).show()
-                return
-            }
-            if (pwd != pwdRepeat) {
-                Toast.makeText(this, R.string.error_pwd_mismatch, Toast.LENGTH_SHORT).show()
-                return
-            }
-            prefs.setLocalPassword(pwd)
-            prefs.localPasswordPlaintext = pwd
-        } else {
-            prefs.setLocalPassword(null)
+    private fun finishOnboarding() {
+        // Пароль обязателен: без него нельзя завершить регистрацию (защита данных на устройстве).
+        val pwd = binding.etPwd.text.toString()
+        val pwdRepeat = binding.etPwdRepeat.text.toString()
+        if (pwd.length < 4) {
+            Toast.makeText(this, R.string.error_pwd_short, Toast.LENGTH_SHORT).show()
+            return
         }
+        if (pwd != pwdRepeat) {
+            Toast.makeText(this, R.string.error_pwd_mismatch, Toast.LENGTH_SHORT).show()
+            return
+        }
+        prefs.setLocalPassword(pwd)
+        prefs.localPasswordPlaintext = pwd
         prefs.isOnboarded = true
         startActivity(Intent(this, ChatsListActivity::class.java))
         finish()

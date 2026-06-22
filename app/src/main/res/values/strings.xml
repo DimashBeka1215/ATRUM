@@ -4,7 +4,7 @@
 
     <!-- Welcome -->
     <string name="welcome_title">Добро пожаловать в\nAtrum Chat</string>
-    <string name="welcome_subtitle">Зашифрованный мессенджер\nчерез GitHub Gist</string>
+    <string name="welcome_subtitle">Зашифрованный мессенджер\nбез серверов</string>
     <string name="welcome_start">Начать</string>
     <string name="welcome_hint">end-to-end шифрование AES-256</string>
 
@@ -19,13 +19,15 @@
     <string name="intro_1_subtitle">Приватный мессенджер для двух людей.\nБез серверов. Без рекламы. Без логов.</string>
 
     <string name="intro_2_title">End-to-end шифрование</string>
-    <string name="intro_2_subtitle">Сообщения шифруются прямо на твоём устройстве.\nПароль комнаты не покидает телефон. Никто кроме собеседника не сможет прочитать твою переписку.</string>
+    <string name="intro_2_subtitle">Сообщения шифруются прямо на твоём устройстве, ещё до отправки. Пароль комнаты остаётся на телефоне и не передаётся на серверы.</string>
 
-    <string name="intro_3_title">Что такое GitHub Gist?</string>
-    <string name="intro_3_subtitle">Gist — это маленькая заметка на GitHub. Мы используем её как зашифрованный почтовый ящик: туда летят только зашифрованные строки. GitHub видит шифр, не текст.</string>
+    <string name="intro_3_title">Куда уходят сообщения?</string>
+    <string name="intro_3_subtitle">У Atrum нет своих серверов. Сообщения передаются через открытую сеть уже зашифрованными — посредники видят только зашифрованные данные. Без регистрации и номера телефона.</string>
 
-    <string name="intro_4_title">Experimental Beta</string>
-    <string name="intro_4_subtitle">Это закрытая бета. Некоторые функции работают нестабильно.\nИспользуй осторожно и не для критичных переписок.</string>
+    <string name="intro_4_title">Это бета-версия</string>
+    <string name="intro_4_subtitle">Atrum ещё развивается — что-то может меняться и работать не идеально. Просто будь чуть внимательнее. Спасибо, что пробуешь и помогаешь сделать его лучше.</string>
+    <string name="intro_5_title">Безопасность не абсолютна</string>
+    <string name="intro_5_subtitle">Идеальной защиты не существует, и автор её не гарантирует. Многое зависит от тебя: используй надёжные пароли для приглашений и передавай код приглашения только надёжным способом. Если он утечёт или попадёт в незащищённый мессенджер — переписку теоретически смогут прочитать.</string>
 
     <string name="badge_beta">EXPERIMENTAL BETA</string>
 
@@ -33,7 +35,7 @@
     <string name="onboarding_name_title">Как вас зовут?</string>
     <string name="onboarding_name_hint">Это имя увидят ваши собеседники</string>
     <string name="onboarding_pwd_title">Придумайте пароль</string>
-    <string name="onboarding_pwd_hint">Пароль для разблокировки приложения.\nХранится только на вашем устройстве.</string>
+    <string name="onboarding_pwd_hint">Обязательный пароль для разблокировки приложения.\nХранится только на вашем устройстве.</string>
     <string name="onboarding_pwd_field">Пароль</string>
     <string name="onboarding_pwd_repeat">Повторите пароль</string>
     <string name="onboarding_pwd_skip">Пропустить (без пароля)</string>
@@ -116,6 +118,12 @@
     <!-- Карточка "Присоединиться к существующему чату" -->
     <string name="create_card_join_title">Присоединиться к существующему чату</string>
     <string name="create_card_join_subtitle">Вам нужен пароль от друга.</string>
+    <string name="create_card_bt_title">Подключиться по Bluetooth</string>
+    <string name="create_card_bt_subtitle">Сканировать QR рядом · без интернета</string>
+    <string name="qr_scan_title">Сканировать QR</string>
+    <string name="qr_scan_hint">Наведите на QR собеседника</string>
+    <string name="qr_scan_camera_needed">Нужен доступ к камере</string>
+    <string name="qr_scan_not_atrum">Это не QR Atrum для Bluetooth</string>
 
     <!-- Экран Join -->
     <string name="join_chat_title">Присоединиться к чату</string>
@@ -152,6 +160,7 @@
     <string name="cd_back">Назад</string>
     <string name="chat_subtitle_encrypted">Зашифрованный чат</string>
     <string name="typing_indicator">печатает…</string>
+    <string name="recording_indicator">записывает голосовое…</string>
     <string name="cd_cancel_reply">Отменить ответ</string>
     <string name="action_reply">Ответить</string>
 
@@ -384,6 +393,22 @@
     <string name="settings_item_notifications">Notifications</string>
     <string name="settings_item_about">About</string>
     <string name="settings_item_support">Support</string>
+
+    <!-- Tester Settings -->
+    <string name="settings_section_tester">TESTER</string>
+    <string name="settings_item_tester">Tester Settings</string>
+    <string name="tester_pwd_dialog_title">Tester Access</string>
+    <string name="tester_pwd_dialog_desc">Enter tester password to access hidden settings.</string>
+    <string name="tester_pwd_hint">Password</string>
+    <string name="tester_pwd_wrong">Access denied</string>
+    <string name="tester_screen_title">Tester Settings</string>
+    <string name="tester_item_screenshots">Allow Screenshots/Recording</string>
+    <string name="tester_item_screenshots_desc">Disables FLAG_SECURE for the entire app</string>
+    <string name="tester_item_crash">Manual App Crash</string>
+    <string name="tester_item_crash_desc">Triggers a RuntimeException for testing</string>
+    <string name="tester_crash_confirm_title">Trigger Crash?</string>
+    <string name="tester_crash_confirm_msg">The app will crash immediately with a RuntimeException.</string>
+    <string name="tester_crash_btn">Crash Now</string>
     <!-- Wallpaper (inside Personalization section) -->
     <string name="settings_wallpaper_title">Chat Wallpaper</string>
     <string name="settings_wallpaper_desc">Change chat background</string>
@@ -491,6 +516,10 @@
     <!-- Partner profile screen -->
     <string name="profile_status_label">Статус</string>
     <string name="profile_photos_label">Фото</string>
+    <string name="profile_photos_all">все</string>
+    <string name="profile_voice_label">Голосовые</string>
+    <string name="profile_links_label">Ссылки</string>
+    <string name="link_preview_open">Открыть ссылку</string>
     <string name="profile_security_label">Безопасность</string>
     <string name="fingerprint_loading">Загрузка…</string>
     <string name="fingerprint_none">Сессия не установлена</string>
@@ -703,4 +732,30 @@
     <string name="warn_tor_title">Tor не подключён</string>
     <string name="warn_tor_message">Сообщения не отправляются, пока Tor не поднимется. Проверьте интернет; если Tor заблокирован — включите VPN.</string>
     <string name="btn_tor_retry">Повторить</string>
+    <!-- Bluetooth (BLE) локальный путь -->
+    <string name="cd_path_bt">Путь: Bluetooth</string>
+    <string name="cc_path_desc_bt">Bluetooth · без интернета, оба телефона рядом. Только текст.</string>
+    <string name="bt_searching">Поиск устройств рядом…</string>
+    <string name="bt_search_hint">Покажи QR собеседнику или выбери его в списке</string>
+    <string name="bt_show_my_qr">Показать мой QR</string>
+    <string name="bt_no_devices">Устройств рядом пока нет</string>
+    <string name="bt_signal_strong">сигнал сильный</string>
+    <string name="bt_signal_medium">сигнал средний</string>
+    <string name="bt_signal_weak">сигнал слабый</string>
+    <string name="bt_wait_title">Подключение по Bluetooth</string>
+    <string name="bt_wait_hint">Ожидаем, пока собеседник создаст чат…</string>
+    <string name="bt_connected">Подключено: %1$s</string>
+    <string name="bt_peer_connecting">%1$s подключается…</string>
+    <string name="bt_peer_ready">%1$s готов — можно создавать чат</string>
+    <string name="bt_failed">Не удалось подключиться по Bluetooth</string>
+    <string name="bt_perm_needed">Нужны разрешения Bluetooth</string>
+    <string name="voice_load_failed_fmt">Голосовое не загрузилось: %1$s</string>
+    <string name="voice_limit_warning">Минута до лимита записи (15 мин)</string>
+    <string name="voice_limit_title">Скоро лимит записи</string>
+    <string name="voice_limit_msg">Осталась 1 минута (макс. 15:00)</string>
+    <string name="bt_wait_connecting">Соединение…</string>
+    <string name="bt_wait_exchanging">Обмен профилями…</string>
+    <string name="bt_wait_for_create_fmt">Ждём, пока %1$s создаст чат…</string>
+    <string name="bt_wait_hint_exchange">Профилями обменялись. Попросите собеседника нажать «Создать чат».</string>
+    <string name="join_err_bt">Это приглашение от Bluetooth-чата. Такой чат локальный — подключайтесь рядом через QR/Bluetooth.</string>
 </resources>

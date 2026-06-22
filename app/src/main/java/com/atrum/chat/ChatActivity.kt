@@ -298,7 +298,7 @@ class ChatActivity : SecureActivity() {
 
         prefs = Prefs(this)
         // FS: подключаем локальный шифр-архив истории к CryptoHelper (fail-safe).
-        try { CryptoHelper.setArchive(FsArchive(applicationContext, prefs.getOrCreateArchiveKey())) } catch (_: Exception) {}
+        try { prefs.getOrCreateArchiveKey()?.let { CryptoHelper.setArchive(FsArchive(applicationContext, it)) } } catch (_: Exception) {}
         db = AppDatabase.get(this)
 
         val chatId = intent.getLongExtra(EXTRA_CHAT_ID, -1L)
@@ -568,6 +568,10 @@ class ChatActivity : SecureActivity() {
                 }
             }
             .flatten()
+        val voiceItems = currentMessages
+            .filter { it.voiceFileName != null }
+            .map { "${it.voiceFileName}\u0001${it.voiceDurationSec}" }
+        val linkItems = currentMessages.flatMap { extractUrls(it.text) }.distinct()
         val intent = android.content.Intent(this, PartnerProfileActivity::class.java).apply {
             putExtra(PartnerProfileActivity.EXTRA_NAME, name)
             putExtra(PartnerProfileActivity.EXTRA_TAG, tag)
@@ -581,8 +585,19 @@ class ChatActivity : SecureActivity() {
             putExtra(PartnerProfileActivity.EXTRA_EPH_SIG, partner?.ephemeralSig)
             putExtra(PartnerProfileActivity.EXTRA_VERIFIED_PARTNER_IDK, partner?.verifiedPartnerIdk)
             putStringArrayListExtra(PartnerProfileActivity.EXTRA_IMAGE_REFS, ArrayList(refs))
+            putStringArrayListExtra(PartnerProfileActivity.EXTRA_VOICE_REFS, ArrayList(voiceItems))
+            putStringArrayListExtra(PartnerProfileActivity.EXTRA_LINKS, ArrayList(linkItems))
         }
         startActivity(intent)
+    }
+
+    /** Извлекает ссылки из текста сообщения (как Linkify в чате). */
+    private fun extractUrls(text: String): List<String> {
+        if (text.isBlank()) return emptyList()
+        val out = ArrayList<String>()
+        val m = android.util.Patterns.WEB_URL.matcher(text)
+        while (m.find()) out.add(m.group())
+        return out
     }
 
     private fun setupUi() {
@@ -1310,8 +1325,19 @@ class ChatActivity : SecureActivity() {
         val newHash = rawEncrypted.hashCode()
         if (newHash == lastProfilesHash && lastKnownProfiles.isNotEmpty()) return
         lastProfilesHash = newHash
+        processParsedProfiles(ProfileSync.parseProfiles(rawEncrypted, chat.chatPassword, transport.chatId))
+    }
 
-        val parsed = ProfileSync.parseProfiles(rawEncrypted, chat.chatPassword, transport.chatId)
+    /** Фаза 1: union-чтение всех слотов profiles.txt (по одному на участника) — убирает lost-update. */
+    private suspend fun processProfilesFromSlots(slots: List<String>) {
+        if (slots.isEmpty()) return
+        val newHash = slots.hashCode()
+        if (newHash == lastProfilesHash && lastKnownProfiles.isNotEmpty()) return
+        lastProfilesHash = newHash
+        processParsedProfiles(ProfileSync.unionProfileSlots(slots, chat.chatPassword, transport.chatId))
+    }
+
+    private suspend fun processParsedProfiles(parsed: Map<String, Profile>) {
         // Сырой снимок — для presence-записей (чтобы не реинжектить устаревшего партнёра).
         lastKnownProfiles.clear()
         lastKnownProfiles.putAll(parsed)
@@ -1531,7 +1557,9 @@ class ChatActivity : SecureActivity() {
         scheduleMarkAsRead(allLines.size)
 
         // ── Profiles (typing / online / partner data) ─────────────────────────
-        if (profilesContent.isNotBlank()) {
+        if (SLOT_UNION_PROFILES && data.profileSlots.isNotEmpty()) {
+            processProfilesFromSlots(data.profileSlots)   // Фаза 1: union всех слотов
+        } else if (profilesContent.isNotBlank()) {
             processProfilesFromContent(profilesContent)
         }
     }
@@ -1802,9 +1830,32 @@ class ChatActivity : SecureActivity() {
                 clearReply()
                 // Сообщение ушло — больше не «печатаем»
                 stopTypingSignal()
+                // Превью ссылки (best-effort, через Tor) — отдельным файлом lp_<hash>.
+                maybeBuildLinkPreview(text)
             }
         }
         // Если отклонено (очередь полна) — текст остаётся в поле, пользователь видит отказ
+    }
+
+    private val builtPreviewUrls = HashSet<String>()
+
+    /**
+     * Превью ссылки: ОТПРАВИТЕЛЬ тянет og: через Tor и заливает отдельным файлом
+     * lp_<hash(url)>. Получатель грузит этот файл с реле (не сам сайт) — без утечки.
+     * Только при готовом Tor, чтобы не палить реальный IP отправителя на сайт.
+     */
+    private fun maybeBuildLinkPreview(text: String) {
+        val url = LinkPreview.firstUrl(text) ?: return
+        if (com.atrum.chat.TorManager.status.value != com.atrum.chat.TorManager.TorStatus.READY) return
+        if (!builtPreviewUrls.add(url)) return
+        val fileName = LinkPreview.fileName(url)
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val data = LinkPreview.fetch(url, useTor = true) ?: return@launch
+                val enc = CryptoHelper.encrypt(data.toJson(), chat.chatPassword, transport.chatId)
+                transport.saveFile(fileName, enc)
+            } catch (_: Exception) {}
+        }
     }
 
     /** Запускает обратный отсчёт в hint поля ввода и блокирует кнопку отправки. */
@@ -2285,6 +2336,11 @@ class ChatActivity : SecureActivity() {
     }
 
     private val ephemeralRotationMs = 24L * 60 * 60 * 1000  // ротация эфемерного ключа раз в сутки
+    // ВРЕМЕННО ВЫКЛ: ротация требует надёжной доставки нового pub через profiles.txt
+    // (общий файл с гонкой lost-update на флаки-реле). Потеря обновления pub →
+    // расхождение сессионного ключа → сообщения одной стороны не доходят. Включить
+    // обратно только после усиления синхронизации профиля (union слотов на пользователя).
+    private val ephemeralRotationEnabled = false
 
     /**
      * Периодическая ротация эфемерного X25519-ключа (forward secrecy с окном).
@@ -2294,6 +2350,7 @@ class ChatActivity : SecureActivity() {
      * нерасшифровываемым — это и есть FS против реле/сети. Fail-safe.
      */
     private fun maybeRotateEphemeral() {
+        if (!ephemeralRotationEnabled) return
         try {
             val now = System.currentTimeMillis()
             val last = prefs.getEphemeralRotatedAt(chat.gistId)
@@ -3461,6 +3518,10 @@ class ChatActivity : SecureActivity() {
          * резать запросы. 5с — баланс «онлайн» без миганий и нагрузки на реле.
          */
         const val PRESENCE_INTERVAL_MS = 5_000L
+        // Фаза 1 синхронизации: union-чтение слотов profiles.txt (убирает lost-update —
+        // мерцание аватара/presence). ВЫКЛ по умолчанию: включить на ОБОИХ телефонах для
+        // теста; после подтверждения сделать дефолтом. (см. SYNC_AUDIT.md)
+        const val SLOT_UNION_PROFILES = true
         /** Через сколько мс без обновления партнёр считается офлайн. */
         const val ONLINE_EXPIRY_MS = 12_000L
         /** Через сколько мс без обновления статус «записывает голосовое» считается устаревшим. */

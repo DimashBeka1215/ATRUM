@@ -122,6 +122,9 @@ class MessageWatchService : Service() {
             try {
                 val password = prefs.getChatPassword(chat.gistId).takeIf { it.isNotEmpty() }
                     ?: @Suppress("DEPRECATION") chat.chatPassword
+                // FS: устанавливаем сессионный ключ, чтобы фон мог расшифровать V4-S
+                // сообщения собеседника (иначе непрочитанные/пуши их не видят).
+                CryptoHelper.ensureSessionKey(chat.gistId, prefs.getEphemeralPriv(chat.gistId), chat.partnerEphemeralPubKeyB64)
                 val content = NostrMessageStore.render(t.chatId)
                 val lines = content.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
                 val unread = if (lines.size <= chat.lastSeenLineCount) 0 else {
@@ -132,6 +135,26 @@ class MessageWatchService : Service() {
                     }
                 }
                 if (unread != chat.unreadCount) db.chatDao().updateUnread(chat.id, unread)
+
+                // Превью последнего сообщения — чтобы список обновлялся ПОЧТИ МГНОВЕННО на
+                // стрим-событие (не дожидаясь 8-секундного опроса ChatsListActivity). Список
+                // наблюдает БД через Flow, поэтому updatePreview сразу отражается в UI.
+                if (lines.isNotEmpty()) {
+                    val lastDec = CryptoHelper.decrypt(lines.last(), password, chat.gistId)
+                    if (lastDec != null) {
+                        val pm = Message.fromDecrypted(lastDec, myUserId, myName, aliases)
+                        val body = when {
+                            pm.isImage && pm.text.isBlank() -> "📷 Фото"
+                            pm.isImage -> "📷 ${pm.text}"
+                            pm.isVoice -> getString(R.string.msg_preview_voice)
+                            pm.isSticker -> getString(R.string.msg_preview_sticker)
+                            pm.isReply -> "↪ ${pm.text}"
+                            else -> pm.text
+                        }
+                        val preview = (if (pm.isSelf) "Вы: $body" else body).take(80)
+                        if (preview != chat.lastMessage) db.chatDao().updatePreview(chat.id, preview, chat.lastTimeMs)
+                    }
+                }
                 totalUnread += unread
             } catch (_: Exception) {
                 totalUnread += chat.unreadCount

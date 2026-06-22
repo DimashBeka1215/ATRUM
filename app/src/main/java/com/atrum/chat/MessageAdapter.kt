@@ -22,8 +22,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -270,6 +268,17 @@ class MessageAdapter(
     ) : RecyclerView.ViewHolder(itemView) {
         private val senderView: TextView? = itemView.findViewById(R.id.tv_sender)
         private val textView: TextView = itemView.findViewById(R.id.tv_text)
+        private val linkPreview: View? = itemView.findViewById(R.id.link_preview)
+        private val lpSite: TextView? = itemView.findViewById(R.id.lp_site)
+        private val lpTitle: TextView? = itemView.findViewById(R.id.lp_title)
+        private val lpDesc: TextView? = itemView.findViewById(R.id.lp_desc)
+        private val lpThumb: ImageView? = itemView.findViewById(R.id.lp_thumb)
+        private val lpGlobe: View? = itemView.findViewById(R.id.lp_globe)
+        private val lpText: View? = itemView.findViewById(R.id.lp_text)
+        private val lpSkel: View? = itemView.findViewById(R.id.lp_skel)
+        private val lpSkelThumb: View? = itemView.findViewById(R.id.lp_skel_thumb)
+        private var lpJob: kotlinx.coroutines.Job? = null
+        private var lpAnim: android.animation.ValueAnimator? = null
         private val timeView: TextView = itemView.findViewById(R.id.tv_time)
         private val quoteBlock: View? = itemView.findViewById(R.id.quote_block)
         private val reactionRow: LinearLayout? = itemView.findViewById(R.id.reaction_row)
@@ -391,8 +400,18 @@ class MessageAdapter(
             } else {
                 textView.visibility = View.VISIBLE
                 textView.text = msg.text
+                // Кликабельные ссылки в тексте (открываются в браузере). Долгий тап по
+                // пузырьку (контекстное меню) сохраняется — см. BubbleLinkMovementMethod.
+                android.text.util.Linkify.addLinks(textView, android.text.util.Linkify.WEB_URLS)
+                val sp = textView.text
+                if (sp is android.text.Spannable &&
+                    sp.getSpans(0, sp.length, android.text.style.URLSpan::class.java).isNotEmpty()) {
+                    textView.movementMethod = BubbleLinkMovementMethod
+                    textView.setLinkTextColor(ContextCompat.getColor(itemView.context, R.color.accent_light))
+                }
             }
 
+            bindLinkPreview(msg)
             timeView.text = time
 
             if (msg.isReply && quoteBlock != null) {
@@ -578,6 +597,110 @@ class MessageAdapter(
             if (f.exists() && f.length() > 0) return f
             val bytes = loader.loadRawBytes(ref) ?: return null
             return try { f.writeBytes(bytes); f } catch (_: Exception) { null }
+        }
+
+        private fun bindLinkPreview(msg: Message) {
+            val card = linkPreview ?: return
+            lpJob?.cancel(); stopLpAnim()
+            card.visibility = View.GONE
+            card.setOnClickListener(null)
+            if (msg.text.isBlank() || msg.isImage || msg.isVoice || msg.isSticker) return
+            val url = LinkPreview.firstUrl(msg.text) ?: return
+            val key = msg.msgId
+            card.tag = key
+            card.setOnClickListener { openLpUrl(url) }
+            showLpLoading()
+            card.visibility = View.VISIBLE
+            val loader = getImageLoader()
+            val scope = loadScope
+            if (loader == null || scope == null) { showLpPlaceholder(url, msg.isSelf); return }
+            lpJob = scope.launch {
+                val json = withContext(Dispatchers.IO) {
+                    runCatching { loader.loadBase64(LinkPreview.fileName(url)) }.getOrNull()
+                }
+                if (card.tag != key) return@launch
+                val data = json?.let { LinkPreviewData.fromJson(it) }
+                if (data != null) renderRichLp(data, msg.isSelf) else showLpPlaceholder(url, msg.isSelf)
+            }
+        }
+
+        private fun showLpLoading() {
+            lpText?.visibility = View.GONE
+            lpGlobe?.visibility = View.GONE
+            lpThumb?.visibility = View.GONE
+            lpSkel?.visibility = View.VISIBLE
+            lpSkelThumb?.visibility = View.VISIBLE
+            startLpAnim()
+        }
+
+        private fun renderRichLp(data: LinkPreviewData, isSelf: Boolean) {
+            stopLpAnim()
+            lpSkel?.visibility = View.GONE
+            lpSkelThumb?.visibility = View.GONE
+            lpGlobe?.visibility = View.GONE
+            lpText?.visibility = View.VISIBLE
+            lpSite?.let { it.text = data.site; it.visibility = if (data.site.isBlank()) View.GONE else View.VISIBLE }
+            lpTitle?.let { it.text = data.title; it.visibility = if (data.title.isBlank()) View.GONE else View.VISIBLE }
+            lpDesc?.let { it.text = data.description; it.visibility = if (data.description.isBlank()) View.GONE else View.VISIBLE }
+            applyLpTextColors(isSelf)
+            val thumb = data.thumbBase64?.let { AvatarUtils.fromBase64(it) }
+            if (thumb != null) { lpThumb?.setImageBitmap(thumb); lpThumb?.visibility = View.VISIBLE }
+            else lpThumb?.visibility = View.GONE
+        }
+
+        private fun showLpPlaceholder(url: String, isSelf: Boolean) {
+            stopLpAnim()
+            lpSkel?.visibility = View.GONE
+            lpSkelThumb?.visibility = View.GONE
+            lpThumb?.visibility = View.GONE
+            lpGlobe?.visibility = View.VISIBLE
+            lpText?.visibility = View.VISIBLE
+            lpSite?.let { it.text = lpHost(url); it.visibility = View.VISIBLE }
+            lpTitle?.let { it.text = itemView.context.getString(R.string.link_preview_open); it.visibility = View.VISIBLE }
+            lpDesc?.visibility = View.GONE
+            applyLpTextColors(isSelf)
+        }
+
+        private fun applyLpTextColors(isSelf: Boolean) {
+            val ctx = itemView.context
+            if (isSelf) {
+                lpTitle?.setTextColor(Color.WHITE)
+                lpDesc?.setTextColor(0xCCFFFFFF.toInt())
+            } else {
+                lpTitle?.setTextColor(ContextCompat.getColor(ctx, R.color.text_primary))
+                lpDesc?.setTextColor(ContextCompat.getColor(ctx, R.color.text_secondary))
+            }
+        }
+
+        private fun startLpAnim() {
+            lpAnim?.cancel()
+            lpAnim = android.animation.ValueAnimator.ofFloat(0.45f, 0.85f).apply {
+                duration = 700
+                repeatMode = android.animation.ValueAnimator.REVERSE
+                repeatCount = android.animation.ValueAnimator.INFINITE
+                addUpdateListener {
+                    val a = it.animatedValue as Float
+                    lpSkel?.alpha = a
+                    lpSkelThumb?.alpha = a
+                }
+                start()
+            }
+        }
+
+        private fun stopLpAnim() {
+            lpAnim?.cancel(); lpAnim = null
+            lpSkel?.alpha = 1f; lpSkelThumb?.alpha = 1f
+        }
+
+        private fun lpHost(url: String): String = try {
+            android.net.Uri.parse(if (url.startsWith("http", true)) url else "http://$url").host ?: url
+        } catch (_: Exception) { url }
+
+        private fun openLpUrl(url: String) {
+            runCatching {
+                val u = if (url.startsWith("http", true)) url else "http://$url"
+                itemView.context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(u)))
+            }
         }
 
         private fun bindVoice(msg: Message) {
@@ -1056,4 +1179,34 @@ private fun downsampleWaveform(src: IntArray, target: Int): IntArray {
         out[i] = peak
     }
     return out
+}
+
+/**
+ * LinkMovementMethod, который перехватывает касание ТОЛЬКО когда оно попало в ссылку.
+ * На остальном тексте возвращает false → событие уходит родителю, и долгий тап по
+ * пузырьку (контекстное меню/реакции) продолжает работать.
+ */
+private object BubbleLinkMovementMethod : android.text.method.LinkMovementMethod() {
+    override fun onTouchEvent(
+        widget: TextView,
+        buffer: android.text.Spannable,
+        event: android.view.MotionEvent
+    ): Boolean {
+        val action = event.action
+        if (action == android.view.MotionEvent.ACTION_UP || action == android.view.MotionEvent.ACTION_DOWN) {
+            val layout = widget.layout ?: return false
+            val x = event.x.toInt() - widget.totalPaddingLeft + widget.scrollX
+            val y = event.y.toInt() - widget.totalPaddingTop + widget.scrollY
+            val line = layout.getLineForVertical(y)
+            val off = layout.getOffsetForHorizontal(line, x.toFloat())
+            val links = buffer.getSpans(off, off, android.text.style.URLSpan::class.java)
+            if (links.isNotEmpty()) {
+                if (action == android.view.MotionEvent.ACTION_UP) {
+                    runCatching { links[0].onClick(widget) }
+                }
+                return true
+            }
+        }
+        return false
+    }
 }

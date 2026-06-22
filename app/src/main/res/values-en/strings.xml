@@ -4,7 +4,7 @@
 
     <!-- Welcome -->
     <string name="welcome_title">Welcome to\nAtrum Chat</string>
-    <string name="welcome_subtitle">Encrypted messenger\nvia GitHub Gist</string>
+    <string name="welcome_subtitle">Encrypted messenger\nwith no servers</string>
     <string name="welcome_start">Get started</string>
     <string name="welcome_hint">end-to-end AES-256 encryption</string>
 
@@ -17,13 +17,15 @@
     <string name="intro_1_subtitle">A private messenger for two people.\nNo servers. No ads. No logs.</string>
 
     <string name="intro_2_title">End-to-end encryption</string>
-    <string name="intro_2_subtitle">Messages are encrypted right on your device.\nThe room password never leaves your phone. Nobody but your contact can read your messages.</string>
+    <string name="intro_2_subtitle">Messages are encrypted right on your device, before they are sent. The room password stays on your phone and is never sent to any server.</string>
 
-    <string name="intro_3_title">What is GitHub Gist?</string>
-    <string name="intro_3_subtitle">A Gist is a small note on GitHub. We use it as an encrypted mailbox — only encrypted strings are stored there. GitHub sees ciphertext, not your messages.</string>
+    <string name="intro_3_title">Where do messages go?</string>
+    <string name="intro_3_subtitle">Atrum has no servers of its own. Messages travel over an open network already encrypted — anyone in between sees only scrambled data. No sign-up, no phone number.</string>
 
-    <string name="intro_4_title">Experimental Beta</string>
-    <string name="intro_4_subtitle">This is a closed beta. Some features may be unstable.\nUse with care and not for critical conversations.</string>
+    <string name="intro_4_title">This is a beta</string>
+    <string name="intro_4_subtitle">Atrum is still evolving — some things may change or not be perfect yet. Just stay a little attentive. Thanks for trying it and helping make it better.</string>
+    <string name="intro_5_title">Security isn\'t absolute</string>
+    <string name="intro_5_subtitle">Perfect protection doesn\'t exist, and the author can\'t guarantee it. A lot depends on you: use strong invite passwords and share invite codes only through trusted channels. If a code leaks or ends up in an insecure messenger, your chat could in theory be read.</string>
 
     <string name="badge_beta">EXPERIMENTAL BETA</string>
 
@@ -31,7 +33,7 @@
     <string name="onboarding_name_title">What\'s your name?</string>
     <string name="onboarding_name_hint">This name will be visible to your contacts</string>
     <string name="onboarding_pwd_title">Set a password</string>
-    <string name="onboarding_pwd_hint">Password to unlock the app.\nStored only on your device.</string>
+    <string name="onboarding_pwd_hint">Required password to unlock the app.\nStored only on your device.</string>
     <string name="onboarding_pwd_field">Password</string>
     <string name="onboarding_pwd_repeat">Repeat password</string>
     <string name="onboarding_pwd_skip">Skip (no password)</string>
@@ -114,6 +116,12 @@
     <!-- Join existing chat card -->
     <string name="create_card_join_title">Join an existing chat</string>
     <string name="create_card_join_subtitle">You need a password from your friend.</string>
+    <string name="create_card_bt_title">Connect over Bluetooth</string>
+    <string name="create_card_bt_subtitle">Scan a QR nearby · no internet</string>
+    <string name="qr_scan_title">Scan QR</string>
+    <string name="qr_scan_hint">Point at the other person\'s QR</string>
+    <string name="qr_scan_camera_needed">Camera access needed</string>
+    <string name="qr_scan_not_atrum">Not an Atrum Bluetooth QR</string>
 
     <!-- Join screen -->
     <string name="join_chat_title">Join chat</string>
@@ -150,6 +158,7 @@
     <string name="cd_back">Back</string>
     <string name="chat_subtitle_encrypted">Encrypted chat</string>
     <string name="typing_indicator">typing…</string>
+    <string name="recording_indicator">recording voice…</string>
     <string name="cd_cancel_reply">Cancel reply</string>
     <string name="action_reply">Reply</string>
 
@@ -449,6 +458,10 @@
     <!-- Partner profile screen -->
     <string name="profile_status_label">Status</string>
     <string name="profile_photos_label">Photos</string>
+    <string name="profile_photos_all">all</string>
+    <string name="profile_voice_label">Voice</string>
+    <string name="profile_links_label">Links</string>
+    <string name="link_preview_open">Open link</string>
     <string name="profile_security_label">Security</string>
     <string name="fingerprint_loading">Loading…</string>
     <string name="fingerprint_none">Session not established</string>
@@ -689,4 +702,30 @@
     <string name="warn_tor_title">Tor not connected</string>
     <string name="warn_tor_message">Messages won\'t send until Tor is up. Check your internet; if Tor is blocked, turn on a VPN.</string>
     <string name="btn_tor_retry">Retry</string>
+    <!-- Bluetooth (BLE) local path -->
+    <string name="cd_path_bt">Path: Bluetooth</string>
+    <string name="cc_path_desc_bt">Bluetooth · no internet, both phones nearby. Text only.</string>
+    <string name="bt_searching">Searching for nearby devices…</string>
+    <string name="bt_search_hint">Show your QR to the other person or pick them from the list</string>
+    <string name="bt_show_my_qr">Show my QR</string>
+    <string name="bt_no_devices">No devices nearby yet</string>
+    <string name="bt_signal_strong">strong signal</string>
+    <string name="bt_signal_medium">medium signal</string>
+    <string name="bt_signal_weak">weak signal</string>
+    <string name="bt_wait_title">Connecting over Bluetooth</string>
+    <string name="bt_wait_hint">Waiting for the other person to create the chat…</string>
+    <string name="bt_connected">Connected: %1$s</string>
+    <string name="bt_peer_connecting">%1$s is connecting…</string>
+    <string name="bt_peer_ready">%1$s is ready — you can create the chat</string>
+    <string name="bt_failed">Couldn\'t connect over Bluetooth</string>
+    <string name="bt_perm_needed">Bluetooth permissions needed</string>
+    <string name="voice_load_failed_fmt">Voice failed to load: %1$s</string>
+    <string name="voice_limit_warning">One minute until the recording limit (15 min)</string>
+    <string name="voice_limit_title">Recording limit soon</string>
+    <string name="voice_limit_msg">1 minute left (max 15:00)</string>
+    <string name="bt_wait_connecting">Connecting…</string>
+    <string name="bt_wait_exchanging">Exchanging profiles…</string>
+    <string name="bt_wait_for_create_fmt">Waiting for %1$s to create the chat…</string>
+    <string name="bt_wait_hint_exchange">Profiles exchanged. Ask the other person to tap “Create chat”.</string>
+    <string name="join_err_bt">This invite is from a Bluetooth chat. It is local — connect nearby via QR/Bluetooth.</string>
 </resources>

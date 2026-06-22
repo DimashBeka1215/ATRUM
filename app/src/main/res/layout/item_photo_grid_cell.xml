@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Ячейка фото-сетки в профиле собеседника: скруглённая (clipToOutline), с
+     опциональным затемнением и счётчиком «+N» на последней видимой плитке. -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="0dp"
-    android:layout_height="110dp"
+    android:layout_height="74dp"
     android:layout_weight="1"
-    android:layout_margin="2dp"
-    android:background="@color/surface_elevated"
+    android:layout_marginHorizontal="3dp"
+    android:background="@drawable/bg_photo_cell"
+    android:clipToOutline="true"
     android:clickable="true"
     android:focusable="true"
     android:foreground="?attr/selectableItemBackground">
@@ -15,5 +18,23 @@
         android:layout_height="match_parent"
         android:scaleType="centerCrop"
         android:contentDescription="@null" />
+
+    <!-- Затемнение под счётчиком «ещё» (scrim поверх фото — тема не важна). -->
+    <View
+        android:id="@+id/overlay_more"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#99000000"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/tv_more_count"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:textColor="@color/white"
+        android:textSize="16sp"
+        android:fontFamily="sans-serif-medium"
+        android:visibility="gone" />
 
 </FrameLayout>

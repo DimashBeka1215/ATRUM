@@ -31,6 +31,8 @@ class PartnerProfileActivity : AppCompatActivity() {
         const val EXTRA_GIST_TOKEN    = "gist_token"
         const val EXTRA_CHAT_PASSWORD = "chat_password"
         const val EXTRA_IMAGE_REFS    = "image_refs"
+        const val EXTRA_VOICE_REFS    = "voice_refs"
+        const val EXTRA_LINKS         = "links"
         const val EXTRA_IDENTITY_PUB          = "identity_pub"
         const val EXTRA_EPH_PUB               = "eph_pub"
         const val EXTRA_EPH_SIG               = "eph_sig"
@@ -38,6 +40,7 @@ class PartnerProfileActivity : AppCompatActivity() {
     }
 
     private var shieldPulse: android.animation.Animator? = null
+    private var activeVoiceIcon: ImageView? = null
 
     // ── Взаимная сверка (живой статус) ─────────────────────────────────────────
     private var verifyGistId = ""
@@ -59,6 +62,8 @@ class PartnerProfileActivity : AppCompatActivity() {
         val gistToken    = intent.getStringExtra(EXTRA_GIST_TOKEN) ?: ""
         val chatPassword = intent.getStringExtra(EXTRA_CHAT_PASSWORD) ?: ""
         val imageRefs    = intent.getStringArrayListExtra(EXTRA_IMAGE_REFS) ?: arrayListOf()
+        val voiceItems   = intent.getStringArrayListExtra(EXTRA_VOICE_REFS) ?: arrayListOf()
+        val linkItems    = intent.getStringArrayListExtra(EXTRA_LINKS) ?: arrayListOf()
 
         // Сохраняем для живой сверки (публикация подтверждения + опрос профиля партнёра).
         verifyGistId = gistId
@@ -128,14 +133,19 @@ class PartnerProfileActivity : AppCompatActivity() {
         // Photos grid
         val photosSection = findViewById<View>(R.id.section_photos)
         val gridContainer = findViewById<LinearLayout>(R.id.ll_photo_grid_row1)
-        val gridRow2 = findViewById<LinearLayout>(R.id.ll_photo_grid_row2)
+        val photosCount = findViewById<TextView>(R.id.tv_photos_count)
+        val photosAllBtn = findViewById<View>(R.id.btn_photos_all)
 
         if (imageRefs.isEmpty()) {
             photosSection.visibility = View.GONE
         } else {
             photosSection.visibility = View.VISIBLE
-            loadPhotoGrid(imageRefs, gistId, gistToken, chatPassword, gridContainer, gridRow2)
+            loadPhotoGrid(imageRefs, gistId, gistToken, chatPassword, gridContainer, photosCount, photosAllBtn)
         }
+
+        // Голосовые и Ссылки
+        setupVoiceSection(voiceItems, gistId, gistToken, chatPassword)
+        setupLinksSection(linkItems)
     }
 
     private fun loadPhotoGrid(
@@ -144,22 +154,31 @@ class PartnerProfileActivity : AppCompatActivity() {
         gistToken: String,
         chatPassword: String,
         row1: LinearLayout,
-        row2: LinearLayout
+        countView: TextView,
+        allBtn: View
     ) {
         val transport = TransportFactory.forChat(this@PartnerProfileActivity, gistId, gistToken, chatPassword, prefs.myUserId)
         val loader = ImageLoader(transport, chatPassword)
 
-        // Show up to 6 photos (3 per row)
-        val display = refs.takeLast(6)
+        countView.text = refs.size.toString()
+
+        // Показываем 3 самых свежих; остальные доступны по «+N» / «все».
+        val display = refs.takeLast(3)
+        val more = refs.size - display.size
+
+        if (more > 0) {
+            allBtn.visibility = View.VISIBLE
+            allBtn.setOnClickListener { openPhotoGallery(refs, 0) }
+        } else {
+            allBtn.visibility = View.GONE
+        }
 
         row1.removeAllViews()
-        row2.removeAllViews()
 
         display.forEachIndexed { index, ref ->
-            val cell = layoutInflater.inflate(R.layout.item_photo_grid_cell, null) as View
+            val cell = layoutInflater.inflate(R.layout.item_photo_grid_cell, row1, false)
             val iv = cell.findViewById<ImageView>(R.id.iv_photo_cell)
-            val row = if (index < 3) row1 else row2
-            row.addView(cell)
+            row1.addView(cell)
 
             if (ref.startsWith("base64:")) {
                 val b64 = ref.removePrefix("base64:")
@@ -174,15 +193,146 @@ class PartnerProfileActivity : AppCompatActivity() {
                 }
             }
 
-            cell.setOnClickListener {
-                val startIndex = refs.size - display.size + index
-                val intent = android.content.Intent(this, ImageViewActivity::class.java).apply {
-                    putExtra(ImageViewActivity.EXTRA_REFS, ArrayList(refs))
-                    putExtra(ImageViewActivity.EXTRA_START_INDEX, startIndex)
+            // «+N» на последней видимой плитке, если фото больше трёх.
+            if (index == display.lastIndex && more > 0) {
+                cell.findViewById<View>(R.id.overlay_more).visibility = View.VISIBLE
+                cell.findViewById<TextView>(R.id.tv_more_count).apply {
+                    text = "+$more"
+                    visibility = View.VISIBLE
                 }
-                startActivity(intent)
+            }
+
+            cell.setOnClickListener {
+                openPhotoGallery(refs, refs.size - display.size + index)
             }
         }
+    }
+
+    private fun openPhotoGallery(refs: List<String>, startIndex: Int) {
+        val intent = android.content.Intent(this, ImageViewActivity::class.java).apply {
+            putExtra(ImageViewActivity.EXTRA_REFS, ArrayList(refs))
+            putExtra(ImageViewActivity.EXTRA_START_INDEX, startIndex)
+        }
+        startActivity(intent)
+    }
+
+    // ─── Ссылки ──────────────────────────────────────────────────────────────
+    private fun setupLinksSection(links: List<String>) {
+        val section = findViewById<View>(R.id.section_links)
+        if (links.isEmpty()) { section.visibility = View.GONE; return }
+        section.visibility = View.VISIBLE
+        findViewById<TextView>(R.id.tv_links_count).text = links.size.toString()
+        val container = findViewById<LinearLayout>(R.id.ll_links_container)
+        val allBtn = findViewById<View>(R.id.btn_links_all)
+        val preview = 3
+        renderLinks(container, links.take(preview))
+        if (links.size > preview) {
+            allBtn.visibility = View.VISIBLE
+            var expanded = false
+            allBtn.setOnClickListener {
+                expanded = !expanded
+                renderLinks(container, if (expanded) links else links.take(preview))
+            }
+        } else allBtn.visibility = View.GONE
+    }
+
+    private fun renderLinks(container: LinearLayout, links: List<String>) {
+        container.removeAllViews()
+        for (url in links) {
+            val row = layoutInflater.inflate(R.layout.item_link_row, container, false)
+            val host = linkHost(url)
+            row.findViewById<TextView>(R.id.tv_link_letter).text =
+                host.firstOrNull()?.uppercase() ?: "#"
+            row.findViewById<TextView>(R.id.tv_link_title).text =
+                url.removePrefix("https://").removePrefix("http://").trimEnd('/')
+            row.findViewById<TextView>(R.id.tv_link_url).text = host
+            row.setOnClickListener { openUrl(url) }
+            container.addView(row)
+        }
+    }
+
+    private fun linkHost(url: String): String = try {
+        android.net.Uri.parse(if (url.startsWith("http", true)) url else "http://$url").host ?: url
+    } catch (_: Exception) { url }
+
+    private fun openUrl(url: String) {
+        try {
+            val u = if (url.startsWith("http", true)) url else "http://$url"
+            startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(u)))
+        } catch (_: Exception) {}
+    }
+
+    // ─── Голосовые ───────────────────────────────────────────────────────────
+    private fun setupVoiceSection(items: List<String>, gistId: String, gistToken: String, chatPassword: String) {
+        val section = findViewById<View>(R.id.section_voice)
+        val parsed = items.mapNotNull {
+            val parts = it.split('\u0001')
+            if (parts.firstOrNull().isNullOrBlank()) null
+            else parts[0] to (parts.getOrNull(1)?.toIntOrNull() ?: 0)
+        }
+        if (parsed.isEmpty()) { section.visibility = View.GONE; return }
+        section.visibility = View.VISIBLE
+        findViewById<TextView>(R.id.tv_voice_count).text = parsed.size.toString()
+        val container = findViewById<LinearLayout>(R.id.ll_voice_container)
+        val allBtn = findViewById<View>(R.id.btn_voice_all)
+        val transport = TransportFactory.forChat(this, gistId, gistToken, chatPassword, prefs.myUserId)
+        val loader = ImageLoader(transport, chatPassword)
+        val preview = 3
+        renderVoice(container, parsed.take(preview), loader)
+        if (parsed.size > preview) {
+            allBtn.visibility = View.VISIBLE
+            var expanded = false
+            allBtn.setOnClickListener {
+                expanded = !expanded
+                renderVoice(container, if (expanded) parsed else parsed.take(preview), loader)
+            }
+        } else allBtn.visibility = View.GONE
+    }
+
+    private fun renderVoice(container: LinearLayout, items: List<Pair<String, Int>>, loader: ImageLoader) {
+        container.removeAllViews()
+        for ((ref, durSec) in items) {
+            val row = layoutInflater.inflate(R.layout.item_voice_row, container, false)
+            val playIcon = row.findViewById<ImageView>(R.id.iv_voice_play)
+            row.findViewById<TextView>(R.id.tv_voice_label).text = getString(R.string.msg_preview_voice)
+            row.findViewById<TextView>(R.id.tv_voice_dur).text = formatVoiceDur(durSec)
+            row.setOnClickListener { toggleVoice(ref, playIcon, loader) }
+            container.addView(row)
+        }
+    }
+
+    private fun toggleVoice(ref: String, playIcon: ImageView, loader: ImageLoader) {
+        val key = "pp_$ref"
+        if (VoicePlayer.isPlaying(key)) {
+            VoicePlayer.pause()
+            playIcon.setImageResource(R.drawable.ic_play)
+            activeVoiceIcon = null
+            return
+        }
+        lifecycleScope.launch {
+            val file = withContext(Dispatchers.IO) { loadVoiceFile(loader, ref) } ?: return@launch
+            activeVoiceIcon?.setImageResource(R.drawable.ic_play)  // сбросить предыдущую строку
+            activeVoiceIcon = playIcon
+            playIcon.setImageResource(R.drawable.ic_pause)
+            VoicePlayer.toggle(key, file, { _, _, _ -> }, { _ ->
+                runOnUiThread {
+                    playIcon.setImageResource(R.drawable.ic_play)
+                    if (activeVoiceIcon === playIcon) activeVoiceIcon = null
+                }
+            })
+        }
+    }
+
+    private suspend fun loadVoiceFile(loader: ImageLoader, ref: String): java.io.File? {
+        val dir = java.io.File(cacheDir, "voice_play").apply { mkdirs() }
+        val f = java.io.File(dir, "v_" + Integer.toHexString(ref.hashCode()) + ".m4a")
+        if (f.exists() && f.length() > 0) return f
+        val bytes = loader.loadRawBytes(ref) ?: return null
+        return try { f.writeBytes(bytes); f } catch (_: Exception) { null }
+    }
+
+    private fun formatVoiceDur(sec: Int): String {
+        return "%d:%02d".format(sec / 60, sec % 60)
     }
 
     /** Генерирует QR-код из строки сверки (SAS). Чёрно-белый, для сканера/глаза. */
