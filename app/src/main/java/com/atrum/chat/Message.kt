@@ -9,9 +9,9 @@ package com.atrum.chat
  *       "<US>ms<US>Имя: <DC1>base64<DC1>caption"
  *     → imageBase64 != null
  *
- *  2. Ссылка на файл / gist (новый формат одиночного изображения):
- *       "<US>ms<US>Имя: <DC1>img_xxx.txt<DC1>caption"   (файл в основном gist)
- *       "<US>ms<US>Имя: <DC1>gist:GIST_ID<DC1>caption"  (отдельный image gist)
+ *  2. Ссылка на файл / источник (новый формат одиночного изображения):
+ *       "<US>ms<US>Имя: <DC1>img_xxx.txt<DC1>caption"   (файл в основном контенте)
+ *       "<US>ms<US>Имя: <DC1>gist:GIST_ID<DC1>caption"  (отдельный медиа-источник)
  *     → imageFileName != null
  *
  *  3. Коллаж из нескольких изображений:
@@ -44,19 +44,28 @@ data class Message(
     val voiceWaveform: String? = null,
     /**
      * true = сообщение ещё не подтверждено сервером (отображается с иконкой часов).
-     * Никогда не сохраняется в gist — только в памяти адаптера.
+     * Никогда не сохраняется на реле — только в памяти адаптера.
      */
     val isPending: Boolean = false,
+    /** true если транспорт подтвердил доставку, но мы еще не увидели сообщение в опросе. */
+    val isConfirmed: Boolean = false,
     /**
-     * Прогресс отправки голосового (только UI, не синкается, не сохраняется в gist):
+     * Прогресс отправки голосового (только UI, не синкается, не сохраняется на реле):
      * VP_NONE — обычное состояние; VP_PROCESSING — идёт шумодав/кодек (неопредел. кольцо);
      * 0..100 — процент загрузки. Сбрасывается после подтверждения отправки.
      */
-    val voiceProgress: Int = VP_NONE
+    val voiceProgress: Int = VP_NONE,
+    /**
+     * ID сообщения, которое это (pending) сообщение должно заменить в UI.
+     * Используется для редактирования «на месте» без мерцания.
+     */
+    val replacingId: String? = null
 ) {
     val isReply: Boolean get() = quotedSender != null
     /** Стабильный уникальный ключ сообщения для режима выбора. */
     val msgId: String get() = if (rawEncrypted.isNotBlank()) rawEncrypted.take(40) else "${senderUserId}_$timestampMs"
+    /** true если сообщение подтверждено транспортом, но еще не получено от сервера. */
+    val isSent: Boolean get() = isConfirmed || !isPending
     /** true если это голосовое сообщение. */
     val isVoice: Boolean get() = voiceFileName != null
     /** true если это анимированный стикер (.tgs файл) */
@@ -76,11 +85,11 @@ data class Message(
         private val ETX: Char = Char(0x03)
         private val DC1: Char = Char(0x11)
 
-        /** Префикс имени файла-картинки в основном gist. */
+        /** Префикс имени файла-картинки в основном контенте. */
         private const val IMG_FILENAME_PREFIX = "img_"
-        /** Префикс анимированного стикера (.tgs) в основном gist. */
+        /** Префикс анимированного стикера (.tgs) в основном контенте. */
         const val STK_FILENAME_PREFIX = "stk_"
-        /** Префикс ссылки на отдельный image gist. */
+        /** Префикс ссылки на отдельный медиа-источник. */
         private const val GIST_REF_PREFIX = "gist:"
         /** Префикс коллажа из нескольких изображений. */
         private const val MULTI_PREFIX = "MULTI:"
@@ -105,9 +114,9 @@ data class Message(
         /**
          * Разделитель в новом формате имени стикера: "stk_<ts>_<rand>.<ext>|<contentRef>".
          * Левая часть уникальна на сообщение (нужна для reconcile/дедупа в сторе),
-         * правая часть (после '|') — общая ссылка на контент в ОТДЕЛЬНОМ gist
-         * ("gist:ID" / "img_..."), что даёт дедуп и убирает раздувание чат-gist.
-         * Старый формат (без '|') хранит контент инлайн в чат-gist — поддержан для совместимости.
+         * правая часть (после '|') — общая ссылка на контент в ОТДЕЛЬНОМ источнике
+         * ("gist:ID" / "img_..."), что даёт дедуп и убирает раздувание основного контента.
+         * Старый формат (без '|') хранит контент инлайн в основном контенте — поддержан для совместимости.
          */
         private const val STK_REF_SEP = '|'
 
@@ -116,8 +125,8 @@ data class Message(
             fn.substringBefore(STK_REF_SEP).substringAfterLast('.', "")
 
         /**
-         * Ссылка на контент стикера. Новый формат — часть после '|' (отдельный gist),
-         * старый — само имя файла (контент инлайн в чат-gist).
+         * Ссылка на контент стикера. Новый формат — часть после '|' (отдельный источник),
+         * старый — само имя файла (контент инлайн в основном контенте).
          */
         fun stickerContentRef(fn: String): String =
             if (fn.indexOf(STK_REF_SEP) >= 0) fn.substringAfter(STK_REF_SEP) else fn
@@ -203,8 +212,8 @@ data class Message(
 
             // Image: <DC1>ref[<DC1>подпись]
             // ref может быть:
-            //   "img_xxx.txt"      — файл в основном gist
-            //   "gist:GIST_ID"     — отдельный image gist
+            //   "img_xxx.txt"      — файл в основном контенте
+            //   "gist:GIST_ID"     — отдельный медиа-источник
             //   "MULTI:r1@ar|..."  — коллаж нескольких изображений
             //   raw base64         — старый inline-формат
             if (body.startsWith(DC1)) {
@@ -260,8 +269,9 @@ data class Message(
                             senderUserId = parsedUserId
                         )
                     }
-                    // ── Файл в gist или отдельный image gist ────────────────
-                    ref.startsWith(IMG_FILENAME_PREFIX) || ref.startsWith(STK_FILENAME_PREFIX) || ref.startsWith(GIST_REF_PREFIX) -> {
+                    // ── Файл в контенте или отдельный медиа-источник ────────────────
+                    ref.startsWith(IMG_FILENAME_PREFIX) || ref.startsWith(STK_FILENAME_PREFIX) || ref.startsWith(GIST_REF_PREFIX) ||
+                    ref.startsWith("http://", true) || ref.startsWith("https://", true) -> {
                         Message(
                             sender = sender,
                             text = caption,
@@ -365,14 +375,29 @@ data class Message(
             }
         }
 
-        /** Генерация уникального имени для файла стикера (.tgs) в gist. */
+        /** Генерация уникального имени для файла стикера (.tgs). */
         fun newStickerFileName(): String {
             val now = System.currentTimeMillis()
             val rand = java.util.UUID.randomUUID().toString().replace("-", "").take(8)
             return "${STK_FILENAME_PREFIX}${now}_${rand}.txt"
         }
 
-        /** Генерация уникального имени для нового файла-картинки в gist. */
+        fun isSameContent(m1: Message, m2: Message): Boolean {
+            if (m1.rawEncrypted == m2.rawEncrypted) return true
+            if (m1.isSelf == m2.isSelf && m1.timestampMs == m2.timestampMs && m1.text == m2.text) {
+                // Если это медиа, проверяем совпадение ссылок
+                if (m1.isImage || m2.isImage) {
+                    return m1.imageFileName == m2.imageFileName && m1.imageFileNames == m2.imageFileNames
+                }
+                if (m1.isVoice || m2.isVoice) {
+                    return m1.voiceFileName == m2.voiceFileName
+                }
+                return true
+            }
+            return false
+        }
+
+        /** Генерация уникального имени для нового файла-картинки. */
         fun newImageFileName(): String {
             val now = System.currentTimeMillis()
             val rand = java.util.UUID.randomUUID().toString().replace("-", "").take(8)

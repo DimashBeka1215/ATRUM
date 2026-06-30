@@ -17,22 +17,22 @@ import java.net.URL
  *
  * Принцип работы:
  *   1. При старте ChatsListActivity вызывается [check].
- *   2. Загружается JSON из публичного gist (CONFIG_URL).
+ *   2. Загружается JSON из источника (CONFIG_URL).
  *   3. Если текущий versionCode < minVersionCode — показывается
  *      блокирующий диалог без кнопки "Закрыть".
- *   4. Кнопка "Обновить" открывает ссылку из JSON (Google Play / GitHub Release).
+ *   4. Кнопка "Обновить" открывает ссылку из JSON (Сайт / Релиз).
  *   5. При недоступной сети — проверка молча пропускается.
  *   6. Результат кэшируется на 6 часов чтобы не тормозить каждый запуск.
  *
  * Настройка (один раз):
- *   Создай публичный gist с файлом "atrum_update.json":
+ *   Создай файл "update.json":
  *   {
  *     "minVersionCode": 137,
  *     "minVersionName": "4.1.0",
  *     "message": "Вышла важная версия с исправлениями безопасности.",
- *     "updateUrl": "https://github.com/your-repo/releases"
+ *     "updateUrl": "https://atrum.chat"
  *   }
- *   Вставь raw URL файла в CONFIG_URL ниже.
+ *   Размести его по адресу CONFIG_URL.
  *
  * Поля JSON:
  *   minVersionCode  — int, минимальный допустимый versionCode
@@ -49,10 +49,9 @@ import java.net.URL
 object ForceUpdateChecker {
 
     /**
-     * Raw URL файла atrum_update.json в публичном gist.
-     * Замените на реальный URL вашего гиста перед публикацией.
+     * URL файла конфигурации обязательного обновления.
      */
-    private const val CONFIG_URL = "https://gist.githubusercontent.com/atrum-chat/f4d7b2e1c0a5b6d7e8f9/raw/atrum_update.json"
+    private const val CONFIG_URL = "https://source.atrum.chat/config/update.json"
 
     private const val PREFS_NAME          = "atrum_force_update"
     private const val KEY_CACHED_JSON     = "cached_json"
@@ -104,6 +103,7 @@ object ForceUpdateChecker {
             onPositive = {
                 goingToUpdate = true
                 try {
+                    AppLock.beginShareGrace()
                     context.startActivity(
                         Intent(Intent.ACTION_VIEW, Uri.parse(config.updateUrl))
                     )
@@ -162,7 +162,7 @@ object ForceUpdateChecker {
                 minVersionCode = obj.getInt("minVersionCode"),
                 minVersionName = obj.optString("minVersionName", ""),
                 message        = obj.optString("message", "Пожалуйста, обновите приложение."),
-                updateUrl      = obj.optString("updateUrl", "https://github.com")
+                updateUrl      = obj.optString("updateUrl", "https://atrum.chat")
             )
         } catch (_: Exception) { null }
     }
@@ -182,29 +182,23 @@ object ForceUpdateChecker {
     } catch (_: Exception) { "?" }
 
     // ══════════════════════════════════════════════════════════════════════
-    // GitHub Releases — необязательное обновление с ченджлогом
+    // Проверка обновлений — необязательное обновление с ченджлогом
     // ══════════════════════════════════════════════════════════════════════
-    //
-    // ⚙️ Включить:
-    //   1. Установи RELEASES_ENABLED = true
-    //   2. Замени REPO на "username/reponame" своего репозитория
     //
     // Как работает:
     //   • При запуске ChatsListActivity вызывается checkLatestRelease().
-    //   • Если на GitHub есть релиз с тегом новее текущей версии —
+    //   • Если в источнике есть релиз с тегом новее текущей версии —
     //     показывается диалог с ченджлогом (кнопки «Обновить» / «Позже»).
     //   • В настройках строка «Версия» показывает статус и кнопку «Обновить».
     //   • Сравнение по semver: тег «v1.0.2» против versionName «1.0.1».
     //   • Кэш 6 часов — лишних запросов нет.
     // ══════════════════════════════════════════════════════════════════════
 
-    /** Флаг включения. Выключен до указания репозитория. */
+    /** Флаг включения. */
     const val RELEASES_ENABLED = true
 
-    /** Репозиторий в формате "username/reponame". Заменить перед включением. */
-    private const val REPO = "DimashBeka1215/ATRUM"
-
-    private const val RELEASES_API        = "https://api.github.com/repos/$REPO/releases/latest"
+    /** URL API для проверки новых релизов. */
+    private const val RELEASES_API        = "https://source.atrum.chat/config/release.json"
     private const val KEY_RELEASE_JSON    = "cached_release_json"
     private const val KEY_RELEASE_TS      = "cached_release_ts"
 
@@ -215,7 +209,7 @@ object ForceUpdateChecker {
     )
 
     /**
-     * Проверяет наличие нового релиза на GitHub.
+     * Проверяет наличие нового релиза.
      * Возвращает [ReleaseInfo] если тег новее текущей версии, иначе null.
      * При выключенном [RELEASES_ENABLED] или нет сети — null.
      */
@@ -250,6 +244,7 @@ object ForceUpdateChecker {
             negativeText = context.getString(R.string.update_dialog_negative),
             onPositive   = {
                 try {
+                    AppLock.beginShareGrace()
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.htmlUrl)))
                 } catch (_: Exception) {}
             }
@@ -290,7 +285,6 @@ object ForceUpdateChecker {
         val conn = URL(RELEASES_API).openConnection() as HttpURLConnection
         conn.connectTimeout = CONNECT_TIMEOUT_MS
         conn.readTimeout    = READ_TIMEOUT_MS
-        conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
 
         return try {
             if (conn.responseCode != HttpURLConnection.HTTP_OK) return null

@@ -58,7 +58,7 @@ class UpdateActivity : AppCompatActivity() {
         binding.btnUpdate.visibility = View.GONE
         binding.btnLater.text = getString(R.string.update_screen_btn_close)
         binding.btnLater.setOnClickListener { finish() }
-        setupGithub(null)
+        setupSourceLinks(null)
     }
 
     private fun showUpdate(tag: String, changelog: String?, url: String) {
@@ -77,7 +77,7 @@ class UpdateActivity : AppCompatActivity() {
         binding.btnLater.text = getString(R.string.update_dialog_negative)
         binding.btnLater.setOnClickListener { finish() }
 
-        setupGithub(url)
+        setupSourceLinks(url)
     }
 
     private fun showUpToDate() {
@@ -92,18 +92,21 @@ class UpdateActivity : AppCompatActivity() {
         binding.btnLater.text = getString(R.string.update_screen_btn_close)
         binding.btnLater.setOnClickListener { finish() }
 
-        setupGithub(null)
+        setupSourceLinks(null)
     }
 
-    private fun setupGithub(releaseUrl: String?) {
+    private fun setupSourceLinks(releaseUrl: String?) {
         val releasesUrl = releaseUrl ?: "https://github.com/DimashBeka1215/ATRUM/releases"
         val codeUrl     = "https://github.com/DimashBeka1215/ATRUM"
-        binding.cardGithubReleases.setOnClickListener { openUrl(releasesUrl) }
-        binding.cardGithubCode.setOnClickListener { openUrl(codeUrl) }
+        binding.cardSourceReleases.setOnClickListener { openUrl(releasesUrl) }
+        binding.cardSourceCode.setOnClickListener { openUrl(codeUrl) }
     }
 
     private fun openUrl(url: String) {
-        try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
+        try {
+            AppLock.beginShareGrace()
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (_: Exception) {}
     }
 
     private fun currentVersionName(): String = try {

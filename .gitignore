@@ -36,5 +36,12 @@ secrets.properties
 local.properties 
 *.env 
 /main
-app/release/ 
+app/release/
 /models/
+
+# Внутренние документы — не в репозитории
+PROMO.md
+RELEASE_HOWTO.md
+
+# Локальный список задач (не в репозиторий)
+ROADMAP_TODO.md

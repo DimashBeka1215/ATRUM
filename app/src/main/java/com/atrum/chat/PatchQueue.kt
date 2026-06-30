@@ -6,13 +6,13 @@ import kotlinx.coroutines.channels.Channel
 import kotlin.coroutines.coroutineContext
 
 /**
- * Сериализованная очередь всех PATCH-запросов к GitHub.
+ * Сериализованная очередь всех PATCH-запросов к Реле.
  *
  * Все записи (сообщения, реакции, presence, read receipt, edit, delete)
  * проходят через один канал. В каждый момент выполняется ≤ 1 PATCH.
  *
  * ┌─────────────────────────────────────────────────────────────────┐
- * │  Action → Channel → [Debounce 350ms] → Batch → PATCH → GitHub  │
+ * │  Action → Channel → [Debounce 350ms] → Batch → PATCH → Relay   │
  * └─────────────────────────────────────────────────────────────────┘
  *
  * Debounce: несколько SaveFile для одного файла за 350 мс объединяются
@@ -85,6 +85,17 @@ class PatchQueue(
 
     /** Время до которого очередь приостановлена (rate limit). */
     @Volatile private var rateLimitUntilMs = 0L
+
+    /**
+     * Таймаут одного сетевого действия — зависит от транспорта.
+     * Channel/Local — быстрый HTTPS (4с достаточно). Nostr-через-Tor — медленный:
+     * publishToAnyRelay ждёт первое реле, а replaceLine/deleteLine внутри делают
+     * queryAllRelays с дедлайном до 15с. 4с гарантированно не хватало → edit/delete/
+     * reactions молча падали по таймауту. Даём Nostr полноценный бюджет.
+     */
+    private val actionTimeoutMs: Long =
+        if (transport is com.atrum.chat.transport.NostrTransport) NOSTR_ACTION_TIMEOUT_MS
+        else ACTION_TIMEOUT_MS
 
     init {
         workerJob = scope.launch(Dispatchers.IO) { processLoop() }
@@ -181,16 +192,16 @@ class PatchQueue(
         var lastError = "unknown"
         for (attempt in 0..MAX_RETRIES) {
             try {
-                withTimeout(ACTION_TIMEOUT_MS) { block() }
+                withTimeout(actionTimeoutMs) { block() }
                 withContext(Dispatchers.Main) { onSuccess?.invoke() }
                 return
 
             } catch (e: TimeoutCancellationException) {
-                lastError = "timeout after ${ACTION_TIMEOUT_MS}ms"
+                lastError = "timeout after ${actionTimeoutMs}ms"
                 if (attempt < MAX_RETRIES) delay(BACKOFF_MS.getOrElse(attempt) { 4_000L })
 
             } catch (e: RateLimitException) {
-                // GitHub rate limit — пауза, не считаем как retry-попытку
+                // Relay rate limit — пауза, не считаем как retry-попытку
                 lastError = "rate limit"
                 val pause = e.retryAfterMs.coerceIn(30_000L, 120_000L)
                 rateLimitUntilMs = System.currentTimeMillis() + pause
@@ -219,8 +230,16 @@ class PatchQueue(
         /** Окно сбора batch: действия за это время объединяются. */
         const val DEBOUNCE_MS = 350L
 
-        /** Максимальное время одного PATCH-запроса до timeout. */
+        /** Максимальное время одного PATCH-запроса до timeout (Channel/Local — быстрый HTTPS). */
         const val ACTION_TIMEOUT_MS = 4_000L
+
+        /**
+         * Таймаут одного действия для Nostr-через-Tor. Должен покрывать самый долгий
+         * путь: deleteLine/replaceLine = queryAllRelays (дедлайн Tor 15с) + publish.
+         * 4с гарантированно не хватало → редактирование/удаление/реакции падали по
+         * таймауту через Tor. 30с с запасом.
+         */
+        const val NOSTR_ACTION_TIMEOUT_MS = 30_000L
 
         /** Максимальное число retry (не считая rate limit пауз). */
         const val MAX_RETRIES = 3

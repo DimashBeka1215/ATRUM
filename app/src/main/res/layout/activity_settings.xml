@@ -99,7 +99,7 @@
                             android:visibility="gone"
                             app:strokeWidth="3dp"
                             app:strokeColor="@color/bg"
-                            app:shapeAppearanceOverlay="@style/ShapeAppearance.GithubChat.Circle" />
+                            app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.Circle" />
 
                         <FrameLayout
                             android:id="@+id/flAvatarInitial"
@@ -246,30 +246,10 @@
                         android:focusable="true">
                         <ImageView android:layout_width="22dp" android:layout_height="22dp"
                             android:src="@drawable/ic_bell" android:tint="@color/accent" android:layout_marginEnd="14dp" />
-                        <LinearLayout
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:orientation="vertical">
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="@string/settings_item_push"
-                                android:textColor="@color/text_primary"
-                                android:textSize="15sp" />
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="@string/settings_item_push_desc"
-                                android:textColor="@color/text_secondary"
-                                android:textSize="12sp" />
-                        </LinearLayout>
-                        <androidx.appcompat.widget.SwitchCompat
-                            android:id="@+id/switchPush"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:clickable="false"
-                            android:focusable="false" />
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                            android:text="@string/settings_item_notifications" android:textColor="@color/text_primary" android:textSize="15sp" />
+                        <ImageView android:layout_width="18dp" android:layout_height="18dp"
+                            android:src="@drawable/ic_chevron_right" android:tint="@color/text_tertiary" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -286,6 +266,26 @@
                             android:src="@drawable/ic_sticker" android:tint="@color/accent" android:layout_marginEnd="14dp" />
                         <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                             android:text="@string/settings_item_stickers" android:textColor="@color/text_primary" android:textSize="15sp" />
+                        <ImageView android:layout_width="18dp" android:layout_height="18dp"
+                            android:src="@drawable/ic_chevron_right" android:tint="@color/text_tertiary" />
+                    </LinearLayout>
+
+                    <!-- CLAUDE_HINT: Mods section is hidden here. To restore, change visibility to "visible" -->
+                    <LinearLayout
+                        android:id="@+id/itemMods"
+                        android:layout_width="match_parent"
+                        android:layout_height="56dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:paddingHorizontal="16dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:visibility="gone">
+                        <ImageView android:layout_width="22dp" android:layout_height="22dp"
+                            android:src="@drawable/ic_mods" android:tint="@color/accent" android:layout_marginEnd="14dp" />
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                            android:text="@string/settings_item_mods" android:textColor="@color/text_primary" android:textSize="15sp" />
                         <ImageView android:layout_width="18dp" android:layout_height="18dp"
                             android:src="@drawable/ic_chevron_right" android:tint="@color/text_tertiary" />
                     </LinearLayout>
@@ -459,6 +459,72 @@
                     </LinearLayout>
                 </LinearLayout>
 
+                <!-- СЕТЬ (NETWORK) -->
+                <TextView
+                    android:id="@+id/sectionNetworkTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/settings_section_network"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="0.08"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginBottom="8dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:id="@+id/sectionNetworkCard"
+                    android:background="@drawable/bg_settings_card"
+                    android:layout_marginBottom="20dp">
+
+                    <LinearLayout
+                        android:id="@+id/itemRelays"
+                        android:layout_width="match_parent"
+                        android:layout_height="60dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:paddingHorizontal="16dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true">
+                        <ImageView android:layout_width="22dp" android:layout_height="22dp"
+                            android:src="@drawable/ic_p2p_network" android:tint="@color/accent" android:layout_marginEnd="14dp" />
+                        <LinearLayout
+                            android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1" android:orientation="vertical">
+                            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="@string/settings_item_relays"
+                                android:textColor="@color/text_primary" android:textSize="15sp" />
+                            <TextView android:id="@+id/tvRelaysSub"
+                                android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:textColor="@color/text_secondary" android:textSize="12sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/itemPublisher"
+                        android:layout_width="match_parent"
+                        android:layout_height="56dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:paddingHorizontal="16dp"
+                        android:visibility="gone"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true">
+                        <ImageView android:layout_width="22dp" android:layout_height="22dp"
+                            android:src="@drawable/ic_cloud" android:tint="@color/accent" android:layout_marginEnd="14dp" />
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                            android:text="@string/settings_item_publisher" android:textColor="@color/text_primary" android:textSize="15sp" />
+                        <ImageView android:layout_width="18dp" android:layout_height="18dp"
+                            android:src="@drawable/ic_chevron_right" android:tint="@color/text_tertiary" />
+                    </LinearLayout>
+
+                </LinearLayout>
+
                 <!-- ЕЩЕ (MORE) -->
                 <TextView
                     android:layout_width="wrap_content"
@@ -560,6 +626,45 @@
 
                 </LinearLayout>
 
+                <!-- TESTER -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/settings_section_tester"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="0.08"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginBottom="8dp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/bg_settings_card"
+                    android:layout_marginBottom="20dp">
+
+                    <LinearLayout
+                        android:id="@+id/itemTester"
+                        android:layout_width="match_parent"
+                        android:layout_height="56dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:paddingHorizontal="16dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true">
+                        <ImageView android:layout_width="22dp" android:layout_height="22dp"
+                            android:src="@drawable/ic_settings" android:tint="@color/accent" android:layout_marginEnd="14dp" />
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                            android:text="@string/settings_item_tester" android:textColor="@color/text_primary" android:textSize="15sp" />
+                        <ImageView android:layout_width="18dp" android:layout_height="18dp"
+                            android:src="@drawable/ic_chevron_right" android:tint="@color/text_tertiary" />
+                    </LinearLayout>
+
+                </LinearLayout>
+
                 <TextView
                     android:id="@+id/btnLogout"
                     android:layout_width="match_parent"
@@ -614,7 +719,7 @@
             android:layout_height="34dp"
             android:scaleType="centerCrop"
             android:visibility="gone"
-            app:shapeAppearanceOverlay="@style/ShapeAppearance.GithubChat.Circle" />
+            app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.Circle" />
 
         <TextView
             android:id="@+id/tvTopBarName"

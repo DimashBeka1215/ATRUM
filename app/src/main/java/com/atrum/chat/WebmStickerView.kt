@@ -177,6 +177,12 @@ class WebmStickerView @JvmOverloads constructor(
         // как кадры закешированы — выполняется ОДИН MediaCodec-декод, остальные ждут его результат.
         private val inFlightDecodes = ConcurrentHashMap<String, Deferred<StickerFrames?>>()
 
+        /** Отменяет активный декод для конкретного ключа, если он в процессе. */
+        fun cancelDecode(key: String) {
+            inFlightDecodes[key]?.cancel()
+            inFlightDecodes.remove(key)
+        }
+
         /** Общий (дедуплицированный) декод стикера по ключу. Кладёт результат в кеш кадров. */
         private fun decodeShared(file: File, key: String, cacheDir: File): Deferred<StickerFrames?> =
             inFlightDecodes.computeIfAbsent(key) {
@@ -319,7 +325,9 @@ class StickerFrames(val frames: List<Bitmap>, val delayMs: Long)
  * При вытеснении кадры перекодируются при следующем показе.
  */
 object StickerFrameCache {
-    private const val MAX_BYTES = 24 * 1024 * 1024
+    private val MAX_BYTES = (Runtime.getRuntime().maxMemory() / 8).toInt()
+        .coerceIn(16 * 1024 * 1024, 64 * 1024 * 1024)
+
     private val cache = object : LruCache<String, StickerFrames>(MAX_BYTES) {
         override fun sizeOf(key: String, value: StickerFrames): Int =
             value.frames.sumOf { it.byteCount }
@@ -327,5 +335,13 @@ object StickerFrameCache {
 
     fun get(key: String): StickerFrames? = cache.get(key)
     fun put(key: String, value: StickerFrames) { cache.put(key, value) }
+
+    /** Статистика попаданий в кеш для профилирования. */
+    fun getStats(): String = "Hits: ${cache.hitCount()}, Misses: ${cache.missCount()}, Evictions: ${cache.evictionCount()}, Size: ${cache.size() / 1024}KB / ${MAX_BYTES / 1024}KB"
+
+    fun remove(key: String) {
+        cache.remove(key)
+        WebmStickerView.cancelDecode(key)
+    }
     fun clear() { cache.evictAll() }
 }

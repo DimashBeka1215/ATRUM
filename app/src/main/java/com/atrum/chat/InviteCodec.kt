@@ -14,19 +14,19 @@ import org.bouncycastle.crypto.params.Argon2Parameters
  * Кодирует и декодирует invite-строки для подключения к существующему чату.
  *
  * Формат v3 (текущий — Argon2id + срок действия):
- *   "ATRM" + base64url( salt[16] + nonce[12] + AES-256-GCM( VER ‖ gistId ‖ gistToken ‖ chatPassword ‖ expiryMs ) )
+ *   "ATRM" + base64url( salt[16] + nonce[12] + AES-256-GCM( VER ‖ channelId ‖ transportToken ‖ chatPassword ‖ expiryMs ) )
  *   Ключ деривируется через Argon2id(PIN, salt) — GPU-стойкий KDF (как и шифрование сообщений).
  *   PIN передаётся собеседнику отдельным каналом — перехват invite без PIN бесполезен.
  *   expiryMs — unix-мс, после которого invite считается недействительным.
  *
  * Формат v2 (PBKDF2 — только чтение, обратная совместимость):
- *   "ATRM" + base64url( salt[16] + nonce[12] + AES-256-GCM( "2" ‖ gistId ‖ gistToken ‖ chatPassword ) )
+ *   "ATRM" + base64url( salt[16] + nonce[12] + AES-256-GCM( "2" ‖ channelId ‖ transportToken ‖ chatPassword ) )
  *
  * Формат v1 (legacy, plain base64 — только чтение):
- *   "ATRM" + base64url( "1" ‖ gistId ‖ gistToken ‖ chatPassword )
+ *   "ATRM" + base64url( "1" ‖ channelId ‖ transportToken ‖ chatPassword )
  *
  * Безопасность:
- *   — invite содержит токен GitHub, поэтому требует PIN.
+ *   — invite содержит транспортный токен, поэтому требует PIN.
  *   — AEAD-тег AES-GCM защищает целостность и подтверждает правильность PIN.
  *   — Argon2id делает офлайн-перебор короткого кода дорогим (в отличие от PBKDF2).
  */
@@ -64,8 +64,8 @@ object InviteCodec {
 
     /** Результат декодирования invite-строки. */
     data class Decoded(
-        val gistId: String,
-        val gistToken: String,
+        val channelId: String,
+        val transportToken: String,
         val chatPassword: String
     )
 
@@ -74,19 +74,19 @@ object InviteCodec {
      * @param ttlMillis срок жизни invite в мс (по умолчанию 48 часов).
      */
     fun encode(
-        gistId: String,
-        gistToken: String,
+        channelId: String,
+        transportToken: String,
         chatPassword: String,
         pin: String,
         ttlMillis: Long = DEFAULT_TTL_MS
     ): String {
-        require(gistId.isNotBlank()) { "gistId is blank" }
-        require(gistToken.isNotBlank()) { "gistToken is blank" }
+        require(channelId.isNotBlank()) { "channelId is blank" }
+        require(transportToken.isNotBlank()) { "transportToken is blank" }
         require(chatPassword.isNotBlank()) { "chatPassword is blank" }
         require(pin.isNotBlank()) { "pin is blank" }
 
         val expiry = System.currentTimeMillis() + ttlMillis
-        val payload = listOf(VERSION, gistId, gistToken, chatPassword, expiry.toString()).joinToString(SEP)
+        val payload = listOf(VERSION, channelId, transportToken, chatPassword, expiry.toString()).joinToString(SEP)
         val salt = ByteArray(SALT_LEN).also { SecureRandom().nextBytes(it) }
         val nonce = ByteArray(NONCE_LEN).also { SecureRandom().nextBytes(it) }
         val key = deriveKeyArgon2(pin, salt)
@@ -158,9 +158,9 @@ object InviteCodec {
         throw IllegalArgumentException("Wrong PIN or corrupted invite")
     }
 
-    private fun validated(gistId: String, gistToken: String, chatPassword: String): Decoded? {
-        if (gistId.isBlank() || gistToken.isBlank() || chatPassword.isBlank()) return null
-        return Decoded(gistId, gistToken, chatPassword)
+    private fun validated(channelId: String, transportToken: String, chatPassword: String): Decoded? {
+        if (channelId.isBlank() || transportToken.isBlank() || chatPassword.isBlank()) return null
+        return Decoded(channelId, transportToken, chatPassword)
     }
 
     /** GCM-дешифровка. Возвращает null если тег не сошёлся (неверный ключ). */
@@ -220,6 +220,26 @@ object InviteCodec {
     fun looksLikeInvite(input: String): Boolean {
         val trimmed = input.trim()
         return trimmed.startsWith(PREFIX) && trimmed.length > PREFIX.length + 10
+    }
+
+    /** Префикс deep-link приглашения. Открывается штатной камерой телефона и сканером Atrum. */
+    const val DEEPLINK_PREFIX = "atrum://join"
+
+    /** Оборачивает invite-строку в deep-link для QR (инвайт в фрагменте — на сервер ничего не уходит). */
+    fun toDeepLink(invite: String): String = "$DEEPLINK_PREFIX#" + invite
+
+    /**
+     * Достаёт чистую invite-строку из отсканированного текста.
+     * Понимает и deep-link (atrum://join#ATRM...), и «голый» ATRM... код. null — если это не invite.
+     */
+    fun extractInvite(scanned: String?): String? {
+        val s = scanned?.trim()?.replace("\\s".toRegex(), "") ?: return null
+        val idx = s.indexOf(PREFIX)
+        return when {
+            s.startsWith(DEEPLINK_PREFIX, ignoreCase = true) && idx >= 0 -> s.substring(idx)
+            s.startsWith(PREFIX) -> s
+            else -> null
+        }
     }
 
     /** Argon2id (текущий KDF, GPU-стойкий). Параллелизм фиксирован — детерминизм между устройствами. */

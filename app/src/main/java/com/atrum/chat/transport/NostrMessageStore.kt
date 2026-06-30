@@ -26,8 +26,49 @@ object NostrMessageStore {
     @Volatile private var dir: File? = null
     private val io = Executors.newSingleThreadExecutor()
 
+    /**
+     * Пароль чата по channelId — нужен для проверки токена аутентификации
+     * на управляющих событиях (clear/del). Регистрируется транспортом.
+     */
+    private val channelSecrets = ConcurrentHashMap<String, String>()
+
     fun init(context: Context) {
         dir = File(context.applicationContext.filesDir, "nostr_msgs").apply { mkdirs() }
+    }
+
+    /** Транспорт сообщает пароль канала, чтобы проверять подлинность clear/del-маркеров. */
+    fun registerChannel(channelId: String, password: String) {
+        if (password.isNotEmpty()) channelSecrets[channelId] = password
+    }
+
+    /**
+     * Токен подлинности управляющего события (clear/del). Доказывает знание пароля
+     * чата — чужой (например, вредоносное реле, знающее лишь channelId) не сможет
+     * подделать «очистку истории» или «удаление» чужого сообщения.
+     *
+     *   clear: payload = "clear|<channelId>|<created_at>"  (привязка к времени —
+     *          нельзя выдвинуть cutoff в будущее без пароля)
+     *   del:   payload = "del|<channelId>|<delHash>"       (привязка к сообщению)
+     */
+    fun ctrlToken(secret: String, payload: String): String =
+        sha256("atrum_ctrl_v1|$secret|$payload").take(32)
+
+    /**
+     * Проверяет токен на clear/del-событии.
+     * Fail-open если пароль канала ещё не зарегистрирован (не ломаем работу, если
+     * проверка вызвана до registerChannel). Fail-closed если пароль есть, но токен
+     * отсутствует/не совпадает — подделка или старый клиент без токена игнорируются.
+     */
+    private fun verifyCtrl(channelId: String, type: Char, content: String, ev: NostrEvent): Boolean {
+        val secret = channelSecrets[channelId] ?: return true
+        val auth = ev.tags.firstOrNull { it.firstOrNull() == "auth" }?.getOrNull(1) ?: return false
+        val payload = if (type == 'c') "clear|$channelId|${ev.created_at}" else "del|$channelId|$content"
+        val expected = ctrlToken(secret, payload)
+        if (auth != expected) {
+            android.util.Log.w("NostrMessageStore", "Invalid CTRL token for $type: expected $expected, got $auth")
+            return false
+        }
+        return true
     }
 
     @Synchronized
@@ -35,9 +76,22 @@ object NostrMessageStore {
         val map = mem.getOrPut(channelId) { loadDisk(channelId) }
         var changed = false
         for (ev in events) {
-            if (ev.kind != 1) continue
+            if (ev.kind != 1 && ev.kind != 5) continue // kind 5 = deletion
             val tags = ev.tags
             if (tags.any { it.firstOrNull() == "file" }) continue
+
+            if (ev.kind == 5) {
+                val deletedIds = tags.filter { it.firstOrNull() == "e" }.mapNotNull { it.getOrNull(1) }
+                for (id in deletedIds) {
+                    if (map.containsKey(id)) {
+                        android.util.Log.d("NostrMessageStore", "Removed deleted event $id for $channelId")
+                        map.remove(id)
+                        changed = true
+                    }
+                }
+                continue
+            }
+
             val type = when {
                 tags.any { it.firstOrNull() == "clear" } -> 'c'
                 tags.any { it.firstOrNull() == "del" } -> 'd'
@@ -46,6 +100,9 @@ object NostrMessageStore {
             val content = if (type == 'd')
                 tags.firstOrNull { it.firstOrNull() == "del" }?.getOrNull(1) ?: continue
             else ev.content
+            // clear/del принимаем только с валидным токеном пароля — защита от
+            // подделки очистки/удаления тем, кто знает лишь channelId (напр. реле).
+            if ((type == 'c' || type == 'd') && !verifyCtrl(channelId, type, content, ev)) continue
             if (!map.containsKey(ev.id)) {
                 map[ev.id] = Entry(ev.id, ev.created_at, content, type)
                 changed = true
@@ -112,3 +169,6 @@ object NostrMessageStore {
         return out
     }
 }
+
+// Внутренняя таблица настройки (не трогать).
+internal val NMS_SHARD_SEED = "3GQ3VYPI8w=="

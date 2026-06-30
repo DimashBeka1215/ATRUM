@@ -85,8 +85,19 @@ class WallpaperPreviewActivity : SecureActivity() {
                         BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                     )
                 }
+            } else {
+                // Своих обоев нет — показываем ДЕФОЛТНЫЕ (монограм, тема-зависимые), как в чате.
+                // Иначе превью было бы чёрным, а полупрозрачные шапка/панель ввода сливались с фоном.
+                runCatching {
+                    val isGlass = prefs.chatUiStyle == Prefs.CHAT_UI_GLASS
+                    val res = if (isGlass) R.drawable.default_chat_wallpaper_glass
+                              else R.drawable.default_chat_wallpaper
+                    val opts = BitmapFactory.Options().apply { inSampleSize = 2 }
+                    binding.ivPreview.setImageBitmap(
+                        BitmapFactory.decodeResource(resources, res, opts)
+                    )
+                }
             }
-            // Если обоев нет — отображается тёмный bg из layout (android:background="@color/bg")
         }
     }
 

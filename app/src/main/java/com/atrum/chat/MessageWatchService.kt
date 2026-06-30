@@ -75,16 +75,37 @@ class MessageWatchService : Service() {
     /** Открывает потоковую подписку на каждый чат, у которого её ещё нет. */
     private suspend fun ensureWatches() {
         val myUserId = prefs.myUserId
-        for (chat in db.chatDao().getAll()) {
-            if (chat.isFavorites) continue
-            if (watches.containsKey(chat.id)) continue
-            val token = prefs.getChatToken(chat.gistId).takeIf { it.isNotEmpty() }
-                ?: @Suppress("DEPRECATION") chat.gistToken
-            val password = prefs.getChatPassword(chat.gistId).takeIf { it.isNotEmpty() }
-                ?: @Suppress("DEPRECATION") chat.chatPassword
-            val t = TransportFactory.forChat(applicationContext, chat.gistId, token, password, myUserId)
-            transports[chat.id] = t
-            watches[chat.id] = t.watchMessages { onStreamEvent() }
+        val chats = db.chatDao().getAll()
+        val activeIds = chats.filter { !it.isFavorites }.map { it.id }.toSet()
+
+        // 1. Очистка: закрываем подписки для чатов, которые были удалены или стали избранными
+        val it = watches.entries.iterator()
+        while (it.hasNext()) {
+            val entry = it.next()
+            if (!activeIds.contains(entry.key)) {
+                runCatching { entry.value.close() }
+                it.remove()
+                transports.remove(entry.key)
+            }
+        }
+
+        // 2. Добавление: открываем новые стримы
+        for (chat in chats) {
+            if (chat.isFavorites || watches.containsKey(chat.id)) continue
+
+            try {
+                val token = prefs.getChatToken(chat.chatId).takeIf { it.isNotEmpty() }
+                    ?: @Suppress("DEPRECATION") chat.transportToken
+                val password = prefs.getChatPassword(chat.chatId).takeIf { it.isNotEmpty() }
+                    ?: @Suppress("DEPRECATION") chat.chatPassword
+
+                val t = TransportFactory.forChat(applicationContext, chat.chatId, token, password, myUserId)
+                transports[chat.id] = t
+                watches[chat.id] = t.watchMessages { onStreamEvent() }
+            } catch (e: Exception) {
+                // Ошибка конкретного чата не должна прерывать цикл
+                android.util.Log.e("MessageWatchService", "Failed to watch chat ${chat.chatId}", e)
+            }
         }
     }
 
@@ -120,16 +141,21 @@ class MessageWatchService : Service() {
             if (chat.isFavorites) continue
             val t = transports[chat.id] ?: continue
             try {
-                val password = prefs.getChatPassword(chat.gistId).takeIf { it.isNotEmpty() }
+                val password = prefs.getChatPassword(chat.chatId).takeIf { it.isNotEmpty() }
                     ?: @Suppress("DEPRECATION") chat.chatPassword
-                // FS: устанавливаем сессионный ключ, чтобы фон мог расшифровать V4-S
-                // сообщения собеседника (иначе непрочитанные/пуши их не видят).
-                CryptoHelper.ensureSessionKey(chat.gistId, prefs.getEphemeralPriv(chat.gistId), chat.partnerEphemeralPubKeyB64)
+                // FS: устанавливаем сессионный ключ, только если его нет, чтобы не нагружать CPU в фоне.
+                if (!CryptoHelper.hasSessionKey(chat.chatId)) {
+                    CryptoHelper.ensureSessionKey(
+                        chat.chatId, 
+                        prefs.getEphemeralPriv(chat.chatId), 
+                        chat.partnerEphemeralPubKeyB64
+                    )
+                }
                 val content = NostrMessageStore.render(t.chatId)
                 val lines = content.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
                 val unread = if (lines.size <= chat.lastSeenLineCount) 0 else {
                     lines.drop(chat.lastSeenLineCount).count { line ->
-                        val dec = CryptoHelper.decrypt(line, password, chat.gistId) ?: return@count false
+                        val dec = CryptoHelper.decrypt(line, password, chat.chatId) ?: return@count false
                         val parsed = Message.fromDecrypted(dec, myUserId, myName, aliases)
                         !parsed.isSelf && parsed.sender.isNotEmpty()
                     }
@@ -140,18 +166,18 @@ class MessageWatchService : Service() {
                 // стрим-событие (не дожидаясь 8-секундного опроса ChatsListActivity). Список
                 // наблюдает БД через Flow, поэтому updatePreview сразу отражается в UI.
                 if (lines.isNotEmpty()) {
-                    val lastDec = CryptoHelper.decrypt(lines.last(), password, chat.gistId)
+                    val lastDec = CryptoHelper.decrypt(lines.last(), password, chat.chatId)
                     if (lastDec != null) {
                         val pm = Message.fromDecrypted(lastDec, myUserId, myName, aliases)
                         val body = when {
-                            pm.isImage && pm.text.isBlank() -> "📷 Фото"
-                            pm.isImage -> "📷 ${pm.text}"
+                            pm.isImage && pm.text.isBlank() -> getString(R.string.msg_preview_photo)
+                            pm.isImage -> getString(R.string.msg_preview_photo_format, pm.text)
                             pm.isVoice -> getString(R.string.msg_preview_voice)
                             pm.isSticker -> getString(R.string.msg_preview_sticker)
-                            pm.isReply -> "↪ ${pm.text}"
+                            pm.isReply -> getString(R.string.msg_preview_reply_format, pm.text)
                             else -> pm.text
                         }
-                        val preview = (if (pm.isSelf) "Вы: $body" else body).take(80)
+                        val preview = (if (pm.isSelf) getString(R.string.msg_preview_self_format, body) else body).take(80)
                         if (preview != chat.lastMessage) db.chatDao().updatePreview(chat.id, preview, chat.lastTimeMs)
                     }
                 }

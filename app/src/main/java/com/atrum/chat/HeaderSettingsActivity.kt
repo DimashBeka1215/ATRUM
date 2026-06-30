@@ -1,6 +1,7 @@
 package com.atrum.chat
 
 import android.app.Activity
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -12,7 +13,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
 import com.atrum.chat.databinding.ActivityHeaderSettingsBinding
-import com.yalantis.ucrop.UCrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -52,17 +52,9 @@ class HeaderSettingsActivity : SecureActivity() {
     private val cropImage = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        when {
-            result.resultCode == Activity.RESULT_OK && result.data != null -> {
-                val uri = UCrop.getOutput(result.data!!)
-                if (uri != null) saveCroppedBanner(uri)
-            }
-            result.resultCode == UCrop.RESULT_ERROR && result.data != null -> {
-                val err = UCrop.getError(result.data!!)
-                Toast.makeText(this,
-                    getString(R.string.error_avatar_load) + (err?.message?.let { ": $it" } ?: ""),
-                    Toast.LENGTH_SHORT).show()
-            }
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val uri = result.data!!.getStringExtra(BannerCropActivity.EXTRA_OUTPUT_URI)?.let { Uri.parse(it) }
+            if (uri != null) saveCroppedBanner(uri)
         }
     }
 
@@ -74,7 +66,10 @@ class HeaderSettingsActivity : SecureActivity() {
         setContentView(binding.root)
         prefs = Prefs(this)
 
-        binding.btnChangeBanner.setOnClickListener { pickImage.launch("image/*") }
+        binding.btnChangeBanner.setOnClickListener {
+            AppLock.beginShareGrace()
+            pickImage.launch("image/*")
+        }
         binding.btnRemoveBanner.setOnClickListener { confirmRemove() }
 
         loadCurrentBanner()
@@ -180,7 +175,7 @@ class HeaderSettingsActivity : SecureActivity() {
      * Сообщает пользователю, что края могут быть обрезаны на разных экранах.
      */
     private fun showSafeZoneHint(onContinue: () -> Unit) {
-        AlertDialog.Builder(this, R.style.Theme_GithubChat_Dialog)
+        AlertDialog.Builder(this, R.style.Theme_AtrumChat_Dialog)
             .setTitle(R.string.header_safe_zone_title)
             .setMessage(R.string.header_safe_zone_tip)
             .setPositiveButton(R.string.header_safe_zone_continue) { _, _ -> onContinue() }
@@ -191,36 +186,10 @@ class HeaderSettingsActivity : SecureActivity() {
     // ── Crop ───────────────────────────────────────────────────────────────────
 
     private fun startCropBanner(sourceUri: Uri) {
-        val destUri = Uri.fromFile(File(cacheDir, "banner_crop_${System.currentTimeMillis()}.jpg"))
-        val accentColor = androidx.core.content.ContextCompat.getColor(this, R.color.accent)
-        val bgColor = androidx.core.content.ContextCompat.getColor(this, R.color.bg)
-        val toolbarColor = androidx.core.content.ContextCompat.getColor(this, R.color.surface)
-        val textColor = androidx.core.content.ContextCompat.getColor(this, R.color.text_primary)
-
-        val options = UCrop.Options().apply {
-            setCircleDimmedLayer(false)
-            setShowCropFrame(true)
-            setShowCropGrid(true)
-            setCompressionFormat(Bitmap.CompressFormat.JPEG)
-            setCompressionQuality(85)
-            setToolbarTitle(getString(R.string.header_settings_crop_title))
-            setHideBottomControls(false)
-            setFreeStyleCropEnabled(true) // Разрешаем свободное изменение рамки
-
-            // Styling uCrop to match app theme
-            setToolbarColor(toolbarColor)
-            setStatusBarColor(toolbarColor)
-            setToolbarWidgetColor(textColor)
-            setActiveControlsWidgetColor(accentColor)
-            setRootViewBackgroundColor(bgColor)
-            setLogoColor(accentColor)
-        }
+        // Кастомный кадратор ATRUM (3:1) вместо uCrop.
         cropImage.launch(
-            UCrop.of(sourceUri, destUri)
-                .withAspectRatio(3f, 1f)
-                .withMaxResultSize(2400, 800)
-                .withOptions(options)
-                .getIntent(this)
+            Intent(this, BannerCropActivity::class.java)
+                .putExtra(BannerCropActivity.EXTRA_SOURCE_URI, sourceUri.toString())
         )
     }
 
@@ -252,7 +221,7 @@ class HeaderSettingsActivity : SecureActivity() {
     // ── Remove ─────────────────────────────────────────────────────────────────
 
     private fun confirmRemove() {
-        AlertDialog.Builder(this, R.style.Theme_GithubChat_Dialog)
+        AlertDialog.Builder(this, R.style.Theme_AtrumChat_Dialog)
             .setTitle(R.string.header_settings_remove_title)
             .setMessage(R.string.header_settings_remove_confirm)
             .setPositiveButton(R.string.header_settings_remove_action) { _, _ ->

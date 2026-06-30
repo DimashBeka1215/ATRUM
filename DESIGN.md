@@ -123,7 +123,7 @@ Focused stroke: `@color/accent` (менять через код, не через
 
 ### 4.3 Аватары
 
-- Форма: круг (`ShapeAppearance.GithubChat.Circle`)
+- Форма: круг (`ShapeAppearance.AtrumChat.Circle`)
 - Заглушка: `bg_avatar_placeholder` — овал, fill `@color/accent_dark`, stroke `#3DC77DFF`
 - Инициалы на заглушке: `@color/white` — **допустимо**, фон всегда тёмный
 - Размер в списке чатов: 52dp
@@ -166,7 +166,7 @@ Padding: 6dp vertical, 12dp horizontal. Текст: 13sp.
 
 ### 4.8 Bottom Sheet
 
-`Theme.GithubChat.BottomSheet`: `@color/surface` background, topLeft=20dp, topRight=20dp скругление.
+`Theme.AtrumChat.BottomSheet`: `@color/surface` background, topLeft=20dp, topRight=20dp скругление.
 Drag handle: 4×32dp, `@color/border`, 2dp radius, centered, marginTop=8dp.
 
 ---
@@ -237,8 +237,37 @@ Toolbar (аватар 40dp + имя 22sp + статус) + RecyclerView (соо�
 ### Настройки
 Секции с заголовками (13sp, `text_secondary`, uppercase — опционально) + карточки (`bg_settings_card`) с иконками. Опасные действия — в отдельной карточке внизу, `@color/error` текст.
 
+#### Группа настроек = отдельный экран (СТАНДАРТ ⛔)
+Связанные настройки НЕ кладём отдельным тумблером/контролом прямо в список настроек. Вместо этого — пункт-строка со стрелкой (как «О приложении»), открывающий отдельный экран этой группы:
+
+- **Пункт в списке**: обычная nav-строка 56dp — иконка (22dp, `@color/accent`, `marginEnd=14dp`) + название (15sp, `text_primary`, `layout_weight=1`) + шеврон `ic_chevron_right` (18dp, `@color/text_tertiary`). Без контролов в самой строке.
+- **Экран группы**: каркас как у `AboutActivity` — шапка (`ic_arrow_back` 48dp + заголовок 22sp medium) + разделитель 1dp `@color/border` + `ScrollView` с карточками `bg_settings_card`.
+- **Контролы внутри экрана**: однострочная строка 54–56dp (иконка + название 15sp + контрол справа). НЕ двухстрочная (заголовок+описание в строке делает её «толстой»). Пояснение — отдельным текстом 12sp `text_secondary` ПОД карточкой (`marginHorizontal=8dp`, `marginTop=8dp`), не внутри строки.
+
+Пример: пункт «Уведомления» (`itemNotifications` → `NotificationsActivity`) с тумблером push внутри.
+
 ### Онбординг / Welcome
 Полноэкранный, `@color/bg` фон, большой заголовок (28sp Display), иллюстрация или иконка по центру, кнопка внизу с отступом 24dp от края.
+
+### Использование пространства — воздух важен, пустота недопустима ⛔
+Воздух (отступы, дыхание между блоками — см. §6) обязателен. Но БОЛЬШАЯ ПУСТАЯ ОБЛАСТЬ —
+контент прижат к верху, а нижняя половина экрана пустая (чёрная/фон) — НЕДОПУСТИМА.
+
+Короткий контент НЕ оставляем прижатым к верху. Распределяем по высоте:
+
+- **Форма/ввод (короткий экран)**: основной блок (описание + поля + основная кнопка) центрируем
+  по вертикали в свободной области — обёртка `layout_height=0dp` + `layout_weight=1` +
+  `gravity=center_vertical`. Второстепенное/деструктивное/пояснение (напр. «Удалить», предупреждение)
+  закрепляем у нижнего края отдельным `wrap_content`-блоком с `paddingBottom≈22dp`.
+- **Два состояния в одном экране** (короткое + длинное): длинное — в `ScrollView`
+  (`fillViewport=true`); короткое — отдельный `match_parent`-слой поверх (через `FrameLayout`),
+  центрированный. Так короткое не растягивается уродливо, длинное скроллится.
+- **Пустые состояния списков**: центрированная заглушка — иконка 64dp (`alpha≈0.5`) + заголовок
+  18sp `text_primary` + подсказка 14sp `text_secondary`, контейнер `weight=1` + `gravity=center`.
+
+Проверка перед «готово»: на экране НЕТ области ≳25–30% высоты без контента или смысла. Если есть —
+центрировать основной блок и/или прижать второстепенное к низу. Исключение — намеренно
+полноэкранные вьюхи (камера, WebView-гайд, просмотрщик фото): там «пустота» — это контент.
 
 ---
 
@@ -257,6 +286,6 @@ Toolbar (аватар 40dp + имя 22sp + статус) + RecyclerView (соо�
 
 Вместо системного окна:
 1. Сначала **сделать мокап** того, что его заменит, в стиле Atrum (surface-фон, скругление 20dp, токены цветов, кнопки `bg_button`/`bg_button_outline`) и дождаться одобрения (см. CLAUDE.md §0).
-2. Затем реализовать как **кастомный layout** в `AlertDialog` с `Theme.GithubChat.Dialog` и прозрачным окном (`setBackgroundDrawableResource(android.R.color.transparent)`) или как bottom sheet.
+2. Затем реализовать как **кастомный layout** в `AlertDialog` с `Theme.AtrumChat.Dialog` и прозрачным окном (`setBackgroundDrawableResource(android.R.color.transparent)`) или как bottom sheet.
 
 Образцы кастомных диалогов: `dialog_invite_pin.xml`, `dialog_join_pin.xml`.

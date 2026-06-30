@@ -1,6 +1,7 @@
 package com.atrum.chat
 
 import com.atrum.chat.transport.ChatTransport
+import com.atrum.chat.transport.BluetoothTransport
 import com.atrum.chat.transport.NostrTransport
 import com.atrum.chat.nostr.NostrRelayPool
 
@@ -8,14 +9,12 @@ import android.content.Intent
 import android.os.Bundle
 import android.text.InputType
 import android.view.View
-import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.Animation
 import android.view.animation.LinearInterpolator
 import android.view.animation.OvershootInterpolator
 import android.view.animation.RotateAnimation
 import android.widget.EditText
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.atrum.chat.data.AppDatabase
 import com.atrum.chat.data.Chat
@@ -32,7 +31,7 @@ import java.net.UnknownHostException
  *
  * Поток подключения (полностью функциональный, не stub):
  *   1. Валидация ввода → декод [InviteCodec.decode]
- *   2. Проверка на дубликат (уже подключены к этому gistId)
+ *   2. Проверка на дубликат (уже подключены к этому chatId)
  *   3. Подключение к gist через [транспорт чата]
  *   4. Если есть сообщения — пробуем расшифровать первое для проверки пароля
  *   5. Сохраняем [Chat] локально через Room
@@ -66,6 +65,15 @@ class JoinChatActivity : SecureActivity() {
     private enum class UiState { IDLE, LOADING, ERROR, WARNING }
     private var state: UiState = UiState.IDLE
 
+    private val scanLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { res ->
+        if (res.resultCode == RESULT_OK) {
+            val raw = res.data?.getStringExtra(QrScanActivity.EXTRA_RAW)
+            InviteCodec.extractInvite(raw)?.let { prefillAndConnect(it) }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityJoinChatBinding.inflate(layoutInflater)
@@ -82,8 +90,22 @@ class JoinChatActivity : SecureActivity() {
         binding.btnBackBottom.setOnClickListener { if (state != UiState.LOADING) finish() }
         binding.btnTogglePassword.setOnClickListener { togglePassword() }
         binding.btnConnect.setOnClickListener { onConnectClicked() }
+        binding.btnScanQr.setOnClickListener {
+            if (state == UiState.LOADING) return@setOnClickListener
+            scanLauncher.launch(Intent(this, QrScanActivity::class.java).apply {
+                putExtra(QrScanActivity.EXTRA_MODE, QrScanActivity.MODE_INVITE)
+            })
+        }
 
         startPortalAnimation()
+
+        // Приглашение могло прийти из штатной камеры (deep-link atrum://join#…)
+        // или быть передано явным extra (например, со сканера на экране приглашения).
+        val incoming = intent.getStringExtra(EXTRA_PREFILL)
+            ?: InviteCodec.extractInvite(intent.data?.toString())
+        if (!incoming.isNullOrBlank()) {
+            binding.root.post { prefillAndConnect(incoming) }
+        }
 
         // Проактивная валидация ввода
         binding.etPassword.addTextChangedListener(SimpleTextWatcher {
@@ -113,6 +135,15 @@ class JoinChatActivity : SecureActivity() {
     }
 
     // ═══ Основной flow ═══
+
+    /** Подставляет invite в поле и запускает обычный путь подключения (с запросом PIN при необходимости). */
+    private fun prefillAndConnect(invite: String) {
+        if (state == UiState.LOADING) return
+        binding.etPassword.setText(invite)
+        binding.etPassword.setSelection(invite.length)
+        clearStatus()
+        onConnectClicked()
+    }
 
     private fun onConnectClicked() {
         if (state == UiState.LOADING) return
@@ -148,7 +179,7 @@ class JoinChatActivity : SecureActivity() {
         val etPin = view.findViewById<EditText>(R.id.et_join_pin)
         etPin.requestFocus()
 
-        val dialog = AlertDialog.Builder(this, R.style.Theme_GithubChat_Dialog)
+        val dialog = AlertDialog.Builder(this, R.style.Theme_AtrumChat_Dialog)
             .setView(view)
             .create()
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
@@ -180,10 +211,15 @@ class JoinChatActivity : SecureActivity() {
 
     private suspend fun runConnect(invite: InviteCodec.Decoded) {
         try {
+            // 0. BT-чат по приглашению не присоединяется — он локальный (только рядом по BLE).
+            if (invite.transportToken == BluetoothTransport.BT_TOKEN) {
+                showError(getString(R.string.join_err_bt))
+                return
+            }
             // 1. Дубликат
             setProgress(getString(R.string.join_status_checking))
             val existing = withContext(Dispatchers.IO) {
-                db.chatDao().getAll().find { it.gistId == invite.gistId }
+                db.chatDao().getAll().find { it.chatId == invite.channelId }
             }
             if (existing != null) {
                 setProgress(getString(R.string.join_status_already))
@@ -194,12 +230,12 @@ class JoinChatActivity : SecureActivity() {
             // 2. Подключение к транспорту: DHT (token=="dht") или legacy Gist.
             setProgress(getString(R.string.join_status_connecting))
             // Ленивый старт Tor, если путь чата — через Tor.
-            if (invite.gistToken != NostrTransport.NOSTR_DIRECT_TOKEN) TorManager.start(applicationContext)
+            if (invite.transportToken != NostrTransport.NOSTR_DIRECT_TOKEN) TorManager.start(applicationContext)
             // Все чаты сейчас живут в Nostr. Путь (Tor/прямой) берём из токена приглашения.
             val transport: ChatTransport =
                 NostrTransport(
-                    invite.gistId, invite.chatPassword, prefs.myUserId,
-                    useTor = invite.gistToken != NostrTransport.NOSTR_DIRECT_TOKEN
+                    invite.channelId, invite.chatPassword, prefs.myUserId,
+                    preferTor = invite.transportToken != NostrTransport.NOSTR_DIRECT_TOKEN
                 )
 
             // 3. Проверка "чат уже занят" — фетчим profiles.txt, если там 2+ профиля
@@ -235,8 +271,8 @@ class JoinChatActivity : SecureActivity() {
             val partnerProfile = profilesMap.values.firstOrNull { it.userId != myUserId }
             @Suppress("DEPRECATION")
             val chat = Chat(
-                gistId = invite.gistId,
-                gistToken = "",   // secrets stored in EncryptedSharedPreferences
+                chatId = invite.channelId,
+                transportToken = "",   // secrets stored in EncryptedSharedPreferences
                 chatPassword = "",
                 partnerName = partnerProfile?.name
                     ?.takeIf { it.isNotBlank() }
@@ -248,7 +284,7 @@ class JoinChatActivity : SecureActivity() {
                 partnerJoined = true
             )
             // Save secrets in EncryptedSharedPreferences before DB insert
-            prefs.saveChatSecrets(invite.gistId, invite.gistToken, invite.chatPassword)
+            prefs.saveChatSecrets(invite.channelId, invite.transportToken, invite.chatPassword)
             val newChatId = withContext(Dispatchers.IO) { db.chatDao().insert(chat) }
 
             // 5. Профиль публикуем В ФОНЕ — не блокируем открытие чата (ChatActivity
@@ -411,5 +447,10 @@ class JoinChatActivity : SecureActivity() {
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
         override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = onChanged()
         override fun afterTextChanged(s: android.text.Editable?) {}
+    }
+
+    companion object {
+        /** Готовая invite-строка для автоподстановки (со сканера/экрана приглашения). */
+        const val EXTRA_PREFILL = "prefill_invite"
     }
 }

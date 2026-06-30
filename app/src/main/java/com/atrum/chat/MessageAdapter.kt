@@ -9,6 +9,7 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.imageview.ShapeableImageView
@@ -18,6 +19,7 @@ import com.airbnb.lottie.RenderMode
 import java.io.ByteArrayInputStream
 import java.util.zip.GZIPInputStream
 import java.io.File
+import com.atrum.chat.stickers.StickerSettingsActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -55,6 +57,18 @@ class MessageAdapter(
     private val dayMonthFmt = SimpleDateFormat("EEE, d MMM", locale)
     private val fullDateFmt = SimpleDateFormat("dd.MM.yy", locale)
 
+    // ── Кэш форматирования времени (ключ — timestamp) ─────────────────────────
+    // formatTime вызывался на каждый bind и аллоцировал по 2–3 Calendar. Кэшируем
+    // готовую строку по метке времени. «Сегодня/вчера» зависят от текущего дня —
+    // раз в 10с пересчитываем границы и чистим кэш (на случай пересечения полуночи
+    // в открытом чате).
+    private var fmtNowMs = 0L
+    private var fmtNowYear = 0; private var fmtNowDoy = 0
+    private var fmtYesYear = 0; private var fmtYesDoy = 0
+    private val timeStrCache = object : LinkedHashMap<Long, String>(64, 0.75f, true) {
+        override fun removeEldestEntry(e: Map.Entry<Long, String>): Boolean = size > 500
+    }
+
     private var partnerLastReadIndex: Int = 0
 
     /** msgId → emoji → Set<userId> */
@@ -72,13 +86,29 @@ class MessageAdapter(
     }
 
     /** Индекс сообщения с данным msgId в отображаемом списке, или -1. */
-    fun indexOfMsgId(msgId: String): Int = effectiveList().indexOfFirst { it.msgId == msgId }
+    fun indexOfMsgId(msgId: String): Int {
+        // Ищем в ПОЛНОМ списке: цель (переход по цитате / из списка медиа) может быть
+        // старше видимого окна. Если так — расширяем окно, чтобы её можно было показать,
+        // и возвращаем индекс уже внутри окна.
+        val full = messages.indexOfFirst { it.msgId == msgId }
+        if (full < 0) return -1
+        val neededFromEnd = messages.size - full
+        if (neededFromEnd > windowSize) {
+            windowSize = neededFromEnd.coerceAtMost(messages.size)
+            notifyDataSetChanged()
+        }
+        return full - (messages.size - windowSize)
+    }
 
     /**
      * Обновляет карту реакций. Вызывается из ChatActivity после каждого poll
      * или после оптимистичного обновления при постановке реакции.
      */
     fun setReactions(map: Map<String, Map<String, Set<String>>>, userId: String) {
+        // Вызывается каждый poll (~1с). Если реакции не изменились — НЕ ребиндим весь
+        // экран (раньше это давало периодический микрофриз в покое). Структурное
+        // сравнение Map/Set дешевле полной перерисовки списка.
+        if (userId == myUserId && map == reactions) return
         reactions = map
         myUserId  = userId
         notifyDataSetChanged()
@@ -135,42 +165,91 @@ class MessageAdapter(
      * в очередь, до подтверждения от сервера. Отображаются с иконкой часов.
      * Очищаются при следующем успешном submit() или явном clearPending().
      */
-    private val pendingMessages = mutableListOf<Message>()
+    // Удалено: pendingMessages — теперь всё в едином списке messages от ChatStore
 
     companion object {
         private const val TYPE_SELF = 1
         private const val TYPE_OTHER = 2
+
+        /** Сколько сообщений показываем при открытии чата (нижнее «окно»). */
+        private const val INITIAL_WINDOW = 40
+        /** Сколько старых сообщений подгружаем за один шаг при перемотке вверх. */
+        private const val WINDOW_PAGE = 25
+
+        // ── Кэш разметки ссылок (общий, ключ — текст сообщения) ─────────────────
+        // Linkify и поиск первого URL — это regex по тексту. Раньше они выполнялись на
+        // КАЖДЫЙ bind, а notifyDataSetChanged раз в ~1с ребиндит весь экран → рывки при
+        // скролле и периодические микрофризы в покое. Считаем один раз на уникальный
+        // текст и переиспользуем. URLSpan не зависит от Context, кэш безопасен. Доступ
+        // только с главного потока (bind) → синхронизация не нужна.
+        class LinkInfo(val display: CharSequence, val hasLinks: Boolean, val firstUrl: String?)
+        private val linkCache = object : LinkedHashMap<String, LinkInfo>(128, 0.75f, true) {
+            override fun removeEldestEntry(e: Map.Entry<String, LinkInfo>): Boolean = size > 300
+        }
+        fun linkInfo(text: String): LinkInfo {
+            linkCache[text]?.let { return it }
+            val info = if (text.indexOf('.') < 0 && !text.contains("://")) {
+                LinkInfo(text, false, null) // web-URL без точки невозможен — regex не нужен
+            } else {
+                val sp = android.text.SpannableString(text)
+                android.text.util.Linkify.addLinks(sp, android.text.util.Linkify.WEB_URLS)
+                val has = sp.getSpans(0, sp.length, android.text.style.URLSpan::class.java).isNotEmpty()
+                LinkInfo(sp, has, LinkPreview.firstUrl(text))
+            }
+            linkCache[text] = info
+            return info
+        }
     }
 
     /**
-     * Обновляет список подтверждённых сообщений.
-     * Pending-очередь передаётся явно — обычно это снимок из MessageSendManager.
-     * Если передан пустой список (по умолчанию) — pending очищаются,
-     * что означает «сервер подтвердил все сообщения».
+     * Обновляет список сообщений.
+     * Теперь принимает единый список от ChatStore, который уже содержит
+     * и серверные, и pending-сообщения в правильном порядке.
      */
-    fun submit(list: List<Message>, pendingQueue: List<Message> = emptyList()) {
+    /**
+     * Размер видимого «окна» — сколько последних сообщений реально отрисовано. Остальная
+     * (более старая) история подгружается порциями при перемотке вверх (revealOlder).
+     * Это ленивый рендер: на старте показываем только хвост, не инфлейтим всю историю.
+     */
+    private var windowSize = INITIAL_WINDOW
+
+    fun submit(list: List<Message>) {
+        // submit() зовётся каждый poll (~1с). Message — data class, поэтому структурное
+        // сравнение списков ловит «ничего не изменилось» и пропускает полный ребинд всего
+        // экрана. Это убирает периодический микрофриз в покое и рывки при печати/скролле,
+        // когда новых сообщений нет. O(n) сравнение много дешевле перерисовки+layout.
+        if (list == messages) return
+        val delta = list.size - messages.size
+        // Новые сообщения приходят В КОНЕЦ (внизу). Окно считается от конца, поэтому при
+        // appended-росте расширяем окно на это же число — иначе раскрытая сверху история
+        // «сползала» бы вниз при каждом новом сообщении.
+        if (delta > 0) windowSize += delta
         messages = list
-        pendingMessages.clear()
-        pendingMessages.addAll(pendingQueue)
+        windowSize = windowSize.coerceIn(minOf(INITIAL_WINDOW, list.size), list.size.coerceAtLeast(0))
         notifyDataSetChanged()
     }
+
+    /** Есть ли ещё более старые сообщения за пределами видимого окна. */
+    fun canRevealOlder(): Boolean = windowSize < messages.size
 
     /**
-     * Заменяет список pending-сообщений (вызывается из onQueueChanged).
-     * Не трогает подтверждённые сообщения.
+     * Подгружает следующую порцию старых сообщений сверху. Возвращает число добавленных
+     * элементов. Вставка идёт в начало (notifyItemRangeInserted(0, n)) — RecyclerView
+     * сохраняет позицию текущих видимых айтемов, поэтому скролл не «прыгает».
      */
-    fun setPendingMessages(msgs: List<Message>) {
-        pendingMessages.clear()
-        pendingMessages.addAll(msgs)
-        notifyDataSetChanged()
+    fun revealOlder(page: Int = WINDOW_PAGE): Int {
+        val n = messages.size
+        if (windowSize >= n) return 0
+        val before = windowSize.coerceAtMost(n)
+        windowSize = (windowSize + page).coerceAtMost(n)
+        val added = windowSize.coerceAtMost(n) - before
+        if (added > 0) notifyItemRangeInserted(0, added)
+        return added
     }
 
-    /** Убирает все pending-сообщения (при фатальной ошибке). */
-    fun clearPending() {
-        if (pendingMessages.isEmpty()) return
-        pendingMessages.clear()
-        notifyDataSetChanged()
-    }
+    /** Удалено: pending-очередь теперь управляется в ChatStore */
+    @Deprecated("Use submit(List<Message>)")
+    fun submit(list: List<Message>, pendingQueue: List<Message>) = submit(list)
 
     fun setPartnerLastReadIndex(index: Int) {
         if (partnerLastReadIndex == index) return
@@ -178,10 +257,10 @@ class MessageAdapter(
         notifyDataSetChanged()
     }
 
-    /** Все видимые элементы: подтверждённые + pending-очередь. */
     private fun effectiveList(): List<Message> {
-        if (pendingMessages.isEmpty()) return messages
-        return messages + pendingMessages
+        val n = messages.size
+        val w = windowSize.coerceIn(0, n)
+        return if (w >= n) messages else messages.subList(n - w, n)
     }
 
     override fun getItemViewType(position: Int): Int =
@@ -238,24 +317,28 @@ class MessageAdapter(
     }
 
     private fun formatTime(ms: Long): String {
-        val now = Calendar.getInstance()
-        val msg = Calendar.getInstance().apply { timeInMillis = ms }
-
-        val sameDay = now.get(Calendar.YEAR) == msg.get(Calendar.YEAR) &&
-                now.get(Calendar.DAY_OF_YEAR) == msg.get(Calendar.DAY_OF_YEAR)
-        if (sameDay) return timeFmt.format(Date(ms))
-
-        val yesterday = (now.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, -1) }
-        val isYesterday = yesterday.get(Calendar.YEAR) == msg.get(Calendar.YEAR) &&
-                yesterday.get(Calendar.DAY_OF_YEAR) == msg.get(Calendar.DAY_OF_YEAR)
-        if (isYesterday) return "Вчера " + timeFmt.format(Date(ms))
-
-        val sameYear = now.get(Calendar.YEAR) == msg.get(Calendar.YEAR)
-        return if (sameYear) {
-            dayMonthFmt.format(Date(ms)) + " " + timeFmt.format(Date(ms))
-        } else {
-            fullDateFmt.format(Date(ms)) + " " + timeFmt.format(Date(ms))
+        val sysNow = System.currentTimeMillis()
+        // Границы «сегодня/вчера» пересчитываем не чаще раза в 10с (а не на каждый bind).
+        if (sysNow - fmtNowMs > 10_000L) {
+            val n = Calendar.getInstance()
+            fmtNowYear = n.get(Calendar.YEAR); fmtNowDoy = n.get(Calendar.DAY_OF_YEAR)
+            val y = (n.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, -1) }
+            fmtYesYear = y.get(Calendar.YEAR); fmtYesDoy = y.get(Calendar.DAY_OF_YEAR)
+            fmtNowMs = sysNow
+            timeStrCache.clear() // граница дня могла сместиться — кэш пересоберём
         }
+        timeStrCache[ms]?.let { return it }
+
+        val mc = Calendar.getInstance().apply { timeInMillis = ms }
+        val mYear = mc.get(Calendar.YEAR); val mDoy = mc.get(Calendar.DAY_OF_YEAR)
+        val res = when {
+            mYear == fmtNowYear && mDoy == fmtNowDoy -> timeFmt.format(Date(ms))
+            mYear == fmtYesYear && mDoy == fmtYesDoy -> "Вчера " + timeFmt.format(Date(ms))
+            mYear == fmtNowYear -> dayMonthFmt.format(Date(ms)) + " " + timeFmt.format(Date(ms))
+            else -> fullDateFmt.format(Date(ms)) + " " + timeFmt.format(Date(ms))
+        }
+        timeStrCache[ms] = res
+        return res
     }
 
     /** Обновляет транспорт картинок (при переключении Gist → Nostr). */
@@ -387,7 +470,15 @@ class MessageAdapter(
                     lottieView?.let { it.visibility = View.GONE; it.cancelAnimation() }
                     webmView?.let { it.visibility = View.GONE; it.release() }
                     bindImage(msg, imageView)
-                    imageView.setOnClickListener { onImageClick(msg) }
+                    // Единый обработчик (не зависит от гонки с асинхронной загрузкой):
+                    // фото загружено (битмап в кэше) → открыть на весь экран; пустой
+                    // пузырёк (не загрузилось/не расшифровалось) → показать точную причину
+                    // и скопировать её в буфер обмена.
+                    imageView.setOnClickListener {
+                        val fn = msg.imageFileName
+                        if (fn != null && ImageCache.getBitmap(fn) == null) diagnoseAndCopy(fn)
+                        else onImageClick(msg)
+                    }
                 }
                 else -> {
                     imageView?.visibility = View.GONE
@@ -398,19 +489,24 @@ class MessageAdapter(
                 }
             }
 
-            if (msg.text.isBlank()) {
+            if (msg.text.isBlank() && !msg.isMultiImage && !msg.isImage && !msg.isVoice && !msg.isSticker) {
+                textView.visibility = View.VISIBLE
+                textView.text = itemView.context.getString(R.string.msg_error_empty)
+                textView.setTextColor(Color.RED)
+            } else if (msg.text.isBlank()) {
                 textView.visibility = View.GONE
             } else {
                 textView.visibility = View.VISIBLE
-                textView.text = msg.text
-                // Кликабельные ссылки в тексте (открываются в браузере). Долгий тап по
-                // пузырьку (контекстное меню) сохраняется — см. BubbleLinkMovementMethod.
-                android.text.util.Linkify.addLinks(textView, android.text.util.Linkify.WEB_URLS)
-                val sp = textView.text
-                if (sp is android.text.Spannable &&
-                    sp.getSpans(0, sp.length, android.text.style.URLSpan::class.java).isNotEmpty()) {
+                // Разметка ссылок берётся из общего кэша — без regex (Linkify) на каждый
+                // bind. Долгий тап по пузырьку (контекстное меню) сохраняется через
+                // BubbleLinkMovementMethod, который ставится только когда есть ссылки.
+                val li = MessageAdapter.linkInfo(msg.text)
+                textView.text = li.display
+                if (li.hasLinks) {
                     textView.movementMethod = BubbleLinkMovementMethod
                     textView.setLinkTextColor(ContextCompat.getColor(itemView.context, R.color.accent_light))
+                } else {
+                    textView.movementMethod = null
                 }
             }
 
@@ -432,7 +528,7 @@ class MessageAdapter(
                     tick.visibility = View.VISIBLE
                     val context = itemView.context
                     when {
-                        msg.isPending -> {
+                        msg.isPending && !msg.isConfirmed -> {
                             tick.setImageResource(R.drawable.ic_clock_thin)
                             tick.imageTintList = ColorStateList.valueOf(0xA6FFFFFF.toInt())
                         }
@@ -443,6 +539,7 @@ class MessageAdapter(
                             )
                         }
                         else -> {
+                            // Либо серверное (isPending=false), либо подтвержденное транспортом (isConfirmed=true)
                             tick.setImageResource(R.drawable.ic_check)
                             tick.imageTintList = ColorStateList.valueOf(
                                 ContextCompat.getColor(context, R.color.sent_tick)
@@ -533,10 +630,15 @@ class MessageAdapter(
         private fun bindImage(msg: Message, image: ShapeableImageView) {
             image.visibility = View.VISIBLE
 
-            // 1. Inline base64 (старый формат)
+            // 1. Inline base64 (старый формат + оптимистичное только что отправленное фото)
             if (msg.imageBase64 != null) {
                 image.tag = null
-                val bitmap = ImageUtils.fromBase64(msg.imageBase64)
+                // Кэшируем декод по msg.msgId: пока фото грузится, render() при каждом тике
+                // опроса (~3с) перепривязывает окно — без кэша мы декодировали бы
+                // многомегабайтный base64 в bitmap на main-потоке КАЖДЫЙ bind → рывки/ANR.
+                val cacheKey = "opt:${msg.msgId}"
+                val bitmap = ImageCache.getBitmap(cacheKey)
+                    ?: ImageUtils.fromBase64(msg.imageBase64)?.also { ImageCache.putBitmap(cacheKey, it) }
                 if (bitmap != null) {
                     image.setImageBitmap(bitmap)
                 } else {
@@ -566,10 +668,36 @@ class MessageAdapter(
             scope.launch {
                 val bitmap = loader.loadBitmap(fileName)
                 if (image.tag == fileName) {
-                    image.setBackgroundColor(Color.TRANSPARENT)
-                    if (bitmap != null) image.setImageBitmap(bitmap)
-                    else image.visibility = View.GONE
+                    if (bitmap != null) {
+                        image.setBackgroundColor(Color.TRANSPARENT)
+                        image.setImageBitmap(bitmap)
+                    } else {
+                        // Фото не загрузилось/не расшифровалось → серый плейсхолдер.
+                        // Клик обрабатывается единым listener'ом в bind(): при пустом фото
+                        // показывает причину (diagnoseAndCopy) и копирует её в буфер.
+                        image.setBackgroundColor(ContextCompat.getColor(itemView.context, R.color.surface_elevated))
+                    }
                 }
+            }
+        }
+
+        /**
+         * Показывает точную причину, почему медиа (фото/голос) не открылось, и сразу
+         * копирует её в буфер обмена — чтобы пользователь мог переслать диагноз.
+         */
+        private fun diagnoseAndCopy(ref: String) {
+            val loader = getImageLoader() ?: return
+            val scope = loadScope ?: return
+            val ctx = itemView.context
+            scope.launch {
+                val diag = withContext(Dispatchers.IO) { loader.diagnoseMedia(ref) }
+                runCatching {
+                    val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                        as? android.content.ClipboardManager
+                    cm?.setPrimaryClip(android.content.ClipData.newPlainText("atrum_diag", diag))
+                }
+                Toast.makeText(ctx, ctx.getString(R.string.media_diag_copied_fmt, diag),
+                    Toast.LENGTH_LONG).show()
             }
         }
 
@@ -610,7 +738,7 @@ class MessageAdapter(
             card.visibility = View.GONE
             card.setOnClickListener(null)
             if (msg.text.isBlank() || msg.isImage || msg.isVoice || msg.isSticker) return
-            val url = LinkPreview.firstUrl(msg.text) ?: return
+            val url = MessageAdapter.linkInfo(msg.text).firstUrl ?: return
             val key = msg.msgId
             card.tag = key
             card.setOnClickListener { openLpUrl(url) }
@@ -703,6 +831,7 @@ class MessageAdapter(
 
         private fun openLpUrl(url: String) {
             runCatching {
+                AppLock.beginShareGrace()
                 val u = if (url.startsWith("http", true)) url else "http://$url"
                 itemView.context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(u)))
             }
@@ -800,7 +929,11 @@ class MessageAdapter(
                 if (loader != null && scope != null) {
                     scope.launch {
                         val file = withContext(Dispatchers.IO) { loadVoiceFile(loader, ref) }
-                        if (playBtn.tag == key) showLoading(file == null)
+                        // НЕ зависаем в вечной загрузке: после фоновой попытки (loadVoiceFile
+                        // сам ретраит ~5 раз) всегда убираем спиннер и показываем play. Если
+                        // файл не загрузился (чанки временно/совсем недоступны на реле) — тап
+                        // по play повторит загрузку, вместо бесконечного спиннера.
+                        if (playBtn.tag == key) showLoading(false)
                     }
                 }
             }
@@ -813,10 +946,23 @@ class MessageAdapter(
                     playBtn.setImageResource(R.drawable.ic_play)
                     return@setOnClickListener
                 }
+                // Явный повтор по тапу: сбрасываем негативный кэш (пользователь хочет
+                // попробовать СЕЙЧАС, а не ждать минуту) и показываем спиннер — чтобы тап
+                // давал видимую реакцию, а не «мёртвую» кнопку.
+                loader.forget(ref)
+                showLoading(true)
                 scope.launch {
                     val file = withContext(Dispatchers.IO) { loadVoiceFile(loader, ref) }
-                    if (playBtn.tag != key || file == null) return@launch
+                    if (playBtn.tag != key) return@launch
                     showLoading(false)
+                    if (file == null) {
+                        // Раньше тап молча выходил (return) — пузырёк выглядел сломанным.
+                        // Теперь показываем ТОЧНЫЙ диагноз и копируем его в буфер обмена
+                        // (чтобы переслать), общий путь с пустым фото.
+                        if (playBtn.tag != key) return@launch
+                        diagnoseAndCopy(ref)
+                        return@launch
+                    }
                     playBtn.setImageResource(R.drawable.ic_pause)
                     VoicePlayer.toggle(key, file, progressCb, completeCb)
                 }
@@ -1207,6 +1353,7 @@ private object BubbleLinkMovementMethod : android.text.method.LinkMovementMethod
             val links = buffer.getSpans(off, off, android.text.style.URLSpan::class.java)
             if (links.isNotEmpty()) {
                 if (action == android.view.MotionEvent.ACTION_UP) {
+                    AppLock.beginShareGrace()
                     runCatching { links[0].onClick(widget) }
                 }
                 return true

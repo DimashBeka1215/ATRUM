@@ -43,6 +43,7 @@ class CrashActivity : AppCompatActivity() {
 
         binding.btnOpenTelegram.setOnClickListener {
             copyToClipboard(log, silent = true)
+            AppLock.beginShareGrace()
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(TELEGRAM_BUG_CHAT_URL))
             startActivity(intent)
         }

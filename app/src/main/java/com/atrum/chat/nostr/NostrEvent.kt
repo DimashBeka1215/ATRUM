@@ -49,11 +49,14 @@ data class NostrEvent(
             privkeyBytes: ByteArray,
             kind: Int,
             tags: List<List<String>>,
-            content: String
+            content: String,
+            // Явный created_at нужен, когда токен аутентификации (clear-маркер)
+            // привязывается к метке времени: и подпись, и токен должны считаться
+            // от ОДНОГО значения. По умолчанию — текущее время (как раньше).
+            createdAt: Long = System.currentTimeMillis() / 1000L
         ): NostrEvent {
             val pubkeyBytes = Schnorr.pubkeyFromPrivkey(privkeyBytes)
             val pubkeyHex = pubkeyBytes.toHex()
-            val createdAt = System.currentTimeMillis() / 1000L
 
             // Каноническая сериализация: [0, pubkey, created_at, kind, tags, content]
             val serialized = canonical(pubkeyHex, createdAt, kind, tags, content)
@@ -116,6 +119,19 @@ data class NostrEvent(
         } catch (_: Exception) {
             null
         }
+
+        /**
+         * Проверяет подпись события: пересчитывает id из канонической формы (NIP-01),
+         * сверяет с заявленным id и проверяет Schnorr-подпись по pubkey события.
+         * true только если всё сходится. Нужна для доверенных событий (список реле и т.п.),
+         * пришедших с НЕдоверенного реле — реле могло подсунуть подделку.
+         */
+        fun verifySignature(ev: NostrEvent): Boolean = try {
+            val serialized = canonical(ev.pubkey, ev.created_at, ev.kind, ev.tags, ev.content)
+            val idBytes = sha256(serialized.toByteArray(Charsets.UTF_8))
+            if (idBytes.toHex() != ev.id.lowercase()) false
+            else Schnorr.verify(ev.pubkey.hexToBytes(), idBytes, ev.sig.hexToBytes())
+        } catch (_: Exception) { false }
 
         // ─── helpers ──────────────────────────────────────────────────────────
 

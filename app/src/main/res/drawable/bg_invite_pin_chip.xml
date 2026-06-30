@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Чип код-пароля на белой карточке QR. Лёгкая акцентная заливка (accent ~8%) — читается
+     на белом в обеих темах. Текст внутри — accent/accent_light (тема-независимы). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#149D4EDD" />
+    <corners android:radius="12dp" />
+</shape>

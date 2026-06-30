@@ -15,5 +15,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "GithubChat"
+rootProject.name = "AtrumChat"
 include(":app")

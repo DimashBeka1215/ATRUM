@@ -143,17 +143,29 @@ object CryptoHelper {
         return runArgon2(params, password.toByteArray(Charsets.UTF_8))
     }
 
-    // ─── Сериализованный запуск Argon2id (анти-OOM) ──────────────────────────
+    // ─── Запуск Argon2id с ограничением параллелизма по памяти ───────────────
     // Argon2id(m=64МиБ) аллоцирует ~64МБ блоков НА КАЖДЫЙ вызов. V5 (random salt)
-    // деривирует ключ на каждое сообщение, поэтому при открытии чата несколько
-    // 64-МБ аллокаций могли идти параллельно → OutOfMemoryError на бюджетных
-    // устройствах (heap ~128МБ). Глобальный argon2Lock пропускает только ОДНУ
-    // деривацию за раз: пик памяти — один блок, который GC освобождает между
-    // вызовами. Это самый ВНУТРЕННИЙ лок (keyCacheLock → argon2Lock), дедлока нет.
-    private val argon2Lock = Any()
+    // деривирует ключ на каждое сообщение, поэтому при открытии чата много 64-МБ
+    // аллокаций → риск OutOfMemoryError. Семафор argon2Semaphore ограничивает число
+    // одновременных деривas: 1 на бюджетных (heap ~128МБ, прежнее анти-OOM поведение),
+    // 2–3 на устройствах с большим heap → быстрее холодная загрузка истории.
+    // Параллелизм Argon2id ограничен по объёму heap (каждый прогон ~64МиБ). На устройствах
+    // с большим heap (largeHeap) разрешаем 2–3 параллельных прогона → быстрее холодная
+    // загрузка чата (V5 деривирует ключ на КАЖДОЕ сообщение). На бюджетных (heap ~128МБ)
+    // остаётся 1 — прежнее анти-OOM поведение. acquireUninterruptibly — как старый synchronized.
+    private val argon2Permits: Int = run {
+        val maxMb = Runtime.getRuntime().maxMemory() / (1024L * 1024L)
+        when {
+            maxMb >= 512 -> 3
+            maxMb >= 256 -> 2
+            else -> 1
+        }
+    }
+    private val argon2Semaphore = java.util.concurrent.Semaphore(argon2Permits)
 
     private fun runArgon2(params: Argon2Parameters, passwordBytes: ByteArray): ByteArray {
-        synchronized(argon2Lock) {
+        argon2Semaphore.acquireUninterruptibly()
+        try {
             var attempt = 0
             while (true) {
                 try {
@@ -169,6 +181,8 @@ object CryptoHelper {
                     try { Thread.sleep(120) } catch (_: InterruptedException) {}
                 }
             }
+        } finally {
+            argon2Semaphore.release()
         }
     }
 
@@ -261,10 +275,42 @@ object CryptoHelper {
     }
 
     /**
-     * Шифрует метаданные ВСЕГДА через V5 (Argon2id GCM + Random Salt).
+     * Шифрует метаданные (профили/presence/reactions) через V4 (Argon2id GCM с солью
+     * от chatId) — НЕ через V5.
+     *
+     * ⚠️ ПРОИЗВОДИТЕЛЬНОСТЬ: presence/profiles.txt переписывается каждые ~2с, и партнёр
+     * расшифровывает их КАЖДЫЙ тик опроса. У V5 соль СЛУЧАЙНА и зашита в каждый шифртекст,
+     * поэтому ни ключ, ни результат закэшировать нельзя → полный Argon2id (64 МБ) на каждый
+     * тик → беспрерывный GC и фризы UI на 5–8с (видно в логах: "GC freed 66MB", "Skipped
+     * 617 frames"). У V4 соль детерминирована от chatId → ключ Argon2 деривируется ОДИН раз
+     * и переиспользуется (getOrDeriveArgon2KeyV4 кэширует) → расшифровка presence почти
+     * бесплатна. Конфиденциальность сохраняется (GCM со случайным nonce на каждое шифрование),
+     * а источник соли возвращается к channelId — как и требуют правила крипто (§1).
+     *
+     * Обратная совместимость: decrypt() определяет формат по префиксу и по-прежнему читает
+     * старые V5-метаданные, так что смешанные версии у двух телефонов работают.
      */
     fun encryptMetadata(plaintext: String, password: String, chatId: String): String =
-        encryptV5(plaintext, password)
+        encryptV4(plaintext, password, chatId)
+
+    /**
+     * Шифрует ДОЛГОВЕЧНЫЙ медиа-контент (фото/голос/стикеры/превью ссылок/манифест чанков).
+     *
+     * ⚠️ НЕ через [encrypt]: тот при активной forward-secrecy сессии шифрует ЭФЕМЕРНЫМ
+     * сессионным ключом (V4-S), который живёт только в памяти и ротируется. Текст читается
+     * сразу в живой сессии — ок. А медиа долговечно: получатель грузит файл ОТДЕЛЬНЫМ
+     * запросом и часто ПОЗЖЕ (перемотка истории, перезагрузка, повторный тап) — к этому
+     * моменту сессионный ключ уже другой, и V4-S не расшифровать → diagnose показывает
+     * «найден, но не расшифровался», пузырёк фото пустой, голос не грузится.
+     *
+     * V4 даёт ДЕТЕРМИНИРОВАННЫЙ ключ Argon2id от (password, соль=chatId): оба телефона
+     * выводят его одинаково, пока известен пароль чата — независимо от эфемерной сессии.
+     * Источник соли (chatId) НЕ меняется (см. §1). decrypt() читает V4 автоматически по
+     * префиксу, поэтому на стороне получателя править ничего не нужно. Forward secrecy для
+     * САМИХ СООБЩЕНИЙ (текст) сохраняется — они по-прежнему идут через [encrypt].
+     */
+    fun encryptFileContent(plaintext: String, password: String, chatId: String): String =
+        encryptV4(plaintext, password, chatId)
 
     /**
      * Расшифровывает сообщение. Формат определяется автоматически по префиксу.
@@ -492,6 +538,33 @@ object CryptoHelper {
         }
     }
 
+    // ─── «Тёплое» удержание выведенных ключей 30 минут ───────────────────────
+    // При выходе из чата НЕ чистим Argon2-кеш сразу, а откладываем на 30 минут:
+    // переоткрытие в течение окна не запускает заново тяжёлый Argon2id (64 МиБ),
+    // чат открывается мгновенно. Это НЕ касается forward secrecy — эфемерный
+    // сессионный ключ (V3/V4-S) по-прежнему стирается немедленно в onDestroy.
+    const val WARM_RETENTION_MS = 30 * 60 * 1000L
+    private val warmScheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "atrum-warm-clear").apply { isDaemon = true }
+    }
+    private val pendingClears =
+        java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ScheduledFuture<*>>()
+
+    /** Отложить очистку Argon2-кеша чата на [WARM_RETENTION_MS] вместо немедленной. */
+    fun scheduleClearCachedKey(chatId: String, password: String) {
+        cancelScheduledClear(chatId)
+        val f = warmScheduler.schedule({
+            clearCachedKey(chatId, password)
+            pendingClears.remove(chatId)
+        }, WARM_RETENTION_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+        pendingClears[chatId] = f
+    }
+
+    /** Отменить отложенную очистку (чат снова открыт — кеш ещё нужен). */
+    fun cancelScheduledClear(chatId: String) {
+        pendingClears.remove(chatId)?.cancel(false)
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // INTERNAL — Паддинг размера (скрытие длины сообщения от реле)
     // ═════════════════════════════════════════════════════════════════════════
@@ -620,13 +693,52 @@ object CryptoHelper {
     private fun decryptV4(ciphertextB64: String, password: String, chatId: String): String? =
         decryptAesGcm(ciphertextB64, getOrDeriveArgon2KeyV4(password, chatId), V4_PREFIX)
 
+    /**
+     * ОТЛАДКА: расшифровывает V4-контент и возвращает текстовую причину провала
+     * (исключение GCM, размеры base64), вместо тихого null. Только для диагностики медиа.
+     */
+    /** Хеш V4-ключа (Argon2 от password+chatId) — для сверки ключа между устройствами. */
+    fun v4KeyHash(password: String, chatId: String): String {
+        val k = getOrDeriveArgon2KeyV4(password, chatId)
+        return MessageDigest.getInstance("SHA-256").digest(k)
+            .joinToString("") { "%02x".format(it) }.take(8)
+    }
+
+    fun decryptV4Diag(ciphertextB64: String, password: String, chatId: String): String {
+        val s = ciphertextB64.trim()
+        if (!s.startsWith(V4_PREFIX)) return "notV4(${s.take(6)})"
+        val key = getOrDeriveArgon2KeyV4(password, chatId)
+        val kh = MessageDigest.getInstance("SHA-256").digest(key)
+            .joinToString("") { "%02x".format(it) }.take(8)
+        val bodyStr = s.removePrefix(V4_PREFIX)
+        val szDef = runCatching { Base64.decode(bodyStr, Base64.DEFAULT).size }.getOrDefault(-1)
+        val szNW = runCatching { Base64.decode(bodyStr, Base64.NO_WRAP).size }.getOrDefault(-1)
+        val body = runCatching { Base64.decode(bodyStr, Base64.DEFAULT) }.getOrElse { return "b64fail" }
+        if (body.size < GCM_NONCE_LEN + GCM_TAG_BITS / 8 + 1) return "short${body.size}"
+        val nonce = body.copyOfRange(0, GCM_NONCE_LEN)
+        val ct = body.copyOfRange(GCM_NONCE_LEN, body.size)
+        return try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
+            val pt = cipher.doFinal(ct)
+            "GCMok kh=$kh ptlen=${pt.size} unpad=${unpadBytes(pt).size}"
+        } catch (e: Exception) {
+            "GCMfail kh=$kh ${e.javaClass.simpleName} bodysize=${body.size} ctlen=${ct.size}"
+        }
+    }
+
     private fun getOrDeriveArgon2KeyV4(password: String, chatId: String): ByteArray {
         val cacheKey = buildCacheKey(chatId, password)
-        synchronized(keyCacheLock) {
-            keyCacheV4[cacheKey]?.let { return it }
-            val key = deriveArgon2Key(password, chatId, ARGON2_PARALLEL_V4)
-            keyCacheV4[cacheKey] = key
-            return key
+        // Быстрая проверка кэша под локом.
+        synchronized(keyCacheLock) { keyCacheV4[cacheKey]?.let { return it } }
+        // ⚠️ Argon2id (64 МБ, сотни мс) считаем ВНЕ keyCacheLock. Раньше деривация шла
+        // ВНУТРИ synchronized — и любой поток, зашедший за ключом (в т.ч. главный),
+        // блокировался на всё время вычисления → "Long monitor contention" и ANR
+        // ("Waited 10000ms for MotionEvent"). Теперь лок держится лишь на доли мс.
+        val key = deriveArgon2Key(password, chatId, ARGON2_PARALLEL_V4)
+        return synchronized(keyCacheLock) {
+            // Гонка: другой поток мог уже посчитать тот же ключ — переиспользуем его.
+            keyCacheV4[cacheKey] ?: key.also { keyCacheV4[cacheKey] = it }
         }
     }
 
@@ -642,11 +754,12 @@ object CryptoHelper {
 
     private fun getOrDeriveArgon2KeyV2(password: String, chatId: String): ByteArray {
         val cacheKey = buildCacheKey(chatId, password)
-        synchronized(keyCacheLock) {
-            keyCacheV2[cacheKey]?.let { return it }
-            val key = deriveArgon2Key(password, chatId, ARGON2_PARALLEL_V2)
-            keyCacheV2[cacheKey] = key
-            return key
+        synchronized(keyCacheLock) { keyCacheV2[cacheKey]?.let { return it } }
+        // Argon2id считаем ВНЕ лока (см. getOrDeriveArgon2KeyV4) — чтобы не блокировать
+        // другие потоки на время деривации.
+        val key = deriveArgon2Key(password, chatId, ARGON2_PARALLEL_V2)
+        return synchronized(keyCacheLock) {
+            keyCacheV2[cacheKey] ?: key.also { keyCacheV2[cacheKey] = it }
         }
     }
 

@@ -83,9 +83,9 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <!-- HERO: GitHub карточка -->
+            <!-- HERO: P2P карточка -->
             <LinearLayout
-                android:id="@+id/card_github"
+                android:id="@+id/card_p2p"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:background="@drawable/bg_card_hero"
@@ -121,7 +121,7 @@
                     android:layout_marginBottom="10dp"
                     android:fontFamily="sans-serif-medium"
                     android:gravity="center"
-                    android:text="@string/create_card_github_title"
+                    android:text="@string/create_card_p2p_title"
                     android:textColor="@color/text_primary"
                     android:textSize="22sp" />
 
@@ -131,7 +131,7 @@
                     android:layout_marginBottom="22dp"
                     android:gravity="center"
                     android:lineSpacingExtra="2dp"
-                    android:text="@string/create_card_github_subtitle"
+                    android:text="@string/create_card_p2p_subtitle"
                     android:textColor="@color/text_secondary"
                     android:textSize="14sp" />
 
@@ -144,7 +144,7 @@
                     android:focusable="false"
                     android:fontFamily="sans-serif-medium"
                     android:stateListAnimator="@null"
-                    android:text="@string/create_card_github_cta"
+                    android:text="@string/create_card_p2p_cta"
                     android:textAllCaps="false"
                     android:textColor="@color/white"
                     android:textSize="15sp" />
@@ -192,6 +192,60 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
                         android:text="@string/create_card_join_subtitle"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_arrow_forward"
+                    app:tint="@color/accent" />
+            </LinearLayout>
+
+            <!-- Карточка "Подключиться по Bluetooth" (сканировать QR рядом) -->
+            <LinearLayout
+                android:id="@+id/card_bt"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_link_card"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="18dp"
+                android:paddingVertical="18dp">
+
+                <ImageView
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:layout_marginEnd="16dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_bluetooth"
+                    app:tint="@color/accent" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="@string/create_card_bt_title"
+                        android:textColor="@color/accent_light"
+                        android:textSize="15sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="@string/create_card_bt_subtitle"
                         android:textColor="@color/text_secondary"
                         android:textSize="12sp" />
                 </LinearLayout>
@@ -275,9 +329,9 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- ====== GITHUB FORM (новый premium дизайн) ====== -->
+        <!-- ====== P2P FORM (новый premium дизайн) ====== -->
         <LinearLayout
-            android:id="@+id/github_form"
+            android:id="@+id/p2p_form"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
@@ -308,7 +362,7 @@
                     android:contentDescription="@null"
                     android:scaleType="centerCrop"
                     android:src="@drawable/ic_user_silhouette"
-                    app:shapeAppearanceOverlay="@style/ShapeAppearance.GithubChat.Circle" />
+                    app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.Circle" />
             </FrameLayout>
 
             <TextView
@@ -608,12 +662,12 @@
                         android:src="@drawable/ic_flash"
                         app:tint="@color/text_secondary" />
                 </FrameLayout>
-
                 <FrameLayout
                     android:id="@+id/path_tor"
                     android:layout_width="0dp"
                     android:layout_height="46dp"
                     android:layout_weight="1"
+                    android:layout_marginEnd="8dp"
                     android:background="@drawable/bg_chip_default"
                     android:clickable="true"
                     android:focusable="true"
@@ -628,6 +682,26 @@
                         android:src="@drawable/ic_shield"
                         app:tint="@color/text_secondary" />
                 </FrameLayout>
+
+                <FrameLayout
+                    android:id="@+id/path_bt"
+                    android:layout_width="0dp"
+                    android:layout_height="46dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_chip_default"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:contentDescription="@string/cd_path_bt">
+
+                    <ImageView
+                        android:id="@+id/path_bt_icon"
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:layout_gravity="center"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_bluetooth"
+                        app:tint="@color/text_secondary" />
+                </FrameLayout>
             </LinearLayout>
 
             <TextView
@@ -636,12 +710,114 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
                 android:lineSpacingExtra="2dp"
-                android:text="@string/cc_path_desc_tor"
+                android:text="@string/cc_path_desc_nostr"
                 android:textColor="@color/text_tertiary"
                 android:textSize="12sp" />
 
+            <!-- Tor Warning (Experimental) -->
+            <LinearLayout
+                android:id="@+id/tor_warning_panel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_warning"
+                android:orientation="horizontal"
+                android:padding="12dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:layout_marginEnd="10dp"
+                    android:layout_marginTop="1dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_warning"
+                    app:tint="@color/warning" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="@string/cc_tor_experimental_title"
+                        android:textColor="@color/warning"
+                        android:textSize="12sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:lineSpacingExtra="1dp"
+                        android:text="@string/cc_tor_experimental_text"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="11sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/bt_panel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_settings_card"
+                android:orientation="vertical"
+                android:padding="14dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/bt_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/bt_searching"
+                    android:textColor="@color/accent_light"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/bt_search_hint"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+
+                <LinearLayout
+                    android:id="@+id/bt_device_list"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:orientation="vertical" />
+
+                <TextView
+                    android:id="@+id/btn_bt_show_qr"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginTop="12dp"
+                    android:background="?attr/selectableItemBackground"
+                    android:drawableStart="@drawable/ic_qr"
+                    android:drawablePadding="8dp"
+                    android:gravity="center_vertical"
+                    android:padding="8dp"
+                    android:text="@string/bt_show_my_qr"
+                    android:textColor="@color/accent_light"
+                    android:textSize="13sp" />
+
+                <ImageView
+                    android:id="@+id/iv_bt_qr"
+                    android:layout_width="180dp"
+                    android:layout_height="180dp"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginTop="10dp"
+                    android:contentDescription="@string/bt_show_my_qr"
+                    android:visibility="gone" />
+            </LinearLayout>
+
             <Button
-                android:id="@+id/btn_create_github"
+                android:id="@+id/btn_create_p2p"
                 android:layout_width="match_parent"
                 android:layout_height="56dp"
                 android:layout_marginTop="28dp"
@@ -664,6 +840,49 @@
                 android:layout_gravity="center"
                 android:layout_marginTop="16dp"
                 android:visibility="gone" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/bt_wait"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:paddingTop="64dp"
+            android:visibility="gone">
+
+            <ProgressBar
+                android:layout_width="48dp"
+                android:layout_height="48dp" />
+
+            <ImageView
+                android:id="@+id/iv_bt_wait_avatar"
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:layout_marginTop="20dp"
+                android:contentDescription="@null"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/bt_wait_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:text="@string/bt_wait_title"
+                android:textColor="@color/text_primary"
+                android:textSize="17sp" />
+
+            <TextView
+                android:id="@+id/bt_wait_hint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="@string/bt_wait_hint"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
         </LinearLayout>
 
     </LinearLayout>

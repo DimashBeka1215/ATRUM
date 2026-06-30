@@ -2,7 +2,6 @@ package com.atrum.chat
 
 import android.content.Context
 import android.graphics.*
-import android.graphics.drawable.Drawable
 import android.os.Build
 import android.util.AttributeSet
 import android.view.View
@@ -10,7 +9,6 @@ import android.view.ViewOutlineProvider
 import android.view.ViewTreeObserver
 import android.widget.LinearLayout
 import androidx.annotation.RequiresApi
-import androidx.core.content.ContextCompat
 
 /**
  * Advanced Apple-style "Liquid Glass" Backdrop Blur View.

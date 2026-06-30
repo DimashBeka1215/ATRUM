@@ -56,8 +56,8 @@ interface ChatDao {
     @Query("UPDATE chats SET partnerDeleted = :deleted WHERE id = :id")
     suspend fun updatePartnerDeleted(id: Long, deleted: Boolean)
 
-    /** Обновляет GitHub-токен чата без пересоздания записи. */
-    @Query("UPDATE chats SET gistToken = :token WHERE id = :id")
+    /** Обновляет транспортный токен чата без пересоздания записи. */
+    @Query("UPDATE chats SET transportToken = :token WHERE id = :id")
     suspend fun updateToken(id: Long, token: String)
 
     @Query("UPDATE chats SET isPinned = :pinned WHERE id = :id")

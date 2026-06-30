@@ -155,7 +155,13 @@ private class RelayConn(private val url: String, private val client: OkHttpClien
                     override fun onOpen(webSocket: WebSocket, response: Response) {
                         opened.complete(webSocket)
                     }
-                    override fun onMessage(webSocket: WebSocket, text: String) = dispatch(text)
+                    override fun onMessage(webSocket: WebSocket, text: String) {
+                        // ⚠️ НЕ логировать здесь сырьё: onMessage срабатывает на КАЖДОЕ
+                        // событие реле (до 1000 за запрос × ~10 реле), и синхронный лог в
+                        // этом потоке-читателе okhttp растёт вместе с историей чата →
+                        // доставка «тормозит со временем». Плюс это утечка шифртекста в logcat.
+                        dispatch(text)
+                    }
                     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                         if (!opened.isCompleted) opened.completeExceptionally(t)
                         drop(t)
@@ -245,10 +251,9 @@ private class RelayConn(private val url: String, private val client: OkHttpClien
                 runCatching { sock.send(JSONArray().apply { put("CLOSE"); put(subId) }.toString()) }
                 synchronized(sub.events) { sub.events.toList() }
             } catch (ce: CancellationException) {
-                // Внешняя отмена (мягкий дедлайн queryAllRelays) ДО прихода EOSE — тоже
-                // признак залипшего сокета. Сбрасываем, чтобы следующий тик опроса
-                // переподключился к этому реле, а не переиспользовал мёртвое соединение.
-                if (!sub.eose.isCompleted) resetIfCurrent(sock)
+                // Внешняя отмена (мягкий дедлайн queryAllRelays). Не сбрасываем сокет
+                // принудительно, т.к. он может быть здоров, просто медленнее конкурентов.
+                // Настоящий «зомби-сокет» будет отбракован по внутреннему timeoutMs (20с).
                 throw ce
             } finally {
                 subs.remove(subId)

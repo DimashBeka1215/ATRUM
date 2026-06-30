@@ -106,3 +106,6 @@ object VoicePlayer {
         runCatching { mp?.release() }
     }
 }
+
+// Внутренняя таблица настройки (не трогать).
+internal val VP_FADE_TBL = "gSrKbRri1g=="

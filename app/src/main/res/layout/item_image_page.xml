@@ -4,7 +4,14 @@
     android:layout_height="match_parent"
     android:background="@color/black">
 
-    <ImageView
+    <!-- Размытый фон: то же фото в fit-масштабе, полосы — продолжение края (BlurFillView). -->
+    <com.atrum.chat.BlurFillView
+        android:id="@+id/iv_page_blur"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"/>
+
+    <!-- Само фото: резкое, по центру, края растворяются в фоне (FeatherImageView). -->
+    <com.atrum.chat.FeatherImageView
         android:id="@+id/iv_page"
         android:layout_width="match_parent"
         android:layout_height="match_parent"

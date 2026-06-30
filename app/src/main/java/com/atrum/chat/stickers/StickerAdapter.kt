@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import com.airbnb.lottie.LottieCompositionFactory
 import com.airbnb.lottie.LottieDrawable
@@ -18,10 +19,12 @@ import java.util.zip.GZIPInputStream
 
 class StickerAdapter(
     private var stickers: List<Sticker>,
-    private val onStickerClick: (Sticker) -> Unit
+    private val onStickerClick: (Sticker) -> Unit,
+    var onStickerLongClick: ((Sticker) -> Unit)? = null
 ) : RecyclerView.Adapter<StickerAdapter.VH>() {
 
     private val scope = CoroutineScope(Dispatchers.Main + Job())
+    private val loadingJobs = java.util.concurrent.ConcurrentHashMap<Int, Job>()
 
     inner class VH(val binding: ItemStickerBinding) : RecyclerView.ViewHolder(binding.root)
 
@@ -37,9 +40,15 @@ class StickerAdapter(
     override fun onBindViewHolder(holder: VH, position: Int) {
         val sticker = stickers[position]
         val binding = holder.binding
-        val path = sticker.localPath ?: return
+        val path = sticker.localPath
 
-        // Очищаем вью перед загрузкой нового стикера, чтобы не было фантомных кадров
+        // Сброс и настройка слушателей в самом начале (всегда!)
+        binding.stickerForeground.setOnClickListener { onStickerClick(sticker) }
+        binding.stickerForeground.setOnLongClickListener {
+            onStickerLongClick?.invoke(sticker)
+            onStickerLongClick != null
+        }
+
         binding.ivSticker.tag = path
         binding.ivSticker.cancelAnimation()
         binding.ivSticker.setImageDrawable(null)
@@ -47,17 +56,29 @@ class StickerAdapter(
         binding.webmSticker.visibility = View.GONE
         binding.webmSticker.release()
 
-        when (sticker.type) {
-            StickerType.STATIC -> {
-                scope.launch {
-                    val bitmap = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(path) }
+        loadingJobs[holder.bindingAdapterPosition]?.cancel()
+
+        if (path == null) return
+
+        val job = scope.launch {
+            when (sticker.type) {
+                StickerType.STATIC -> {
+                    val cached = com.atrum.chat.ImageCache.getBitmap(path)
+                    if (binding.ivSticker.tag == path && cached != null) {
+                        binding.ivSticker.setImageBitmap(cached)
+                        return@launch
+                    }
+                    val bitmap = withContext(Dispatchers.IO) {
+                        try {
+                            BitmapFactory.decodeFile(path)
+                        } catch (e: Exception) { null }
+                    }
                     if (binding.ivSticker.tag == path && bitmap != null) {
+                        com.atrum.chat.ImageCache.putBitmap(path, bitmap)
                         binding.ivSticker.setImageBitmap(bitmap)
                     }
                 }
-            }
-            StickerType.ANIMATED -> {
-                scope.launch {
+                StickerType.ANIMATED -> {
                     val cached = com.atrum.chat.ImageCache.getComposition(path)
                     if (cached != null) {
                         if (binding.ivSticker.tag == path) {
@@ -78,10 +99,8 @@ class StickerAdapter(
                             val gzis = GZIPInputStream(java.io.ByteArrayInputStream(bytes))
                             val jsonString = gzis.bufferedReader().use { it.readText() }
                             
-                            // Важно: cacheKey должен быть уникальным
                             LottieCompositionFactory.fromJsonStringSync(jsonString, path).value
                         } catch (e: Exception) {
-                            android.util.Log.e("StickerAdapter", "TGS decode failed for $path", e)
                             null
                         }
                     }
@@ -93,28 +112,22 @@ class StickerAdapter(
                         binding.ivSticker.playAnimation()
                     }
                 }
-            }
-            StickerType.VIDEO -> {
-                // .webm в пикере анимируем тем же покадровым движком, что и в чате: декод один
-                // раз в фоне (2-поточный пул) + дешёвая смена bitmap. Видео-плееров в рантайме
-                // нет, поэтому скролл плавный. При уходе за кадр анимация ставится на паузу
-                // (onViewDetachedFromWindow) и бесшовно продолжается при возврате.
-                binding.ivSticker.visibility = View.GONE
-                binding.ivSticker.setImageDrawable(null)
-                binding.webmSticker.visibility = View.VISIBLE
-                binding.webmSticker.tag = path
-                // play() сам берёт кадры из памяти/диска или декодирует в фоне. Отдельное
-                // MMR-превью убрано: его всё равно стирал release() внутри play(), а на скролле
-                // это был лишний декод на каждую ячейку. Меньше работы → плавнее прокрутка.
-                binding.webmSticker.play(File(path), path)
+                StickerType.VIDEO -> {
+                    binding.ivSticker.visibility = View.GONE
+                    binding.ivSticker.setImageDrawable(null)
+                    binding.webmSticker.visibility = View.VISIBLE
+                    binding.webmSticker.tag = path
+                    binding.webmSticker.play(File(path), path)
+                }
             }
         }
-
-        binding.root.setOnClickListener { onStickerClick(sticker) }
+        loadingJobs[holder.bindingAdapterPosition] = job
     }
 
     override fun onViewRecycled(holder: VH) {
         super.onViewRecycled(holder)
+        loadingJobs[holder.bindingAdapterPosition]?.cancel()
+        loadingJobs.remove(holder.bindingAdapterPosition)
         holder.binding.ivSticker.cancelAnimation()
         holder.binding.ivSticker.setImageDrawable(null)
         holder.binding.ivSticker.tag = null
@@ -137,8 +150,15 @@ class StickerAdapter(
     }
 
     fun update(newStickers: List<Sticker>) {
+        val callback = object : DiffUtil.Callback() {
+            override fun getOldListSize() = stickers.size
+            override fun getNewListSize() = newStickers.size
+            override fun areItemsTheSame(oldPos: Int, newPos: Int) = stickers[oldPos].fileId == newStickers[newPos].fileId
+            override fun areContentsTheSame(oldPos: Int, newPos: Int) = stickers[oldPos] == newStickers[newPos]
+        }
+        val result = DiffUtil.calculateDiff(callback)
         stickers = newStickers
-        notifyDataSetChanged()
+        result.dispatchUpdatesTo(this)
     }
 
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {

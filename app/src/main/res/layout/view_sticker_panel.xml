@@ -107,91 +107,108 @@
             android:contentDescription="@string/sticker_rename_cd"/>
     </LinearLayout>
 
-    <!-- Грид стикеров -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/rv_stickers"
+    <!-- Контейнер для списка и оверлея -->
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="200dp"
-        android:paddingHorizontal="8dp"
-        android:paddingBottom="8dp"
-        android:clipToPadding="false"
-        android:scrollbars="vertical"/>
+        android:layout_height="200dp">
 
-    <!-- Состояние: пустые паки -->
-    <LinearLayout
-        android:id="@+id/sticker_empty_state"
-        android:layout_width="match_parent"
-        android:layout_height="200dp"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:visibility="gone">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/sticker_empty_title"
-            android:textColor="@color/text_secondary"
-            android:textSize="15sp"
-            android:fontFamily="sans-serif-medium"
-            android:gravity="center"/>
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="@string/sticker_empty_hint"
-            android:textColor="@color/text_tertiary"
-            android:textSize="13sp"
-            android:gravity="center"
-            android:paddingHorizontal="32dp"/>
-
-    </LinearLayout>
-
-    <!-- Состояние: загрузка пака — определённая полоса прогресса (как в настройках) -->
-    <LinearLayout
-        android:id="@+id/sticker_loading_state"
-        android:layout_width="match_parent"
-        android:layout_height="200dp"
-        android:orientation="vertical"
-        android:gravity="center"
-        android:paddingHorizontal="16dp"
-        android:visibility="gone">
-
-        <LinearLayout
+        <!-- Грид стикеров -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rv_stickers"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="match_parent"
+            android:paddingHorizontal="8dp"
+            android:paddingBottom="8dp"
+            android:clipToPadding="false"
+            android:scrollbars="vertical"/>
+
+        <!-- Состояние: пустые паки -->
+        <LinearLayout
+            android:id="@+id/sticker_empty_state"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
             android:orientation="vertical"
-            android:background="@drawable/bg_settings_card"
-            android:padding="16dp">
+            android:gravity="center"
+            android:visibility="gone">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/sticker_loading"
-                android:textColor="@color/text_primary"
-                android:textSize="14sp"
+                android:text="@string/sticker_empty_title"
+                android:textColor="@color/text_secondary"
+                android:textSize="15sp"
                 android:fontFamily="sans-serif-medium"
-                android:layout_marginBottom="14dp" />
-
-            <ProgressBar
-                android:id="@+id/pb_sticker_download"
-                style="@android:style/Widget.ProgressBar.Horizontal"
-                android:layout_width="match_parent"
-                android:layout_height="4dp"
-                android:progressDrawable="@drawable/bg_progress_bar"
-                android:max="100"
-                android:progress="0"
-                android:layout_marginBottom="8dp" />
+                android:gravity="center"/>
 
             <TextView
-                android:id="@+id/tv_sticker_loading_count"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="@string/sticker_empty_hint"
                 android:textColor="@color/text_tertiary"
-                android:textSize="11sp" />
+                android:textSize="13sp"
+                android:gravity="center"
+                android:paddingHorizontal="32dp"/>
 
         </LinearLayout>
 
-    </LinearLayout>
+        <!-- Состояние: загрузка пака — определённая полоса прогресса (как в настройках) -->
+        <LinearLayout
+            android:id="@+id/sticker_loading_state"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingHorizontal="16dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_settings_card"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sticker_loading"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:layout_marginBottom="14dp" />
+
+                <ProgressBar
+                    android:id="@+id/pb_sticker_download"
+                    style="@android:style/Widget.ProgressBar.Horizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="4dp"
+                    android:progressDrawable="@drawable/bg_progress_bar"
+                    android:max="100"
+                    android:progress="0"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:id="@+id/tv_sticker_loading_count"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_tertiary"
+                    android:textSize="11sp" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Оверлей блокировки при отправке -->
+        <View
+            android:id="@+id/sticker_sending_overlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#40000000"
+            android:visibility="gone"
+            android:clickable="true"
+            android:focusable="true"/>
+
+    </FrameLayout>
 
 </LinearLayout>

@@ -16,7 +16,7 @@ import com.atrum.chat.databinding.ActivityIntroBinding
 /**
  * Onboarding intro — показывается один раз при первом запуске.
  *
- *   Welcome → End-to-end encryption → What is Gist? → Experimental Beta
+ *   Welcome → Шифрование → Транспорт → Безопасность → Поддержка → Бета
  *
  * После Skip/Get Started ставим Prefs.introShown=true и идём в
  * WelcomeActivity (которая дальше уже разруливает onboarding/lock/chats).
@@ -39,9 +39,14 @@ class IntroActivity : AppCompatActivity() {
                 subtitle = getString(R.string.intro_2_subtitle)
             ),
             IntroPage(
-                iconRes = R.drawable.ic_cloud,
+                iconRes = R.drawable.ic_p2p_network,
                 title = getString(R.string.intro_3_title),
                 subtitle = getString(R.string.intro_3_subtitle)
+            ),
+            IntroPage(
+                iconRes = R.drawable.ic_warning,
+                title = getString(R.string.intro_5_title),
+                subtitle = getString(R.string.intro_5_subtitle)
             ),
             IntroPage(
                 iconRes = R.drawable.ic_heart,
@@ -76,6 +81,10 @@ class IntroActivity : AppCompatActivity() {
 
         binding = ActivityIntroBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // Помечаем intro показанным СРАЗУ при показе — гарантирует «один раз и всё»,
+        // даже если приложение убьют во время просмотра карточек.
+        prefs.introShown = true
 
         binding.pager.adapter = IntroAdapter(pages)
         binding.pager.offscreenPageLimit = 1
@@ -165,7 +174,7 @@ class IntroActivity : AppCompatActivity() {
 /** Модель одной intro-страницы. */
 data class IntroPage(val iconRes: Int, val title: String, val subtitle: String, val tintColor: Int? = null)
 
-/** Адаптер для ViewPager2 — 4 простых страницы. */
+/** Адаптер для ViewPager2 — простые intro-страницы. */
 class IntroAdapter(private val pages: List<IntroPage>) :
     RecyclerView.Adapter<IntroAdapter.VH>() {
 

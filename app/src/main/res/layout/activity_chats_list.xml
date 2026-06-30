@@ -50,7 +50,7 @@
                     android:scaleType="centerCrop"
                     android:contentDescription="@null"
                     android:visibility="gone"
-                    app:shapeAppearanceOverlay="@style/ShapeAppearance.GithubChat.Circle"/>
+                    app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.Circle"/>
             </FrameLayout>
 
             <!-- Состояние 1: заголовок ATRUM (кликабелен → поиск) -->

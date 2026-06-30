@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Чтобы Service мог открыть Activity поверх Custom Tabs после успеха OAuth -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -32,6 +33,8 @@
 
     <!-- Камера — только для сканера QR (Bluetooth-подключение по QR). -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Сохранение QR в галерею на Android 9 и ниже (на 10+ — через MediaStore без разрешения) -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <application
@@ -44,7 +47,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.GithubChat"
+        android:theme="@style/Theme.AtrumChat"
         tools:targetApi="33">
 
         <activity
@@ -83,6 +86,11 @@
             android:windowSoftInputMode="adjustResize" />
 
         <activity
+            android:name=".ModsActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name=".AboutActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
@@ -104,8 +112,16 @@
 
         <activity
             android:name=".JoinChatActivity"
-            android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <!-- Deep-link приглашения: открывается штатной камерой/браузером по atrum://join -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="atrum" android:host="join" />
+            </intent-filter>
+        </activity>
 
         <activity
             android:name=".QrScanActivity"
@@ -120,7 +136,7 @@
         <activity
             android:name=".ImageViewActivity"
             android:exported="false"
-            android:theme="@style/Theme.GithubChat" />
+            android:theme="@style/Theme.AtrumChat" />
 
         <activity
             android:name=".MainActivity"
@@ -146,13 +162,37 @@
         <activity
             android:name=".PartnerProfileActivity"
             android:exported="false"
-            android:theme="@style/Theme.GithubChat" />
+            android:theme="@style/Theme.AtrumChat" />
 
         <!-- Полный список медиа (фото/ссылки/голосовые) из профиля -->
         <activity
             android:name=".MediaListActivity"
             android:exported="false"
-            android:theme="@style/Theme.GithubChat" />
+            android:theme="@style/Theme.AtrumChat" />
+
+        <!-- Экран QR-приглашения (стилизованный QR + поделиться/сканировать) -->
+        <activity
+            android:name=".InviteQrActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AtrumChat" />
+
+        <!-- Издатель списка реле (скрытый, только при наличии ключа) -->
+        <activity
+            android:name=".PublisherActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AtrumChat" />
+
+        <!-- Гейт перед издателем (пароль) -->
+        <activity
+            android:name=".PublisherGateActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AtrumChat" />
+
+        <!-- Кастомный кадратор шапки (замена uCrop на этом пути) -->
+        <activity
+            android:name=".BannerCropActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AtrumChat" />
 
         <!-- Экран краша — открывается вместо системного диалога "Приложение остановлено" -->
         <activity
@@ -160,7 +200,7 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:taskAffinity=""
-            android:theme="@style/Theme.GithubChat" />
+            android:theme="@style/Theme.AtrumChat" />
 
 
         <!-- HeaderSettingsActivity — настройка баннера профиля -->
@@ -181,7 +221,7 @@
         <activity
             android:name=".stickers.StickerGuideActivity"
             android:exported="false"
-            android:theme="@style/Theme.GithubChat" />
+            android:theme="@style/Theme.AtrumChat" />
 
         <activity
             android:name=".UpdateActivity"
@@ -214,6 +254,17 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- Шеринг картинки QR-приглашения через content:// -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 

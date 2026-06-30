@@ -23,10 +23,11 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.atrum.chat.data.AppDatabase
 import com.atrum.chat.data.Chat
 import com.atrum.chat.databinding.ActivityChatBinding
-import com.atrum.chat.transport.AllGistData
+import com.atrum.chat.transport.AllChannelData
 import com.atrum.chat.transport.ChatTransport
 import com.atrum.chat.transport.BluetoothTransport
 import com.atrum.chat.transport.TransportFactory
@@ -94,8 +95,9 @@ class ChatActivity : SecureActivity() {
     private lateinit var syncEngine: SyncEngine
     /** BT-чат (локальный по Bluetooth): голос/медиа отключены, доставка по BLE. */
     private var btMode: Boolean = false
-    /** Подписка на входящие BLE-строки для мгновенного обновления. */
-    private var btWatch: AutoCloseable? = null
+    /** Подписки на входящие события транспорта (сообщения/профили) для мгновенного обновления. */
+    private var transportWatch: AutoCloseable? = null
+    private var profilesWatch: AutoCloseable? = null
     /** Мониторинг сети: восстановление доставки при возврате связи (§1.5). */
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -122,10 +124,9 @@ class ChatActivity : SecureActivity() {
 
     /** false до момента первой успешной загрузки сообщений. */
     private var firstLoadComplete = false
+    private val TAIL_FIRST = 30   // сколько последних сообщений показать сразу на первой загрузке
     // Гейт показа чата: держим loading overlay пока не установится сессия (или таймаут).
     private var contentLoaded = false
-    private var handshakeSettled = false
-    private val handshakeRevealTimeoutMs = 10_000L
 
     /**
      * Счётчик последовательных ошибок одного типа.
@@ -164,7 +165,7 @@ class ChatActivity : SecureActivity() {
     private val markAsReadDelayMs = 500L
     private var markAsReadJob: Job? = null
 
-    /** Кэш последнего отправленного в gist значения lastReadIndex — чтобы не пушить впустую. */
+    /** Кэш последнего отправленного в канал значения lastReadIndex — чтобы не пушить впустую. */
     private var lastPushedReadIndex: Int = -1
 
     /** Сообщение, на которое мы сейчас отвечаем (null = обычное сообщение). */
@@ -196,8 +197,8 @@ class ChatActivity : SecureActivity() {
     /** Корутина обратного отсчёта при блокировке (обновляет hint поля ввода). */
     private var countdownJob: Job? = null
 
-    /** Корутина обратного отсчёта жёлтой плашки лимита GitHub. */
-    private var rateLimitJob: Job? = null
+    /** Корутина обратного отсчёта жёлтой плашки транспортного лимита (429 Too Many Requests). */
+    private var transportLimitJob: Job? = null
 
     /** Оригинальный hint поля ввода (восстанавливается после блокировки). */
     private var originalHint: CharSequence = ""
@@ -260,7 +261,7 @@ class ChatActivity : SecureActivity() {
     @Volatile private var isRecordingVoice = false
 
     /**
-     * Последний снимок профилей из gist (обновляется в doRefreshPartnerReadIndex).
+     * Последний снимок профилей из канала (обновляется в doRefreshPartnerReadIndex).
      * Используется для write-only typing/online пушей — 1 запрос вместо 2.
      * Максимальное «протухание» = ~4 сек (один цикл опроса).
      */
@@ -328,24 +329,24 @@ class ChatActivity : SecureActivity() {
                 return@launch
             }
             // Restore secrets from EncryptedSharedPreferences (moved from plaintext DB in v10)
-            val restoredToken = prefs.getChatToken(loaded.gistId).takeIf { it.isNotEmpty() }
-                ?: @Suppress("DEPRECATION") loaded.gistToken
-            val restoredPassword = prefs.getChatPassword(loaded.gistId).takeIf { it.isNotEmpty() }
+            val restoredToken = prefs.getChatToken(loaded.chatId).takeIf { it.isNotEmpty() }
+                ?: @Suppress("DEPRECATION") loaded.transportToken
+            val restoredPassword = prefs.getChatPassword(loaded.chatId).takeIf { it.isNotEmpty() }
                 ?: @Suppress("DEPRECATION") loaded.chatPassword
             @Suppress("DEPRECATION")
-            chat = loaded.copy(gistToken = restoredToken, chatPassword = restoredPassword)
+            chat = loaded.copy(transportToken = restoredToken, chatPassword = restoredPassword)
             setupUi()
             // Прогреваем Argon2-ключ в фоне (V2 фолбэк): первое шифрование/дешифрование
             // занимает 400–700 мс, кеш после этого делает всё мгновенным.
             // Запускаем до loadMessages — к моменту расшифровки первых строк ключ уже готов.
             launch(Dispatchers.Default) {
-                CryptoHelper.warmUp(chat.chatPassword, chat.gistId)
+                CryptoHelper.warmUp(chat.chatPassword, chat.chatId)
             }
             // Восстанавливаем или генерируем X25519 пару ключей для forward secrecy.
             // FORWARD SECRECY: приватный эфемерный ключ хранится ТОЛЬКО в Keystore-
             // шифрованном Prefs (не в открытой Room-БД). Pub остаётся в БД. Сессия
             // переживает перезаход (ключ не пересоздаётся), но при краже БД он недоступен.
-            val storedEphPriv = prefs.getEphemeralPriv(chat.gistId)
+            val storedEphPriv = prefs.getEphemeralPriv(chat.chatId)
             if (storedEphPriv != null && chat.myEphemeralPubKeyB64 != null) {
                 myEphemeralPrivKey = storedEphPriv
                 myCurrentEphemeralPubKey = chat.myEphemeralPubKeyB64
@@ -355,18 +356,18 @@ class ChatActivity : SecureActivity() {
                 val migrated = Base64.decode(chat.myEphemeralPrivKeyB64, Base64.NO_WRAP)
                 myEphemeralPrivKey = migrated
                 myCurrentEphemeralPubKey = chat.myEphemeralPubKeyB64
-                prefs.setEphemeralPriv(chat.gistId, migrated)
+                prefs.setEphemeralPriv(chat.chatId, migrated)
                 db.chatDao().updateMyEphemeralKeys(chat.id, null, chat.myEphemeralPubKeyB64)
             } else {
                 val (privKey, pubKeyB64) = CryptoHelper.generateEphemeralKeyPair()
                 myEphemeralPrivKey = privKey
                 myCurrentEphemeralPubKey = pubKeyB64
-                prefs.setEphemeralPriv(chat.gistId, privKey)
+                prefs.setEphemeralPriv(chat.chatId, privKey)
                 // В БД пишем ТОЛЬКО публичный ключ; приватный — никогда.
                 db.chatDao().updateMyEphemeralKeys(chat.id, null, pubKeyB64)
             }
             // Подписываем свой эфемерный ключ долговременным identity-ключом (защита от MITM).
-            myEphemeralSig = computeEphemeralSig(myCurrentEphemeralPubKey, chat.gistId)
+            myEphemeralSig = computeEphemeralSig(myCurrentEphemeralPubKey, chat.chatId)
 
             // Если в БД уже был ключ партнёра — сразу устанавливаем сессионный ключ,
             // чтобы первое же loadMessages() расшифровало V3-сообщения.
@@ -376,22 +377,19 @@ class ChatActivity : SecureActivity() {
             // FS: периодическая ротация эфемерного ключа (раз в сутки) — настоящий
             // forward secrecy с окном; история сохраняется в локальном шифр-архиве.
             maybeRotateEphemeral()
-            // Держим overlay до завершения рукопожатия (с таймаутом) — чтобы при входе
-            // в чат сессия и проверка идентичности уже были готовы.
-            startHandshakeGate()
             // Мгновенный показ из кэша прошлого захода (в этой сессии) — чат не грузится
-            // с нуля; сетевой loadMessages ниже обновит его в фоне.
-            ChatSnapshotCache.get(chat.gistId)?.let { cached ->
-                runCatching { processGistData(cached) }
+            // с нуля; SyncEngine ниже обновит его в фоне.
+            ChatSnapshotCache.get(chat.chatId)?.let { cached ->
+                runCatching { processChannelData(cached) }
             }
-            // Первая загрузка — silent: gist может быть только что создан,
-            // первая попытка может выдать "файл не найден" — это норм, polling попробует ещё.
-            loadMessages(silent = true)
             // Страховка: если за 15с контент так и не пришёл (нет сети / Tor не поднялся) —
             // всё равно показываем чат, чтобы не залипнуть на спиннере.
             lifecycleScope.launch {
                 delay(15_000L)
-                if (!firstLoadComplete) { firstLoadComplete = true; revealMessages() }
+                if (!firstLoadComplete) {
+                    firstLoadComplete = true
+                    revealMessages()
+                }
             }
             startPolling()
             startPresence()
@@ -407,7 +405,7 @@ class ChatActivity : SecureActivity() {
     }
 
     /**
-     * Подтягивает профиль собеседника из gist и пушит свой профиль.
+     * Подтягивает профиль собеседника из канала и пушит свой профиль.
      * Если имя или аватарка собеседника изменились — обновляет UI и Room.
      */
     private fun syncProfiles() = lifecycleScope.launch {
@@ -448,21 +446,20 @@ class ChatActivity : SecureActivity() {
         }
 
         if (partner != null) {
-            // isNotBlank() защищает от затирания имени когда pushPresenceCached партнёра
-            // временно записал пустое имя (например, при первом тике до синка профилей).
-            // Защита: если имя пустое — это presence-пинг с неполным профилем
-            // (например, pushPresenceCached до первого syncProfiles). Не затираем
-            // сохранённое имя. Аватарка обновляется независимо.
             val nameToSave = if (partner.name.isNotBlank()) partner.name else chat.partnerName
+            val tagToSave = if (!partner.tag.isNullOrBlank()) partner.tag else chat.partnerTag
+            val avatarToSave = if (!partner.avatarBase64.isNullOrBlank()) partner.avatarBase64 else chat.partnerAvatarBase64
+
             val profileChanged = nameToSave != chat.partnerName ||
-                    partner.tag != chat.partnerTag ||
-                    partner.avatarBase64 != chat.partnerAvatarBase64
+                    tagToSave != chat.partnerTag ||
+                    avatarToSave != chat.partnerAvatarBase64
+
             if (profileChanged) {
-                db.chatDao().updatePartnerProfile(chat.id, nameToSave, partner.tag, partner.avatarBase64)
+                db.chatDao().updatePartnerProfile(chat.id, nameToSave, tagToSave, avatarToSave)
                 chat = chat.copy(
                     partnerName         = nameToSave,
-                    partnerTag          = partner.tag,
-                    partnerAvatarBase64 = partner.avatarBase64
+                    partnerTag          = tagToSave,
+                    partnerAvatarBase64 = avatarToSave
                 )
                 applyPartnerToHeader()
             }
@@ -498,7 +495,7 @@ class ChatActivity : SecureActivity() {
             ephemeralPubKey = myCurrentEphemeralPubKey,
             identityPubKey = prefs.myIdentityPubKey,
             ephemeralSig = myEphemeralSig,
-            verifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.gistId),
+            verifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.chatId),
             status = prefs.myStatus.takeIf { it.isNotBlank() }
         )
         ProfileSync.pushMyProfile(transport, chat.chatPassword, myProfile)
@@ -510,8 +507,10 @@ class ChatActivity : SecureActivity() {
             binding.tvDisplayName.text = getString(R.string.favorites_name)
             binding.ivPartnerAvatar.visibility = View.GONE
             binding.tvPartnerAvatar.visibility = View.VISIBLE
-            binding.tvPartnerAvatar.text = "★"
+            binding.tvPartnerAvatar.text = ""
             binding.tvPartnerAvatar.setBackgroundResource(R.drawable.bg_avatar_favorites)
+            binding.ivPartnerAvatar.visibility = View.VISIBLE
+            binding.ivPartnerAvatar.setImageResource(R.drawable.ic_sparkle)
             binding.tvChatSubtitle.text = getString(R.string.favorites_description)
             binding.vOnlineIndicator.visibility = View.GONE
             return
@@ -530,9 +529,11 @@ class ChatActivity : SecureActivity() {
             // Серый круг с ✕ — профиль удалён
             binding.ivPartnerAvatar.visibility = View.GONE
             binding.tvPartnerAvatar.visibility = View.VISIBLE
-            binding.tvPartnerAvatar.text = "✕"
+            binding.tvPartnerAvatar.text = ""
             binding.tvPartnerAvatar.background =
                 androidx.core.content.ContextCompat.getDrawable(this, R.drawable.bg_avatar_deleted)
+            binding.ivPartnerAvatar.visibility = View.VISIBLE
+            binding.ivPartnerAvatar.setImageResource(R.drawable.ic_close)
             // Subtitle — постоянная пометка "Профиль удалён"
             updateTypingIndicator(false)
             binding.tvChatSubtitle.text = getString(R.string.partner_deleted_subtitle)
@@ -558,13 +559,13 @@ class ChatActivity : SecureActivity() {
 
     private fun openPartnerProfile() {
         if (chat.isFavorites) return
-        // Берём данные из lastKnownProfiles если уже загрузились,
-        // иначе fallback на кэшированные данные из Room (chat объект).
-        val partner = lastKnownProfiles.values.firstOrNull { it.userId != prefs.myUserId }
-        val name         = partner?.name         ?: chat.partnerName
-        val tag          = partner?.tag          ?: chat.partnerTag
+        // Источник истины — объект chat, который синхронизирован с БД.
+        // Не берем из lastKnownProfiles напрямую, чтобы избежать мигания/разных аватарок.
+        val name         = chat.partnerName
+        val tag          = chat.partnerTag
+        val avatarBase64 = chat.partnerAvatarBase64
+        val partner      = lastKnownProfiles.values.firstOrNull { it.userId != prefs.myUserId }
         val status       = partner?.status
-        val avatarBase64 = partner?.avatarBase64 ?: chat.partnerAvatarBase64
         // Выровненные массивы: каждый медиа-элемент знает своё сообщение (msgId) и
         // принадлежность (self) — нужно для перехода к сообщению и удаления из списка медиа.
         val refs = ArrayList<String>(); val refMsgIds = ArrayList<String>(); val refSelf = ArrayList<String>()
@@ -596,8 +597,8 @@ class ChatActivity : SecureActivity() {
             putExtra(PartnerProfileActivity.EXTRA_TAG, tag)
             putExtra(PartnerProfileActivity.EXTRA_STATUS, status)
             putExtra(PartnerProfileActivity.EXTRA_AVATAR_BASE64, avatarBase64)
-            putExtra(PartnerProfileActivity.EXTRA_GIST_ID, chat.gistId)
-            putExtra(PartnerProfileActivity.EXTRA_GIST_TOKEN, chat.gistToken)
+            putExtra(PartnerProfileActivity.EXTRA_CHANNEL_ID, chat.chatId)
+            putExtra(PartnerProfileActivity.EXTRA_TRANSPORT_TOKEN, chat.transportToken)
             putExtra(PartnerProfileActivity.EXTRA_CHAT_PASSWORD, chat.chatPassword)
             putExtra(PartnerProfileActivity.EXTRA_IDENTITY_PUB, partner?.identityPubKey)
             putExtra(PartnerProfileActivity.EXTRA_EPH_PUB, partner?.ephemeralPubKey)
@@ -628,8 +629,8 @@ class ChatActivity : SecureActivity() {
 
     private fun setupUi() {
         transportFactory = TransportFactory(
-            gistId = chat.gistId,
-            gistToken = chat.gistToken,
+            chatId = chat.chatId,
+            transportToken = chat.transportToken,
             chatPassword = chat.chatPassword,
             myUserId = prefs.myUserId,
             isFavorites = chat.isFavorites,
@@ -637,16 +638,16 @@ class ChatActivity : SecureActivity() {
             chatDao = db.chatDao(),
             context = applicationContext
         )
-        // Стартуем с Gist напрямую (без проверки) — UI не ждёт
+        // Стартуем с Nostr напрямую (без проверки) — UI не ждёт
         transport = transportFactory.instant()
-        btMode = chat.gistToken == BluetoothTransport.BT_TOKEN
+        btMode = chat.transportToken == BluetoothTransport.BT_TOKEN
         // В фоне проверяем реальную доступность — переключимся на Nostr если нужно
         lifecycleScope.launch { resolveTransport() }
 
         applyPartnerToHeader()
 
         // ImageLoader — общий для адаптера и openImageFullscreen
-        val imageLoader = ImageLoader(transport, chat.chatPassword)
+        val imageLoader = ImageLoader(transport, chat.chatPassword, chat.chatId)
 
         adapter = MessageAdapter(
             onLongClick = { msg, anchor -> showMessageMenu(msg, anchor) },
@@ -672,6 +673,20 @@ class ChatActivity : SecureActivity() {
         (binding.rvMessages.itemAnimator as? androidx.recyclerview.widget.SimpleItemAnimator)
             ?.supportsChangeAnimations = false
         binding.rvMessages.adapter = adapter
+
+        // ── Ленивая подгрузка истории вверх ───────────────────────────────────
+        // Лента рендерится «окном» (последние N). При перемотке к верху закадрово
+        // подгружаем следующую порцию старых сообщений. Вставка идёт в начало списка,
+        // RecyclerView сохраняет позицию — скролл не прыгает.
+        binding.rvMessages.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                if (dy > 0) return // интересует только движение вверх
+                val lm = rv.layoutManager as? LinearLayoutManager ?: return
+                if (lm.findFirstVisibleItemPosition() <= REVEAL_THRESHOLD && adapter.canRevealOlder()) {
+                    rv.post { if (adapter.canRevealOlder()) adapter.revealOlder() }
+                }
+            }
+        })
 
         // ── Swipe-to-reply ────────────────────────────────────────────────────
         val swipeCallback = SwipeToReplyCallback(this) { position ->
@@ -708,7 +723,13 @@ class ChatActivity : SecureActivity() {
                     type = "text/plain"
                     putExtra(android.content.Intent.EXTRA_TEXT, texts)
                 }
-                startActivity(android.content.Intent.createChooser(sendIntent, "Переслать"))
+                // Уходим во внешнее приложение — не даём автоблокировке перебить переход.
+                AppLock.beginShareGrace()
+                // FLAG_ACTIVITY_NEW_TASK: singleTask-активность Telegram без своего таска
+                // мгновенно возвращает управление обратно (переход «отскакивает»).
+                val fwdChooser = android.content.Intent.createChooser(sendIntent, "Переслать")
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(fwdChooser)
             }
             adapter.exitSelectionMode()
         }
@@ -735,9 +756,15 @@ class ChatActivity : SecureActivity() {
         syncEngine = SyncEngine(transport)
         patchQueue = PatchQueue(transport, lifecycleScope)
 
-        // BT-чат: входящая строка по BLE → немедленный форс-синк (мгновенно на месте).
-        if (transport is BluetoothTransport) {
-            btWatch = transport.watchMessages { syncEngine.forceSync(0L) }
+        // Потоковые подписки (WebSocket для Nostr / BLE для Bluetooth)
+        // transport.watchMessages зовёт callback при получении события из «трубы».
+        // В ответ мы делаем forceSync(0L): SyncEngine немедленно читает канал и обновляет UI.
+        transportWatch = transport.watchMessages {
+            syncEngine.forceSync(0L)
+        }
+        // watchProfiles специфичен для Nostr: мгновенное обновление presence/typing собеседника.
+        profilesWatch = transport.watchProfiles { content ->
+            lifecycleScope.launch { processProfilesFromContent(content) }
         }
 
         // Подписка на ChatStore: UI обновляется мгновенно при любом изменении state.
@@ -745,19 +772,11 @@ class ChatActivity : SecureActivity() {
         // посередине adapter.submit(), что предотвращает мигание при быстром потоке событий.
         lifecycleScope.launch {
             chatStore.messages.collect { messages ->
-                // messages = compose() из ChatStore: серверные + pending БЕЗ дублей и с
-                // корректными флагами isPending. Подаём ОДНИМ списком — НЕ передаём pending
-                // отдельным аргументом, иначе подтверждённый-но-ещё-в-очереди стикер
-                // (isPending=false, но всё ещё в pendingByRaw) рендерился бы дважды
-                // (compose + pendingSnapshot) → копия, исчезающая только после перезахода.
-                currentMessages = messages.filter { !it.isPending }
+                currentMessages = messages
                 adapter.submit(messages)
-                // Снимаем загрузочный оверлей ТОЛЬКО когда сообщения уже уложены в список
-                // (post выполнится после layout-прохода) — чат проявляется готовым, без пустой вспышки.
-                // Раскрываем чат, когда пришли реальные сообщения. Если чат и впрямь пустой
-                // (нет превью истории) — раскрываем сразу; иначе держим спиннер до данных:
-                // через медленный Tor первый ответ может быть пустым/транзиентным.
-                if (messages.isNotEmpty() || chat.lastMessage.isBlank()) {
+                
+                // Раскрываем чат, если есть данные.
+                if (messages.isNotEmpty() || (contentLoaded && chatStore.lastRemote.isEmpty())) {
                     binding.rvMessages.post { maybeReveal() }
                 }
                 // Заглушку "чат пуст" показываем только после снятия загрузочного оверлея —
@@ -767,8 +786,10 @@ class ChatActivity : SecureActivity() {
                 // Авто-скролл только если уже у дна: не прерываем чтение истории.
                 // canScrollVertically(1) == false → нельзя скроллить дальше вниз = мы у дна.
                 val isAtBottom = !binding.rvMessages.canScrollVertically(1)
-                if (messages.isNotEmpty() && isAtBottom) {
-                    binding.rvMessages.scrollToPosition(messages.size - 1)
+                if (messages.isNotEmpty() && isAtBottom && adapter.itemCount > 0) {
+                    // adapter.itemCount, а не messages.size: лента рендерится «окном»
+                    // (ленивая подгрузка), последний элемент окна — самое новое сообщение.
+                    binding.rvMessages.scrollToPosition(adapter.itemCount - 1)
                 }
                 // Отложенный переход/удаление из списка медиа (после рендера).
                 applyPendingMediaActions()
@@ -789,12 +810,12 @@ class ChatActivity : SecureActivity() {
                     // Для локального чата имитируем мгновенную загрузку из "сети"
                     // сразу после appendLine, чтобы сообщение вышло из pending-статуса.
                     val data = withContext(Dispatchers.IO) { transport.loadAll() }
-                    processGistData(data)
+                    processChannelData(data)
                 }
             },
             onMessageSent = {
                 // Сообщение ушло — лимит снят, прячем жёлтую плашку сразу.
-                runOnUiThread { hideRateLimitBanner() }
+                runOnUiThread { hideTransportLimitBanner() }
                 if (!chat.isFavorites) {
                     // Сбрасываем ETag: следующий GET обойдёт CDN-кеш и вернёт свежий контент.
                     // Это аналог ?t=Date.now() из веб-версии — cache-bust после PATCH.
@@ -804,7 +825,9 @@ class ChatActivity : SecureActivity() {
                         // Немедленный форс-синк: ETag сброшен → 200 гарантирован → часики гаснут.
                         syncEngine.forceSync(delayMs = 0L)
                         // Страховка: если sync пропустил single-flight guard (предыдущий GET в полёте)
-                        delay(1_500L)
+                        delay(500L)
+                        syncEngine.forceSync(delayMs = 0L)
+                        delay(1_000L)
                         syncEngine.forceSync(delayMs = 0L)
                     }
                 }
@@ -823,8 +846,11 @@ class ChatActivity : SecureActivity() {
             onPunishmentEnd = {
                 runOnUiThread { stopPunishmentCountdown() }
             },
-            onSendFailed = { _, reason ->
+            onSendFailed = { item, reason ->
                 runOnUiThread {
+                    // Если отправка провалилась — убираем из ChatStore, чтобы часы не висели вечно
+                    chatStore.dropPending(item.encrypted)
+                    
                     val isNetworkError = reason.contains("Unable to resolve host", ignoreCase = true) ||
                         reason.contains("No address associated", ignoreCase = true) ||
                         reason.contains("Failed to connect", ignoreCase = true) ||
@@ -854,7 +880,7 @@ class ChatActivity : SecureActivity() {
                 }
             },
             onRateLimit = { retryAfterMs ->
-                runOnUiThread { showRateLimitBanner(retryAfterMs) }
+                runOnUiThread { showTransportLimitBanner(retryAfterMs) }
             }
         )
 
@@ -872,7 +898,10 @@ class ChatActivity : SecureActivity() {
             binding.btnSend.visibility = View.VISIBLE
         } else {
             setupVoiceInput()
-            binding.btnAttach.setOnClickListener { pickImages.launch("image/*") }
+            binding.btnAttach.setOnClickListener {
+                AppLock.beginShareGrace()
+                pickImages.launch("image/*")
+            }
         }
         binding.btnCancelReply.setOnClickListener { clearReply() }
 
@@ -911,7 +940,7 @@ class ChatActivity : SecureActivity() {
     private fun applyWallpaper() {
         val isPortrait = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
         val base64 = if (isPortrait) prefs.wallpaperPortrait else prefs.wallpaperLandscape
-        val hasWallpaper = !base64.isNullOrBlank()
+        var hasWallpaper = !base64.isNullOrBlank()
         // Atmospheric Glass доступен в любом режиме — с обоями и без
         val isGlass = prefs.chatUiStyle == Prefs.CHAT_UI_GLASS
 
@@ -941,7 +970,25 @@ class ChatActivity : SecureActivity() {
                 binding.ivChatWallpaper.visibility = android.view.View.GONE
             }
         } else {
-            binding.ivChatWallpaper.visibility = android.view.View.GONE
+            // Дефолтные обои-монограм (тема-зависимые: тёмная/светлая) — когда свои не заданы.
+            try {
+                val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 2 }
+                val def = android.graphics.BitmapFactory.decodeResource(
+                    resources,
+                    if (isGlass) R.drawable.default_chat_wallpaper_glass
+                    else R.drawable.default_chat_wallpaper,
+                    opts
+                )
+                if (def != null) {
+                    binding.ivChatWallpaper.setImageBitmap(def)
+                    binding.ivChatWallpaper.visibility = android.view.View.VISIBLE
+                    hasWallpaper = true
+                } else {
+                    binding.ivChatWallpaper.visibility = android.view.View.GONE
+                }
+            } catch (_: Throwable) {
+                binding.ivChatWallpaper.visibility = android.view.View.GONE
+            }
         }
 
         if (isGlass) {
@@ -1060,13 +1107,15 @@ class ChatActivity : SecureActivity() {
     override fun onResume() {
         super.onResume()
         isInForeground = true
+        // Чат снова открыт — отменяем отложенную (на 30 мин) очистку Argon2-кеша.
+        if (::transport.isInitialized) CryptoHelper.cancelScheduledClear(transport.chatId)
         resumeVisibleStickers()
         applyWallpaper()
         if (::chat.isInitialized) {
             // Re-ensure: при возврате в Tor-чат поднимаем Tor, если он «уснул» в фоне.
             if (!chat.isFavorites &&
-                chat.gistToken != BluetoothTransport.BT_TOKEN &&
-                chat.gistToken != com.atrum.chat.transport.NostrTransport.NOSTR_DIRECT_TOKEN) {
+                chat.transportToken != BluetoothTransport.BT_TOKEN &&
+                chat.transportToken != com.atrum.chat.transport.NostrTransport.NOSTR_DIRECT_TOKEN) {
                 TorManager.start(this)
             }
             registerNetworkMonitoring()
@@ -1075,10 +1124,8 @@ class ChatActivity : SecureActivity() {
             //  2. lastPushedReadIndex=-1 → read receipt отправится даже если контент не изменился
             lastContent = ""
             lastPushedReadIndex = -1
-            // Показываем overlay только если нет уже загруженных сообщений.
-            // Раньше overlay показывался всегда при onResume, и если сеть была медленной
-            // или транспорт возвращал ошибку, сообщения прятались за оверлеем навсегда.
-            if (!firstLoadComplete || adapter.itemCount == 0) {
+            // Снимаем overlay только если нет уже загруженных сообщений.
+            if (!firstLoadComplete && (chatStore.messages.value.isEmpty() && !chatStore.hasPending())) {
                 firstLoadComplete = false
                 binding.loadingOverlay.alpha = 1f
                 binding.loadingOverlay.visibility = View.VISIBLE
@@ -1097,10 +1144,9 @@ class ChatActivity : SecureActivity() {
             // И перетягиваем свою аватарку — могла поменяться в Settings, и
             // если она у нас в Room — partnerName тоже мог обновиться.
             // На всякий случай перерисовываем шапку из свежей версии чата.
+            // Используем безусловное обновление, чтобы подхватить любые изменения (name, avatar, tag, deleted).
             lifecycleScope.launch {
-                val fresh = db.chatDao().getById(chat.id) ?: return@launch
-                if (fresh.partnerName != chat.partnerName ||
-                    fresh.partnerAvatarBase64 != chat.partnerAvatarBase64) {
+                db.chatDao().getById(chat.id)?.let { fresh ->
                     chat = fresh
                     applyPartnerToHeader()
                 }
@@ -1131,7 +1177,7 @@ class ChatActivity : SecureActivity() {
     private fun registerNetworkMonitoring() {
         if (networkCallback != null) return                 // уже зарегистрировано
         if (!::chat.isInitialized || chat.isFavorites) return
-        if (chat.gistToken == BluetoothTransport.BT_TOKEN) return  // BT — без сети
+        if (chat.transportToken == BluetoothTransport.BT_TOKEN) return  // BT — без сети
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
         connectivityManager = cm
         val cb = object : ConnectivityManager.NetworkCallback() {
@@ -1162,8 +1208,8 @@ class ChatActivity : SecureActivity() {
     private fun onNetworkRegained() {
         runCatching { com.atrum.chat.nostr.NostrRelayPool.shutdown() }
         if (!chat.isFavorites &&
-            chat.gistToken != BluetoothTransport.BT_TOKEN &&
-            chat.gistToken != com.atrum.chat.transport.NostrTransport.NOSTR_DIRECT_TOKEN) {
+            chat.transportToken != BluetoothTransport.BT_TOKEN &&
+            chat.transportToken != com.atrum.chat.transport.NostrTransport.NOSTR_DIRECT_TOKEN) {
             TorManager.restart(applicationContext)
         }
         if (::syncEngine.isInitialized) syncEngine.forceSync(0L)
@@ -1188,10 +1234,11 @@ class ChatActivity : SecureActivity() {
         myEphemeralPrivKey = null
         //  2. Чистим кеш выведенных Argon2-ключей этого чата — освобождаем память.
         if (::transport.isInitialized) {
-            try { CryptoHelper.clearCachedKey(transport.chatId, chat.chatPassword) } catch (_: Exception) {}
+            try { CryptoHelper.scheduleClearCachedKey(transport.chatId, chat.chatPassword) } catch (_: Exception) {}
         }
         //  3. BT-чат: закрываем подписку и рвём BLE только при реальном выходе из чата.
-        runCatching { btWatch?.close() }; btWatch = null
+        runCatching { transportWatch?.close() }; transportWatch = null
+        runCatching { profilesWatch?.close() }; profilesWatch = null
         if (btMode && isFinishing) runCatching { BleManager.shutdown(applicationContext) }
     }
 
@@ -1229,7 +1276,7 @@ class ChatActivity : SecureActivity() {
             val capturedEphKey     = myCurrentEphemeralPubKey
             val capturedIdentity   = prefs.myIdentityPubKey
             val capturedSig        = myEphemeralSig
-            val capturedConfirmed  = prefs.getConfirmedPartnerIdentity(chat.gistId)
+            val capturedConfirmed  = prefs.getConfirmedPartnerIdentity(chat.chatId)
             AppScope.launch {
                 // Уход из приложения → офлайн. Ретрай: по Tor единичный PATCH часто
                 // не доходит, и партнёр видел бы «в сети» ещё долго после ухода.
@@ -1270,7 +1317,7 @@ class ChatActivity : SecureActivity() {
         syncCollectorJob?.cancel()
         syncCollectorJob = lifecycleScope.launch {
             syncEngine.events.collect { data ->
-                processGistData(data)
+                processChannelData(data)
             }
         }
     }
@@ -1303,14 +1350,13 @@ class ChatActivity : SecureActivity() {
         verifyPartnerIdentity(partner)
 
         // Синхронизируем имя и аватарку партнёра при каждом опросе профилей.
-        // Ранее это делалось только в syncProfiles() (один раз при открытии чата).
-        // Если syncProfiles() падал из-за сети — аватарка не показывалась никогда.
-        // Теперь обновляем здесь: polling loop запущен и всё равно скачивает профили.
-        if (partner.name.isNotBlank() &&
-            (partner.name != chat.partnerName || partner.avatarBase64 != chat.partnerAvatarBase64)
-        ) {
-            db.chatDao().updatePartnerProfile(chat.id, partner.name, partner.tag, partner.avatarBase64)
-            chat = chat.copy(partnerName = partner.name, partnerTag = partner.tag, partnerAvatarBase64 = partner.avatarBase64)
+        val nameToSave = if (partner.name.isNotBlank()) partner.name else chat.partnerName
+        val tagToSave = if (!partner.tag.isNullOrBlank()) partner.tag else chat.partnerTag
+        val avatarToSave = if (!partner.avatarBase64.isNullOrBlank()) partner.avatarBase64 else chat.partnerAvatarBase64
+
+        if (nameToSave != chat.partnerName || tagToSave != chat.partnerTag || avatarToSave != chat.partnerAvatarBase64) {
+            db.chatDao().updatePartnerProfile(chat.id, nameToSave, tagToSave, avatarToSave)
+            chat = chat.copy(partnerName = nameToSave, partnerTag = tagToSave, partnerAvatarBase64 = avatarToSave)
             applyPartnerToHeader()
         }
 
@@ -1384,10 +1430,13 @@ class ChatActivity : SecureActivity() {
         verifyPartnerIdentity(partner)
 
         // Обновляем имя/аватар партнёра
-        if (partner.name.isNotBlank() &&
-            (partner.name != chat.partnerName || partner.tag != chat.partnerTag || partner.avatarBase64 != chat.partnerAvatarBase64)) {
-            db.chatDao().updatePartnerProfile(chat.id, partner.name, partner.tag, partner.avatarBase64)
-            chat = chat.copy(partnerName = partner.name, partnerTag = partner.tag, partnerAvatarBase64 = partner.avatarBase64)
+        val nameToSave = if (partner.name.isNotBlank()) partner.name else chat.partnerName
+        val tagToSave = if (!partner.tag.isNullOrBlank()) partner.tag else chat.partnerTag
+        val avatarToSave = if (!partner.avatarBase64.isNullOrBlank()) partner.avatarBase64 else chat.partnerAvatarBase64
+
+        if (nameToSave != chat.partnerName || tagToSave != chat.partnerTag || avatarToSave != chat.partnerAvatarBase64) {
+            db.chatDao().updatePartnerProfile(chat.id, nameToSave, tagToSave, avatarToSave)
+            chat = chat.copy(partnerName = nameToSave, partnerTag = tagToSave, partnerAvatarBase64 = avatarToSave)
             applyPartnerToHeader()
         }
 
@@ -1414,22 +1463,30 @@ class ChatActivity : SecureActivity() {
      * [useEtag]       = true  → ETag-оптимизация (legacy, используется только при форсированном вызове).
      * [preloadedData] = not null → данные уже есть (legacy compatibility, для doClearHistory).
      *
-     * В новой архитектуре основной поток данных идёт через SyncEngine → processGistData().
+     * В новой архитектуре основной поток данных идёт через SyncEngine → processChannelData().
      * loadMessages() используется только для первой загрузки (silent=true из onCreate).
      */
     private fun loadMessages(
         silent: Boolean = false,
         useEtag: Boolean = false,
-        preloadedData: AllGistData? = null
+        preloadedData: AllChannelData? = null
     ) {
         if (!silent) showLoading(true)
+        
+        // Попытка загрузить из кэша для мгновенного отображения
+        if (preloadedData == null) {
+            ChatSnapshotCache.get(chat.chatId)?.let { cached ->
+                lifecycleScope.launch { processChannelData(cached) }
+            }
+        }
+
         lifecycleScope.launch {
             try {
-                val data: AllGistData = when {
+                val data: AllChannelData = when {
                     preloadedData != null -> preloadedData
                     else -> withContext(Dispatchers.IO) { transport.loadAll() }
                 }
-                processGistData(data)
+                processChannelData(data)
             } catch (e: TokenExpiredException) {
                 recordLoadFailure()
                 if (consecutiveFailures >= FAILURES_BEFORE_WARNING) showChatWarning(WarningType.TOKEN)
@@ -1452,16 +1509,15 @@ class ChatActivity : SecureActivity() {
     }
 
     /**
-     * Центральная точка обработки данных от GitHub.
+     * Центральная точка обработки данных из канала.
      * Вызывается из:
-     *  • SyncEngine.events collector (основной поток, каждые 10с)
-     *  • loadMessages() (первая загрузка, форсированные вызовы)
+     *  • SyncEngine.events collector (основной поток)
+     *  • loadMessages() (первая загрузка)
      *
      * Всё в одном месте: парсинг → reconcile → UI → read receipt → profiles.
-     * НЕ делает никаких сетевых вызовов — только обрабатывает уже полученные данные.
      */
-    private suspend fun processGistData(data: AllGistData) {
-        ChatSnapshotCache.put(chat.gistId, data)
+    private suspend fun processChannelData(data: AllChannelData) {
+        ChatSnapshotCache.put(chat.chatId, data)
         val chatContent     = data.chatContent
         val profilesContent = data.profilesContent
 
@@ -1476,7 +1532,7 @@ class ChatActivity : SecureActivity() {
             // Расшифровываем и парсим реакции в фоновом потоке (V4/Argon2id тяжелый)
             val decrypted = withContext(Dispatchers.Default) {
                 if (reactionsRaw.isBlank()) ""
-                else CryptoHelper.decrypt(reactionsRaw, chat.chatPassword, chat.gistId) ?: ""
+                else CryptoHelper.decrypt(reactionsRaw, chat.chatPassword, chat.chatId) ?: ""
             }
             val parsedReactions = withContext(Dispatchers.Default) { parseReactions(decrypted) }
             currentReactions = parsedReactions
@@ -1496,10 +1552,11 @@ class ChatActivity : SecureActivity() {
         // и read receipt уже был отправлен. lastPushedReadIndex = -1 форсирует
         // обработку даже при совпадении контента (первый запуск, onResume).
         if (chatContent == lastContent && lastPushedReadIndex != -1) {
-            // Даже если контент не изменился (в т.ч. пустой чат при первой загрузке) —
-            // снимаем загрузочный оверлей, иначе спиннер крутится бесконечно.
             contentLoaded = true
-            maybeReveal()
+            if (!firstLoadComplete) {
+                firstLoadComplete = true
+                revealMessages()
+            }
             return
         }
         hideChatWarning()
@@ -1515,10 +1572,11 @@ class ChatActivity : SecureActivity() {
         // Используется для read receipt по позиции в файле.
         val allLines = chatContent.split("\n").filter { it.isNotEmpty() }
 
-        val messages: List<Message> = withContext(Dispatchers.Default) {
-            allLines.mapNotNull { rawLine ->
+        // Декодер строк → сообщения (V5/Argon2id тяжёлый → Dispatchers.Default).
+        suspend fun decodeLines(lines: List<String>): List<Message> = withContext(Dispatchers.Default) {
+            lines.mapNotNull { rawLine ->
                 val line = rawLine.trim()
-                CryptoHelper.decrypt(line, pass, chat.gistId)?.let { decrypted ->
+                CryptoHelper.decrypt(line, pass, chat.chatId)?.let { decrypted ->
                     // Фильтруем мусор: V1 (AES-CBC без аутентификации) может
                     // "дешифровать" чужой контент → строка из управляющих символов.
                     // Разделители формата (0x01,0x02,0x11,0x1E,0x1F) — НЕ мусор.
@@ -1533,6 +1591,20 @@ class ChatActivity : SecureActivity() {
             }
         }
 
+        // ── Оптимизация первой загрузки: "хвост" ─────────────────────────────
+        // Если чат длинный (> 30 строк), сначала декодируем последние 30
+        // сообщений и показываем сразу (снимая оверлей), остальную историю догружаем
+        // следом. Argon2id по сообщению очень тяжёлый — убирает ожидание всей истории.
+        if (!firstLoadComplete && allLines.size > TAIL_FIRST) {
+            val tailMsgs = decodeLines(allLines.takeLast(TAIL_FIRST))
+            if (tailMsgs.isNotEmpty()) {
+                contentLoaded = true
+                chatStore.reconcile(tailMsgs)   // коллектор покажет хвост и снимет оверлей
+            }
+        }
+
+        val messages: List<Message> = decodeLines(allLines)
+
         // Forward secrecy баннер (V4-S/V3 сообщения без активного сессионного ключа).
         // ВАЖНО: это окно — НОРМА на старте, пока идёт ECDH-handshake (обмен ephemeral
         // ключами через profiles.txt). Через Tor он легко занимает > 18 c (бутстрап +
@@ -1541,7 +1613,7 @@ class ChatActivity : SecureActivity() {
         // только handshake завершится. Поднят до FS_BANNER_MIN_TICKS, чтобы баннер
         // показывался только если ключ реально НЕ устанавливается долго (партнёр ушёл/
         // старый клиент), а не из-за медленного рукопожатия.
-        if (CryptoHelper.hasLockedV3Messages(chatContent, chat.gistId)) {
+        if (CryptoHelper.hasLockedV3Messages(chatContent, chat.chatId)) {
             if (firstLoadComplete) lockedV3ConsecutiveCount++
             if (lockedV3ConsecutiveCount >= FS_BANNER_MIN_TICKS && activeWarning != WarningType.FORWARD_SECRECY) {
                 showChatWarning(WarningType.FORWARD_SECRECY)
@@ -1564,13 +1636,14 @@ class ChatActivity : SecureActivity() {
         // ── Preview в Room ────────────────────────────────────────────────────
         if (messages.isNotEmpty()) {
             val last = messages.last()
+            val photoLabel = getString(R.string.msg_preview_photo)
             val previewBody = when {
-                last.isMultiImage && last.text.isBlank() -> "📷 Фото (${last.imageFileNames?.size ?: 2})"
-                last.isMultiImage  -> "📷 ${last.text}"
-                last.isImage && last.text.isBlank() -> "📷 Фото"
-                last.isImage       -> "📷 ${last.text}"
+                last.isMultiImage && last.text.isBlank() -> "$photoLabel (${last.imageFileNames?.size ?: 2})"
+                last.isMultiImage  -> "$photoLabel ${last.text}"
+                last.isImage && last.text.isBlank() -> photoLabel
+                last.isImage       -> "$photoLabel ${last.text}"
                 last.isSticker     -> getString(R.string.msg_preview_sticker)
-                last.isReply       -> "↪ ${last.text}"
+                last.isReply       -> getString(R.string.msg_preview_reply_format, last.text)
                 else               -> last.text
             }
             val preview = if (last.isSelf) "Вы: $previewBody" else previewBody
@@ -1622,7 +1695,7 @@ class ChatActivity : SecureActivity() {
                     // → у партнёра мигал бы щит верификации до следующего presence-тика.
                     identityPubKey = prefs.myIdentityPubKey,
                     ephemeralSig = myEphemeralSig,
-                    verifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.gistId),
+                    verifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.chatId),
                     status = prefs.myStatus.takeIf { it.isNotBlank() }
                 )
                 val currentTransport = transport
@@ -1653,11 +1726,15 @@ class ChatActivity : SecureActivity() {
     // ── Подсказки стикеров по эмодзи ─────────────────────────────────────────
 
     private fun setupStickerSuggestions() {
-        val adapter = StickerAdapter(emptyList()) { sticker ->
-            sendSticker(sticker)
-            binding.etMessage.setText("")
-            hideStickerSuggestions()
-        }
+        val adapter = StickerAdapter(
+            stickers = emptyList(),
+            onStickerClick = { sticker ->
+                sendSticker(sticker)
+                binding.etMessage.setText("")
+                hideStickerSuggestions()
+            },
+            onStickerLongClick = null
+        )
         suggestionAdapter = adapter
         binding.rvStickerSuggestions.layoutManager = GridLayoutManager(this, 5)
         binding.rvStickerSuggestions.adapter = adapter
@@ -1709,8 +1786,10 @@ class ChatActivity : SecureActivity() {
             else -> "webp"
         }
 
+        lockForUpload()
         lifecycleScope.launch {
             try {
+                stickerPanel?.setSendingState(true)
                 val stickerFile = sticker.localPath?.let { java.io.File(it) }
                 if (stickerFile == null || !stickerFile.exists()) {
                     throw RuntimeException("Sticker file not found")
@@ -1727,10 +1806,12 @@ class ChatActivity : SecureActivity() {
                 val existingRef = prefs.getStickerContentRef(transport.chatId, sticker.fileId)
                 val contentRef: String = if (existingRef != null) existingRef else {
                     val encryptedSticker = withContext(Dispatchers.Default) {
-                        CryptoHelper.encrypt(b64, chat.chatPassword, transport.chatId)
+                        CryptoHelper.encrypt(b64, chat.chatPassword, chat.chatId)
                     }
-                    val uploaded = withContext(Dispatchers.IO) {
-                        transport.uploadImage(encryptedSticker, chat.chatPassword)
+                    val uploaded = imageUploadQueue.execute {
+                        withContext(Dispatchers.IO) {
+                            transport.uploadImage(encryptedSticker, chat.chatPassword)
+                        }
                     }
                     prefs.setStickerContentRef(transport.chatId, sticker.fileId, uploaded)
                     uploaded
@@ -1786,7 +1867,6 @@ class ChatActivity : SecureActivity() {
                     isPending = true
                 )
                 chatStore.addOptimistic(pendingMsg)
-                stickerPanel?.hidePanel()
 
                 // 5. Отправка ТОЛЬКО короткой строки-заголовка (без extraFiles — контент уже в
                 //    отдельном gist). Маленький PATCH вместо тяжёлого инлайна стикера.
@@ -1795,15 +1875,19 @@ class ChatActivity : SecureActivity() {
                 }
 
                 // Cache-bust и синхронизация
-                chatStore.confirmSent(encryptedMessage) // Сразу подтверждаем отправку в ChatStore
+                chatStore.confirmSent(encryptedMessage)
                 syncEngine.forceSync(delayMs = 0L)
                 stopTypingSignal()
 
+                stickerPanel?.hidePanel()
             } catch (e: Exception) {
                 val reason = e.message?.take(120) ?: "unknown"
                 android.widget.Toast.makeText(this@ChatActivity,
                     getString(R.string.error_send) + "\n" + reason,
                     android.widget.Toast.LENGTH_LONG).show()
+            } finally {
+                stickerPanel?.setSendingState(false)
+                unlockAfterUpload()
             }
         }
     }
@@ -1828,7 +1912,7 @@ class ChatActivity : SecureActivity() {
                 timestampMs = now
             )
             val encrypted = withContext(Dispatchers.Default) {
-                CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.gistId)
+                CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.chatId)
             }
 
             val pendingMsg = Message(
@@ -1880,7 +1964,7 @@ class ChatActivity : SecureActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val data = LinkPreview.fetch(url, useTor = true) ?: return@launch
-                val enc = CryptoHelper.encrypt(data.toJson(), chat.chatPassword, transport.chatId)
+                val enc = CryptoHelper.encrypt(data.toJson(), chat.chatPassword, chat.chatId)
                 transport.saveFile(fileName, enc)
             } catch (_: Exception) {}
         }
@@ -2136,6 +2220,7 @@ class ChatActivity : SecureActivity() {
         if (sendManager.isPunished()) return
         val now = System.currentTimeMillis()
         val contentRef = Message.newImageFileName()
+        lockForUpload()
         lifecycleScope.launch {
             var pendingRaw: String? = null
             try {
@@ -2150,7 +2235,7 @@ class ChatActivity : SecureActivity() {
                     timestampMs = now
                 )
                 val encryptedMessage = withContext(Dispatchers.Default) {
-                    CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.gistId)
+                    CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.chatId)
                 }
                 pendingRaw = encryptedMessage
                 chatStore.addOptimistic(
@@ -2194,13 +2279,15 @@ class ChatActivity : SecureActivity() {
                 //    saveFileChunked + второго fetch у получателя нет — раз строка дошла,
                 //    дошёл и файл (одна публикация, одна сборка как у изображений).
                 val encryptedContent = withContext(Dispatchers.Default) {
-                    CryptoHelper.encrypt(b64, chat.chatPassword, transport.chatId)
+                    CryptoHelper.encrypt(b64, chat.chatPassword, chat.chatId)
                 }
-                withContext(Dispatchers.IO) {
-                    transport.appendLine(
-                        encryptedLine = encryptedMessage,
-                        extraFiles = mapOf(contentRef to encryptedContent)
-                    )
+                imageUploadQueue.execute {
+                    withContext(Dispatchers.IO) {
+                        transport.appendLine(
+                            encryptedLine = encryptedMessage,
+                            extraFiles = mapOf(contentRef to encryptedContent)
+                        )
+                    }
                 }
                 chatStore.confirmSent(encryptedMessage)
                 syncEngine.forceSync(delayMs = 0L)
@@ -2210,6 +2297,9 @@ class ChatActivity : SecureActivity() {
                 Toast.makeText(this@ChatActivity,
                     getString(R.string.error_send) + "\n" + (e.message?.take(120) ?: "unknown"),
                     Toast.LENGTH_LONG).show()
+            } finally {
+                stickerPanel?.setSendingState(false)
+                unlockAfterUpload()
             }
         }
     }
@@ -2253,51 +2343,50 @@ class ChatActivity : SecureActivity() {
             .withEndAction { binding.voiceLimitBanner.visibility = View.GONE }.start()
     }
 
-    private fun showRateLimitBanner(durationMs: Long) {
-        if (durationMs <= 0L) { hideRateLimitBanner(); return }
-
+    private fun showTransportLimitBanner(durationMs: Long) {
+        if (durationMs <= 0L) { hideTransportLimitBanner(); return }
         val isGlass = prefs.chatUiStyle == Prefs.CHAT_UI_GLASS
-        val bannerBg = if (isGlass) R.drawable.bg_rate_limit_banner_glass
-                       else R.drawable.bg_rate_limit_banner
+        val bannerBg = if (isGlass) R.drawable.bg_transport_limit_banner_glass
+                       else R.drawable.bg_transport_limit_banner
         val contentColor = ContextCompat.getColor(
             this, if (isGlass) R.color.warning else R.color.warning_on)
 
-        binding.rateLimitBanner.setBackgroundResource(bannerBg)
-        binding.ivRateLimitIcon.setColorFilter(contentColor)
-        binding.tvRateLimitTitle.setTextColor(contentColor)
-        binding.tvRateLimitMessage.setTextColor(contentColor)
+        binding.transportLimitBanner.setBackgroundResource(bannerBg)
+        binding.ivTransportLimitIcon.setColorFilter(contentColor)
+        binding.tvTransportLimitTitle.setTextColor(contentColor)
+        binding.tvTransportLimitMessage.setTextColor(contentColor)
 
-        if (binding.rateLimitBanner.visibility != View.VISIBLE) {
-            binding.rateLimitBanner.alpha = 0f
-            binding.rateLimitBanner.visibility = View.VISIBLE
-            binding.rateLimitBanner.animate().alpha(1f).setDuration(220L).start()
+        if (binding.transportLimitBanner.visibility != View.VISIBLE) {
+            binding.transportLimitBanner.alpha = 0f
+            binding.transportLimitBanner.visibility = View.VISIBLE
+            binding.transportLimitBanner.animate().alpha(1f).setDuration(220L).start()
         }
         // Пока действует лимит — отправка приглушена и заблокирована.
         binding.btnSend.isEnabled = false
         binding.btnSend.alpha = 0.4f
 
-        rateLimitJob?.cancel()
+        transportLimitJob?.cancel()
         val endMs = System.currentTimeMillis() + durationMs
-        rateLimitJob = lifecycleScope.launch {
+        transportLimitJob = lifecycleScope.launch {
             while (true) {
                 val remaining = endMs - System.currentTimeMillis()
                 if (remaining <= 0) break
                 val sec = (remaining + 999) / 1000   // округляем вверх
                 val mmss = String.format(Locale.ROOT, "%d:%02d", sec / 60, sec % 60)
-                binding.tvRateLimitMessage.text = getString(R.string.rate_limit_retry_in, mmss)
+                binding.tvTransportLimitMessage.text = getString(R.string.transport_limit_retry_in, mmss)
                 delay(500L)
             }
-            hideRateLimitBanner()
+            hideTransportLimitBanner()
         }
     }
 
     /** Прячет плашку лимита и возвращает кнопку отправки (если нет активной спам-блокировки). */
-    private fun hideRateLimitBanner() {
-        rateLimitJob?.cancel()
-        rateLimitJob = null
-        if (binding.rateLimitBanner.visibility == View.VISIBLE) {
-            binding.rateLimitBanner.animate().alpha(0f).setDuration(180L).withEndAction {
-                binding.rateLimitBanner.visibility = View.GONE
+    private fun hideTransportLimitBanner() {
+        transportLimitJob?.cancel()
+        transportLimitJob = null
+        if (binding.transportLimitBanner.visibility == View.VISIBLE) {
+            binding.transportLimitBanner.animate().alpha(0f).setDuration(180L).withEndAction {
+                binding.transportLimitBanner.visibility = View.GONE
             }.start()
         }
         binding.btnSend.alpha = 1f
@@ -2328,24 +2417,24 @@ class ChatActivity : SecureActivity() {
             partner.verifiedPartnerIdk == prefs.myIdentityPubKey
 
         if (idk == null || sig == null || eph == null) {
-            IdentityState.set(chat.gistId, IdentityState.Info(IdentityState.State.UNVERIFIED, idk, partnerVerifiedMe))
+            IdentityState.set(chat.chatId, IdentityState.Info(IdentityState.State.UNVERIFIED, idk, partnerVerifiedMe))
             return
         }
-        val data = Base64.decode(eph, Base64.NO_WRAP) + chat.gistId.toByteArray(Charsets.UTF_8)
+        val data = Base64.decode(eph, Base64.NO_WRAP) + chat.chatId.toByteArray(Charsets.UTF_8)
         if (!CryptoHelper.verifyIdentitySignature(idk, data, sig)) {
-            IdentityState.set(chat.gistId, IdentityState.Info(IdentityState.State.UNVERIFIED, idk, partnerVerifiedMe))
+            IdentityState.set(chat.chatId, IdentityState.Info(IdentityState.State.UNVERIFIED, idk, partnerVerifiedMe))
             return
         }
-        val known = prefs.getKnownPartnerIdentity(chat.gistId)
+        val known = prefs.getKnownPartnerIdentity(chat.chatId)
         val state = when (known) {
             null -> {
-                prefs.setKnownPartnerIdentity(chat.gistId, idk)   // trust on first use
+                prefs.setKnownPartnerIdentity(chat.chatId, idk)   // trust on first use
                 IdentityState.State.VERIFIED
             }
             idk -> IdentityState.State.VERIFIED
             else -> IdentityState.State.CHANGED
         }
-        IdentityState.set(chat.gistId, IdentityState.Info(state, idk, partnerVerifiedMe))
+        IdentityState.set(chat.chatId, IdentityState.Info(state, idk, partnerVerifiedMe))
     }
 
     /**
@@ -2381,16 +2470,16 @@ class ChatActivity : SecureActivity() {
         if (!ephemeralRotationEnabled) return
         try {
             val now = System.currentTimeMillis()
-            val last = prefs.getEphemeralRotatedAt(chat.gistId)
-            if (last == 0L) { prefs.setEphemeralRotatedAt(chat.gistId, now); return }  // первый раз — только метка
+            val last = prefs.getEphemeralRotatedAt(chat.chatId)
+            if (last == 0L) { prefs.setEphemeralRotatedAt(chat.chatId, now); return }  // первый раз — только метка
             if (now - last < ephemeralRotationMs) return
             val (newPriv, newPub) = CryptoHelper.generateEphemeralKeyPair()
             val old = myEphemeralPrivKey
             myEphemeralPrivKey = newPriv
             myCurrentEphemeralPubKey = newPub
-            myEphemeralSig = computeEphemeralSig(newPub, chat.gistId)
-            prefs.setEphemeralPriv(chat.gistId, newPriv)
-            prefs.setEphemeralRotatedAt(chat.gistId, now)
+            myEphemeralSig = computeEphemeralSig(newPub, chat.chatId)
+            prefs.setEphemeralPriv(chat.chatId, newPriv)
+            prefs.setEphemeralRotatedAt(chat.chatId, now)
             // Пересчитываем сессионный ключ под текущий pub партнёра (добавится в кольцо).
             lastPartnerEphemeralPubKey = null
             chat.partnerEphemeralPubKeyB64?.let { tryEstablishSessionKey(it) }
@@ -2407,9 +2496,9 @@ class ChatActivity : SecureActivity() {
         if (partnerPubKey == lastPartnerEphemeralPubKey) return   // ключ не изменился
         val privKey = myEphemeralPrivKey ?: return                // наш ключ ещё не готов
 
-        val sessionKey = CryptoHelper.computeSessionKey(privKey, partnerPubKey, chat.gistId)
+        val sessionKey = CryptoHelper.computeSessionKey(privKey, partnerPubKey, chat.chatId)
         if (sessionKey != null) {
-            CryptoHelper.setSessionKey(chat.gistId, sessionKey)
+            CryptoHelper.setSessionKey(chat.chatId, sessionKey)
             sessionKey.fill(0)   // очищаем локальную копию
             lastPartnerEphemeralPubKey = partnerPubKey
 
@@ -2457,7 +2546,7 @@ class ChatActivity : SecureActivity() {
      * При подтверждении: перезаписывает Gist пустым манифестом + сбрасывает локальный кеш.
      */
     private fun confirmClearHistory() {
-        androidx.appcompat.app.AlertDialog.Builder(this, R.style.Theme_GithubChat_Dialog)
+        androidx.appcompat.app.AlertDialog.Builder(this, R.style.Theme_AtrumChat_Dialog)
             .setTitle("Очистить историю?")
             .setMessage("Все сообщения будут удалены у обоих участников. Это действие необратимо.")
             .setPositiveButton("Удалить") { _, _ -> doClearHistory() }
@@ -2477,7 +2566,7 @@ class ChatActivity : SecureActivity() {
                 // (GitHub CDN может ещё не обновиться) и сообщения "воскреснут" на 1 тик
                 lastContent = ""
                 lastPushedReadIndex = -1
-                ChatSnapshotCache.clear(chat.gistId)
+                ChatSnapshotCache.clear(chat.chatId)
                 db.chatDao().updatePreview(chat.id, "", System.currentTimeMillis())
                 adapter.submit(emptyList(), emptyList())
                 Toast.makeText(this@ChatActivity, "История очищена", Toast.LENGTH_SHORT).show()
@@ -2552,7 +2641,7 @@ class ChatActivity : SecureActivity() {
                 myAvatarBase64    = prefs.myAvatarBase64,
                 myIdentityPubKey     = prefs.myIdentityPubKey,
                 myEphemeralSig       = myEphemeralSig,
-                myVerifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.gistId)
+                myVerifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.chatId)
             )
         }
 
@@ -2740,7 +2829,7 @@ class ChatActivity : SecureActivity() {
                     timestampMs = now
                 )
                 val encryptedMessage = withContext(Dispatchers.Default) {
-                    CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.gistId)
+                    CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.chatId)
                 }
                 tempEncrypted = encryptedMessage
 
@@ -2756,22 +2845,39 @@ class ChatActivity : SecureActivity() {
                 )
                 chatStore.addOptimistic(pendingMsg)
 
-                // 3. Шифруем изображение для пакетной отправки
-                val encryptedImage = withContext(Dispatchers.Default) {
-                    CryptoHelper.encrypt(base64, chat.chatPassword, transport.chatId)
+                // 3. Контент фото (шифрование + заливка чанков по Tor) — в ФОНЕ. НЕ держим
+                //    ввод заблокированным на всё время заливки: иначе при чанковом фото через
+                //    медленный Tor сообщение «зависает в обработке». Оптимистичное сообщение
+                //    уже показано; часики снимутся при reconcile, как только опубликуется
+                //    чат-строка (это происходит в начале appendLine, до заливки чанков).
+                lifecycleScope.launch {
+                    try {
+                        val encryptedImage = withContext(Dispatchers.Default) {
+                            CryptoHelper.encrypt(base64, chat.chatPassword, chat.chatId)
+                        }
+                        imageUploadQueue.execute {
+                            withContext(Dispatchers.IO) {
+                                transport.appendLine(
+                                    encryptedLine = encryptedMessage,
+                                    extraFiles = mapOf(imageFileName to encryptedImage)
+                                )
+                            }
+                        }
+                        // Cache-bust и форс-синк для быстрого скрытия часиков
+                        lastContent = ""
+                        syncEngine.forceSync(delayMs = 0L)
+                    } catch (e: Exception) {
+                        // Заливка контента не удалась — помечаем сообщение как несработавшее
+                        // (часики → ошибка), а не оставляем его «в обработке» навсегда.
+                        chatStore.failSend(encryptedMessage)
+                        val reason = e.message?.take(120) ?: "unknown"
+                        runOnUiThread {
+                            Toast.makeText(this@ChatActivity,
+                                getString(R.string.error_send) + "\n" + reason,
+                                Toast.LENGTH_LONG).show()
+                        }
+                    }
                 }
-
-                // 4. Отправляем сообщение и изображение ОДНИМ запросом (Batch PATCH)
-                withContext(Dispatchers.IO) {
-                    transport.appendLine(
-                        encryptedLine = encryptedMessage,
-                        extraFiles = mapOf(imageFileName to encryptedImage)
-                    )
-                }
-
-                // Cache-bust и форс-синк для быстрого скрытия часиков
-                lastContent = ""
-                syncEngine.forceSync(delayMs = 0L)
 
             } catch (e: Exception) {
                 tempEncrypted?.let { chatStore.failSend(it) }
@@ -2780,6 +2886,7 @@ class ChatActivity : SecureActivity() {
                     getString(R.string.error_send) + "\n" + reason,
                     Toast.LENGTH_LONG).show()
             } finally {
+                stickerPanel?.setSendingState(false)
                 unlockAfterUpload()
             }
         }
@@ -2840,7 +2947,7 @@ class ChatActivity : SecureActivity() {
                     timestampMs    = now
                 )
                 val encryptedMessage = withContext(Dispatchers.Default) {
-                    CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.gistId)
+                    CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.chatId)
                 }
                 tempEncrypted = encryptedMessage
 
@@ -2864,7 +2971,7 @@ class ChatActivity : SecureActivity() {
                         launch {
                             val b64 = base64s[index] ?: return@launch
                             val encrypted = withContext(Dispatchers.Default) {
-                                CryptoHelper.encrypt(b64, chat.chatPassword, transport.chatId)
+                                CryptoHelper.encrypt(b64, chat.chatPassword, chat.chatId)
                             }
                             synchronized(extraFiles) {
                                 extraFiles[fileName] = encrypted
@@ -2876,11 +2983,13 @@ class ChatActivity : SecureActivity() {
                 if (extraFiles.size != total) throw RuntimeException(getString(R.string.error_image_load))
 
                 // 4. Отправляем сообщение и все изображения ОДНИМ запросом (Batch PATCH)
-                withContext(Dispatchers.IO) {
-                    transport.appendLine(
-                        encryptedLine = encryptedMessage,
-                        extraFiles = extraFiles
-                    )
+                imageUploadQueue.execute {
+                    withContext(Dispatchers.IO) {
+                        transport.appendLine(
+                            encryptedLine = encryptedMessage,
+                            extraFiles = extraFiles
+                        )
+                    }
                 }
 
                 lastContent = ""
@@ -2893,6 +3002,7 @@ class ChatActivity : SecureActivity() {
                     getString(R.string.error_send) + "\n" + reason,
                     Toast.LENGTH_LONG).show()
             } finally {
+                stickerPanel?.setSendingState(false)
                 unlockAfterUpload()
             }
         }
@@ -3147,7 +3257,7 @@ class ChatActivity : SecureActivity() {
 
         // ── Шифруем перед записью (V4/Argon2id, как profiles.txt) ─────────────
         val encryptedReactions = CryptoHelper.encryptMetadata(
-            newReactionsContent, chat.chatPassword, chat.gistId
+            newReactionsContent, chat.chatPassword, chat.chatId
         )
         lastReactionsRaw = encryptedReactions   // оптимистично обновляем raw-кэш
 
@@ -3164,7 +3274,7 @@ class ChatActivity : SecureActivity() {
                     // после сохранения реакции нужно вручную дёрнуть обновление.
                     lifecycleScope.launch {
                         val data = withContext(Dispatchers.IO) { transport.loadAll() }
-                        processGistData(data)
+                        processChannelData(data)
                     }
                 } else {
                     // После успешного PATCH — быстро подтверждаем реальное состояние с сервера.
@@ -3198,18 +3308,33 @@ class ChatActivity : SecureActivity() {
             quotedText = msg.quotedText,
             timestampMs = msg.timestampMs
         )
-        val newEncrypted = CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.gistId)
+        val newEncrypted = CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.chatId)
 
-        // PatchQueue.ReplaceLine: сериализуется с остальными PATCH-операциями
+        // Создаем "оптимистичную" версию сообщения для немедленного обновления в UI
+        val pendingEdit = msg.copy(
+            text = newText,
+            rawEncrypted = newEncrypted,
+            isPending = true,
+            replacingId = msg.msgId
+        )
+        chatStore.addOptimistic(pendingEdit)
+        // Мгновенно снимаем "часы" (как у обычной отправки, §1.5): НЕ ждём сетевой
+        // round-trip через Tor + кворум реле, иначе правка висит "в ожидании" секундами.
+        // reconcile позже бесшовно заменит pending серверной строкой (совпадение rawEncrypted).
+        chatStore.confirmSent(newEncrypted)
+
+        // PatchQueue.ReplaceLine: сериализуется с остальными PATCH-операциями. Сеть — в фоне.
         patchQueue.enqueue(PatchQueue.Action.ReplaceLine(
             oldLine  = msg.rawEncrypted,
             newLine  = newEncrypted,
             onResult = { ok ->
                 if (!ok) {
+                    // Ошибка отправки: откатываем правку — вернётся оригинал.
+                    chatStore.dropPending(newEncrypted)
                     Toast.makeText(this@ChatActivity,
                         getString(R.string.error_message_not_found), Toast.LENGTH_SHORT).show()
                 }
-                // Сбрасываем кэш — следующий тик SyncEngine покажет обновлённое сообщение
+                // Сбрасываем кэш для SyncEngine
                 lastContent = ""
             }
         ))
@@ -3316,7 +3441,7 @@ class ChatActivity : SecureActivity() {
      */
     private fun observeTorStatus() {
         if (chat.isFavorites) return
-        if (chat.gistToken == com.atrum.chat.transport.NostrTransport.NOSTR_DIRECT_TOKEN) return
+        if (chat.transportToken == com.atrum.chat.transport.NostrTransport.NOSTR_DIRECT_TOKEN) return
         lifecycleScope.launch {
             TorManager.status.collectLatest { st ->
                 when (st) {
@@ -3428,7 +3553,7 @@ class ChatActivity : SecureActivity() {
             val switched = resolved::class != transport::class
             transport = resolved
             if (switched) {
-                val newLoader = ImageLoader(transport, chat.chatPassword)
+                val newLoader = ImageLoader(transport, chat.chatPassword, chat.chatId)
                 imageLoader = newLoader
                 if (::adapter.isInitialized) adapter.updateImageLoader(newLoader)
             }
@@ -3455,13 +3580,13 @@ class ChatActivity : SecureActivity() {
             lifecycleScope.launch {
                 // Сохраняем в EncryptedSharedPreferences (не в Room)
                 @Suppress("DEPRECATION")
-                prefs.saveChatSecrets(chat.gistId, trimmed, chat.chatPassword)
+                prefs.saveChatSecrets(chat.chatId, trimmed, chat.chatPassword)
                 @Suppress("DEPRECATION")
-                chat = chat.copy(gistToken = trimmed)
+                chat = chat.copy(transportToken = trimmed)
                 // Пересоздаём транспорт с новым токеном
                 transportFactory = TransportFactory(
-                    gistId     = chat.gistId,
-                    gistToken  = trimmed,
+                    chatId     = chat.chatId,
+                    transportToken  = trimmed,
                     chatPassword = chat.chatPassword,
                     myUserId   = prefs.myUserId,
                     context    = applicationContext
@@ -3507,39 +3632,12 @@ class ChatActivity : SecureActivity() {
 
     /**
      * Crossfade-переход от loading overlay к списку сообщений.
-     * Вызывается один раз при первой успешной загрузке.
-     *
-     * Overlay уходит за 250 мс, RecyclerView появляется за 350 мс —
-     * небольшой сдвиг даёт ощущение «контент проявляется» а не «мигает».
-     */
-    /** Запускает ожидание установки сессии с таймаутом, затем разрешает показ чата. */
-    private fun startHandshakeGate() {
-        if (chat.isFavorites) {
-            handshakeSettled = true
-            maybeReveal()
-            return
-        }
-
-        lifecycleScope.launch {
-            val deadline = System.currentTimeMillis() + handshakeRevealTimeoutMs
-            while (System.currentTimeMillis() < deadline && !CryptoHelper.hasSessionKey(chat.gistId)) {
-                delay(200)
-            }
-            handshakeSettled = true
-            maybeReveal()
-        }
-    }
-
-    /**
-     * Показывает чат, как только загружен контент сообщений.
-     * НЕ ждём рукопожатие (V3-сессию): иначе спиннер висел до установки сессии
-     * с собеседником или до 10-с таймаута — отсюда "крутится просто так и
-     * кончается когда хочет". Сессия доустанавливается в фоне; непрочитанные
-     * V3-сообщения прикрыты отдельным FS-баннером (lockedV3ConsecutiveCount).
      */
     private fun maybeReveal() {
         if (firstLoadComplete) return
-        if (contentLoaded) {
+        
+        val storeHasData = chatStore.hasPending() || chatStore.messages.value.isNotEmpty()
+        if (contentLoaded || adapter.itemCount > 0 || storeHasData) {
             firstLoadComplete = true
             revealMessages()
         }
@@ -3572,6 +3670,16 @@ class ChatActivity : SecureActivity() {
     }
 
     companion object {
+        /** За сколько позиций до верха начинать подгрузку старых сообщений (ленивый рендер). */
+        private const val REVEAL_THRESHOLD = 6
+        /** Макс. картинок в одном коллаже. */
+        const val MAX_COLLAGE_IMAGES = 10
+        /** Подряд неудачных загрузок до показа предупреждения. */
+        const val FAILURES_BEFORE_WARNING = 5
+        /** Максимальная длительность голосового. */
+        private const val MAX_VOICE_MS = 15 * 60 * 1000L
+        /** Максимум одновременных загрузок изображений. */
+        const val MAX_CONCURRENT = 3
         /** Ключ intent-экстра: идентификатор чата (Long, из Room). */
         const val EXTRA_CHAT_ID = "extra_chat_id"
 
@@ -3615,16 +3723,5 @@ class ChatActivity : SecureActivity() {
         /** Базовая задержка между retry sync-профилей (умножается на номер попытки). */
         const val SYNC_PROFILES_RETRY_BASE_MS = 3_000L
 
-        // ── Error handling ────────────────────────────────────────────────────
-        /** Количество последовательных ошибок сети до показа баннера предупреждения. */
-        const val FAILURES_BEFORE_WARNING = 5
-
-        // ── Media ─────────────────────────────────────────────────────────────
-        /** Максимальное количество фото в коллаже за одну отправку. */
-        const val MAX_COLLAGE_IMAGES = 10
-        /** Максимальная длительность голосового. */
-        private const val MAX_VOICE_MS = 15 * 60 * 1000L
-        /** Максимальное количество одновременных загрузок изображений. */
-        const val MAX_CONCURRENT = 3
     }
 }

@@ -6,12 +6,12 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
 /**
- * Адаптивная очередь загрузки изображений с защитой от GitHub rate limit.
+ * Адаптивная очередь загрузки изображений с защитой от Relay rate limit.
  *
  * Архитектура:
  *  - [MAX_CONCURRENT] параллельных загрузок (Semaphore): по умолчанию 3.
  *    Изображения в одной sendImages-партии загружаются параллельно, но
- *    не более 3 одновременно → быстро и не бьём GitHub.
+ *    не более 3 одновременно → быстро и не бьём Реле.
  *
  *  - Адаптивный throttle: при HTTP 429 или "rate limit" добавляется
  *    задержка перед следующим запросом. При успехе — плавно снижается.
@@ -19,7 +19,7 @@ import kotlinx.coroutines.sync.withPermit
  *  - Retry с exponential backoff до [MAX_RETRY] попыток.
  *
  *  - Полностью изолирован от текстового pipeline: не конкурирует за
- *    writeMutex чат-gist'а, использует отдельный POST-запрос (createImageGist).
+ *    writeMutex чат-channel'а, использует отдельный POST-запрос (createImageChannel).
  *
  * Нормальный режим (нет ошибок):
  *   throttleDelayMs = 0 → почти нулевые задержки между загрузками.

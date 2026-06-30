@@ -41,6 +41,11 @@ data class Profile(
      */
     val onlineTs: Long = 0L,
     /**
+     * Unix-мс последнего сигнала «записываю голосовое». Считается «живым», если
+     * now - recordingTs < RECORDING_EXPIRY_MS. Обнуляется по окончании записи.
+     */
+    val recordingTs: Long = 0L,
+    /**
      * true если пользователь удалил свой профиль через «Удалить профиль».
      * У собеседников показывается заглушка «Профиль удалён» вместо аватарки.
      * Не пишем false в JSON чтобы экономить байты.
@@ -87,6 +92,7 @@ data class Profile(
         put("lastReadIndex", lastReadIndex)
         if (typingTs > 0L) put("typingTs", typingTs)
         if (onlineTs > 0L) put("onlineTs", onlineTs)
+        if (recordingTs > 0L) put("recTs", recordingTs)
         if (deleted) put("deleted", true)
         if (ephemeralPubKey != null) put("eph", ephemeralPubKey)
         if (identityPubKey != null) put("idk", identityPubKey)
@@ -107,6 +113,7 @@ data class Profile(
                 lastReadIndex = json.optInt("lastReadIndex", 0),
                 typingTs = json.optLong("typingTs", 0L),
                 onlineTs = json.optLong("onlineTs", 0L),
+                recordingTs = json.optLong("recTs", 0L),
                 deleted = json.optBoolean("deleted", false),
                 ephemeralPubKey = json.optString("eph", "").takeIf { it.isNotBlank() },
                 identityPubKey = json.optString("idk", "").takeIf { it.isNotBlank() },

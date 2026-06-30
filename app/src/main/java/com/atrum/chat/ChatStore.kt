@@ -11,7 +11,8 @@ class ChatStore {
 
     private val pendingByRaw = LinkedHashMap<String, Message>()
     private val tombstones = mutableSetOf<String>()
-    private var lastRemote: List<Message> = emptyList()
+    var lastRemote: List<Message> = emptyList()
+        private set
 
     fun addOptimistic(msg: Message) {
         require(msg.isPending) { "addOptimistic requires isPending=true" }
@@ -30,7 +31,7 @@ class ChatStore {
     fun confirmSent(encryptedLine: String) {
         val msg = pendingByRaw[encryptedLine]
         if (msg != null && msg.isPending) {
-            pendingByRaw[encryptedLine] = msg.copy(isPending = false)
+            pendingByRaw[encryptedLine] = msg.copy(isConfirmed = true)
         }
         emit()
     }
@@ -92,10 +93,8 @@ class ChatStore {
         // имени файла стикера/картинки. Шифртекст недетерминирован (random salt/nonce),
         // поэтому для стикеров сверка по imageFileName надёжнее — иначе оставались дубли.
         val visible = remote.filter { it.msgId !in tombstones }
-        val serverRaws = visible.map { it.rawEncrypted }.toSet()
-        val serverFiles = visible.mapNotNull { it.imageFileName }.toSet()
-        pendingByRaw.entries.removeAll { (raw, m) ->
-            raw in serverRaws || (m.imageFileName != null && m.imageFileName in serverFiles)
+        pendingByRaw.entries.removeAll { (_, m) ->
+            visible.any { v -> Message.isSameContent(m, v) }
         }
         _messages.value = compose()
     }
@@ -113,18 +112,62 @@ class ChatStore {
 
     /**
      * Собирает итоговый список: серверные сообщения + pending, но БЕЗ дублей.
-     * pending скрывается, если для него уже есть серверная копия — по rawEncrypted
-     * ИЛИ по imageFileName (стикеры/картинки, у которых ciphertext недетерминирован).
+     * Если для сообщения (серверного или еще отправляющегося) есть pending-правка,
+     * она заменяет оригинал "на месте", предотвращая появление копий.
      */
     private fun compose(): List<Message> {
         val visible = lastRemote.filter { it.msgId !in tombstones }
-        val serverRaws = visible.map { it.rawEncrypted }.toSet()
-        val serverFiles = visible.mapNotNull { it.imageFileName }.toSet()
-        val pend = pendingByRaw.values.filter { m ->
-            m.rawEncrypted !in serverRaws &&
-            (m.imageFileName == null || m.imageFileName !in serverFiles)
+        
+        // Оставляем только те pending, которых еще нет в visible
+        val pendings = pendingByRaw.values.filter { p ->
+            visible.none { v -> Message.isSameContent(p, v) }
         }
-        return visible + pend
+
+        // Мапа замен: [ID_оригинала -> Новое_сообщение_правка]
+        val replacements = pendings.filter { it.replacingId != null }
+            .associateBy { it.replacingId!! }
+        
+        val result = mutableListOf<Message>()
+        val addedRaw = mutableSetOf<String>()
+        val replacedIds = mutableSetOf<String>()
+
+        // Функция добавления сообщения с учетом возможных цепочек замен (A -> B -> C)
+        fun addWithReplacement(msg: Message) {
+            var current = msg
+            // Проходим по цепочке замен, если они есть
+            while (replacements.containsKey(current.msgId)) {
+                replacedIds.add(current.msgId)
+                current = replacements[current.msgId]!!
+            }
+            if (current.rawEncrypted !in addedRaw) {
+                result.add(current)
+                addedRaw.add(current.rawEncrypted)
+            }
+        }
+
+        // 1. Сначала обрабатываем серверные сообщения
+        for (m in visible) {
+            addWithReplacement(m)
+        }
+
+        // 2. Затем добавляем pending (новые сообщения или правки, чей оригинал мы не видели)
+        for (p in pendings) {
+            // Пропускаем, если сообщение уже добавлено как замена или уже обработано
+            if (p.msgId in replacedIds || p.rawEncrypted in addedRaw) continue
+            
+            // Если это не правка (replacingId == null), добавляем как новое
+            if (p.replacingId == null) {
+                addWithReplacement(p)
+            } else {
+                // Если это правка, но оригинал не найден — показываем хотя бы саму правку
+                if (p.rawEncrypted !in addedRaw) {
+                    result.add(p)
+                    addedRaw.add(p.rawEncrypted)
+                }
+            }
+        }
+
+        return result
     }
 
     private fun emit() {

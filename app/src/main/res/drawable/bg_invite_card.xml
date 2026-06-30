@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Белая карточка под QR. Намеренно белая в обеих темах — нужна для читаемости QR сканером
+     (как просмотрщик фото и подложка bg_qr_white). Содержимое карточки красится фиксированными
+     accent/accent_light, а не токенами text_* (они инвертируются и пропадают на белом). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/white" />
+    <corners android:radius="26dp" />
+</shape>

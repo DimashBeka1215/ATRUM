@@ -6,6 +6,7 @@ import android.text.style.ForegroundColorSpan
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
@@ -81,6 +82,7 @@ class ChatsAdapter(
 
     class VH(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val initial: TextView = itemView.findViewById(R.id.tv_avatar_initial)
+        private val avatarIcon: ImageView = itemView.findViewById(R.id.iv_avatar_icon)
         private val avatar: ShapeableImageView = itemView.findViewById(R.id.iv_avatar)
         private val name: TextView = itemView.findViewById(R.id.tv_partner_name)
         private val lastMessage: TextView = itemView.findViewById(R.id.tv_last_message)
@@ -95,8 +97,10 @@ class ChatsAdapter(
             if (chat.isFavorites) {
                 initial.setBackgroundResource(R.drawable.bg_avatar_favorites)
                 initial.visibility = View.VISIBLE
+                avatarIcon.visibility = View.VISIBLE
+                avatarIcon.setImageResource(R.drawable.ic_sparkle) // Используем ic_sparkle как замену ★
                 avatar.visibility = View.GONE
-                initial.text = "★"
+                initial.text = ""
                 name.text = itemView.context.getString(R.string.favorites_name)
                 lastMessage.text = chat.lastMessage.ifBlank {
                     itemView.context.getString(R.string.favorites_description)
@@ -108,7 +112,9 @@ class ChatsAdapter(
                 // Показываем серую заглушку вместо аватарки
                 avatar.visibility = View.GONE
                 initial.visibility = View.VISIBLE
-                initial.text = "✕"
+                avatarIcon.visibility = View.VISIBLE
+                avatarIcon.setImageResource(R.drawable.ic_close) // Используем ic_close как замену ✕
+                initial.text = ""
                 initial.setBackgroundResource(R.drawable.bg_avatar_deleted)
                 // Имя зачёркнуто — профиль был удалён
                 name.text = chat.partnerName.ifBlank { "?" }
@@ -147,9 +153,11 @@ class ChatsAdapter(
                     avatar.setImageBitmap(avatarBitmap)
                     avatar.visibility = View.VISIBLE
                     initial.visibility = View.GONE
+                    avatarIcon.visibility = View.GONE
                 } else {
                     avatar.visibility = View.GONE
                     initial.visibility = View.VISIBLE
+                    avatarIcon.visibility = View.GONE
                     initial.text = chat.partnerName.trim().firstOrNull()?.uppercase() ?: "?"
                 }
             }

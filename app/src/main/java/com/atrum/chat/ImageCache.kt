@@ -9,17 +9,26 @@ import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Кеш картинок из gist: in-memory (LruCache) + persistent (Disk).
+ * Кеш картинок: in-memory (LruCache) + persistent (Disk).
  *
  * Храним Bitmap (для отображения в адаптере) и сырой base64
  * (для fullscreen-просмотрщика — открывается через [ImageViewActivity]).
  *
  * При вытеснении bitmap из LruCache base64 остаётся на диске —
- * повторный декод дешевле нового сетевого запроса к GitHub.
+ * повторный декод дешевле нового сетевого запроса к источнику.
  */
 object ImageCache {
 
-    private const val MAX_BITMAP_BYTES = 50 * 1024 * 1024
+    // ⚠️ Потолки кэшей ОБЯЗАНЫ быть относительными к heap, а не фиксированными.
+    // Раньше: 50MB bitmaps + 24MB base64 + 48MB compositions = 122MB фиксированных
+    // потолков. На устройстве с heap ~155MB при заполнении (открыли чат с фото) куча
+    // упиралась в 155/155MB, 0% free → каждая аллокация триггерит блокирующий GC →
+    // main-поток голодает на 99% CPU → ANR/фриз. Теперь бюджеты считаем от maxMemory():
+    // даже на largeHeap оставляем запас, чтобы у аллокатора был воздух.
+    private val maxMemBytes: Long = Runtime.getRuntime().maxMemory()
+
+    private val MAX_BITMAP_BYTES: Int =
+        (maxMemBytes / 8).coerceIn(8L * 1024 * 1024, 40L * 1024 * 1024).toInt()
     private const val DISK_CACHE_SUBDIR = "images_v1"
     // Потолок диск-кеша base64 (.b64). Раньше папка росла без ограничений и копила
     // расшифрованный контент всех картинок/стикеров за всё время. Теперь LRU-trim.
@@ -32,14 +41,16 @@ object ImageCache {
     // Ограниченный LRU по размеру (UTF-16 ~ length*2). При вытеснении строка остаётся на
     // диске (см. getDiskFile) — повторное чтение дешевле сети. Раньше был unbounded HashMap,
     // что копило base64 всех картинок/стикеров за сеанс и вело к OOM.
-    private const val MAX_BASE64_BYTES = 24 * 1024 * 1024
+    private val MAX_BASE64_BYTES: Int =
+        (maxMemBytes / 16).coerceIn(4L * 1024 * 1024, 16L * 1024 * 1024).toInt()
     private val base64s = object : LruCache<String, String>(MAX_BASE64_BYTES) {
         override fun sizeOf(key: String, value: String): Int = value.length * 2
     }
 
     // Бюджет кеша Lottie-композиций в КБ. Размер оцениваем по площади bounds стикера
     // (w*h*4) как грубый проксированный «вес» — раньше лимит был «100 штук» без учёта размера.
-    private const val MAX_COMPOSITION_KB = 48 * 1024
+    private val MAX_COMPOSITION_KB: Int =
+        ((maxMemBytes / 16) / 1024).coerceIn(4L * 1024, 16L * 1024).toInt()
     private val compositions = object : LruCache<String, com.airbnb.lottie.LottieComposition>(MAX_COMPOSITION_KB) {
         override fun sizeOf(key: String, value: com.airbnb.lottie.LottieComposition): Int {
             val w = value.bounds.width().takeIf { it > 0 } ?: 512
@@ -70,9 +81,21 @@ object ImageCache {
         compositions.put(key, composition)
     }
 
+    fun removeComposition(key: String) {
+        compositions.remove(key)
+    }
+
     // ── Bitmap ─────────────────────────────────────────────────────────────────
 
     fun getBitmap(key: String): Bitmap? = bitmaps.get(key)
+
+    fun putBitmap(key: String, bitmap: Bitmap) {
+        bitmaps.put(key, bitmap)
+    }
+
+    fun removeBitmap(key: String) {
+        bitmaps.remove(key)
+    }
 
     // ── Base64 ────────────────────────────────────────────────────────────────
 

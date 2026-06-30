@@ -19,10 +19,10 @@ The system operates as follows: data is generated on user devices, data exists o
 The system does not store user messages. No indexing, profiling, or long-term storage of content.
 
 7. Metadata Limitations
-Even in a zero-knowledge system: network metadata may exist, third-party services (including GitHub) may log technical data, developers do not control such processing.
+Even in a zero-knowledge system: network metadata may exist, third-party infrastructure providers may log technical data, developers do not control such processing.
 
 8. Untrusted Transport Layer
-The system uses GitHub, APIs, and user-operated nodes. These are untrusted transport mechanisms for encrypted data only.
+The system uses neutral hosting providers, APIs, and user-operated nodes. These services are untrusted transport mechanisms for encrypted data only.
 
 9. Threat Model
 The system does NOT protect against: compromised user devices, malware on endpoints, network-level traffic analysis, user key mismanagement. It protects only message content under correct E2EE usage.

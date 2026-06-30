@@ -4,7 +4,6 @@ import android.content.Context
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.Toast
 import androidx.core.content.ContextCompat
@@ -45,11 +44,15 @@ class StickerPanelController(
     private var onboardingBinding: ViewStickerOnboardingBinding? = null
 
     private var packs: List<StickerPack> = emptyList()
-    private var currentPackIndex = 0
+    private var currentTabId: String = TAB_FAVORITES
     private var stickerAdapter: StickerAdapter? = null
 
     private var loadJob: Job? = null
     private var isPanelVisible = false
+
+    companion object {
+        private const val TAB_FAVORITES = "favorites_tab"
+    }
 
     // ── Инициализация ────────────────────────────────────────────────────────
 
@@ -59,10 +62,17 @@ class StickerPanelController(
         panelBinding = ViewStickerPanelBinding.inflate(inflater, chatBinding.stickerPanelContainer, true)
 
         // 2. Настраиваем RecyclerView
-        stickerAdapter = StickerAdapter(emptyList()) { sticker ->
-            onStickerSelected(sticker)
-            hidePanel()
-        }
+        stickerAdapter = StickerAdapter(
+            stickers = emptyList(),
+            onStickerClick = { sticker ->
+                scope.launch { repository.recordUsage(sticker) }
+                onStickerSelected(sticker)
+                // hidePanel() // Убираем авто-закрытие, теперь ChatActivity управляет этим
+            },
+            onStickerLongClick = { sticker ->
+                showStickerContextMenu(sticker)
+            }
+        )
         panelBinding?.rvStickers?.apply {
             layoutManager = GridLayoutManager(context, 5)
             adapter = stickerAdapter
@@ -81,6 +91,7 @@ class StickerPanelController(
         chatBinding.btnSticker.setOnClickListener { togglePanel() }
 
         // 6. Загружаем локальные паки
+        scope.launch { repository.loadFavorites() }
         loadLocalPacks()
     }
 
@@ -105,6 +116,10 @@ class StickerPanelController(
         if (!prefs.stickerOnboardingShown) {
             showOnboarding()
         }
+    }
+
+    fun setSendingState(isSending: Boolean) {
+        panelBinding?.stickerSendingOverlay?.visibility = if (isSending) View.VISIBLE else View.GONE
     }
 
     fun hidePanel() {
@@ -155,38 +170,60 @@ class StickerPanelController(
     private fun refreshUI() {
         val binding = panelBinding ?: return
 
-        if (packs.isEmpty()) {
-            binding.rvStickers.visibility       = View.GONE
-            binding.stickerEmptyState.visibility = View.VISIBLE
-            binding.stickerLoadingState.visibility = View.GONE
-            rebuildTabs()
-            return
-        }
-
+        // Если паков нет ВООБЩЕ, но могут быть избранные — всё равно показываем панель,
+        // но только с вкладкой избранного (которая может быть пуста).
         binding.stickerEmptyState.visibility = View.GONE
         binding.stickerLoadingState.visibility = View.GONE
         binding.rvStickers.visibility = View.VISIBLE
 
         rebuildTabs()
-        showPack(currentPackIndex.coerceIn(0, packs.lastIndex))
+        showTab(currentTabId)
     }
 
     private fun rebuildTabs() {
         val binding = panelBinding ?: return
         binding.stickerTabsContainer.removeAllViews()
 
-        packs.forEachIndexed { index, pack ->
-            val tab = makeTabView(pack, index)
+        // 1. Вкладка "Избранное"
+        val favTab = makeFavTabView()
+        binding.stickerTabsContainer.addView(favTab)
+
+        // 2. Вкладки паков
+        packs.forEach { pack ->
+            val tab = makePackTabView(pack)
             binding.stickerTabsContainer.addView(tab)
         }
         updateTabSelection()
     }
 
-    private fun makeTabView(pack: StickerPack, index: Int): View {
+    private fun makeFavTabView(): View {
+        val size = (40 * context.resources.displayMetrics.density).toInt()
+        val pad = (10 * context.resources.displayMetrics.density).toInt()
+
+        return ImageButton(context).apply {
+            tag = TAB_FAVORITES
+            layoutParams = ViewGroup.LayoutParams(size, size)
+            setPadding(pad, pad, pad, pad)
+            background = ContextCompat.getDrawable(context, R.drawable.bg_icon_button)
+            contentDescription = context.getString(R.string.sticker_menu_title)
+            scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+            setImageResource(R.drawable.ic_heart)
+            tint(ContextCompat.getColor(context, R.color.accent))
+
+            setOnClickListener {
+                currentTabId = TAB_FAVORITES
+                showTab(currentTabId)
+                updateTabSelection()
+            }
+        }
+    }
+
+    private fun makePackTabView(pack: StickerPack): View {
         val size  = (40 * context.resources.displayMetrics.density).toInt()
         val pad   = (8 * context.resources.displayMetrics.density).toInt()
 
         val btn = ImageButton(context).apply {
+            tag = pack.name
             layoutParams = ViewGroup.LayoutParams(size, size)
             setPadding(pad, pad, pad, pad)
             background = ContextCompat.getDrawable(context, R.drawable.bg_icon_button)
@@ -201,7 +238,6 @@ class StickerPanelController(
         val thumbSticker = pack.stickers.firstOrNull { it.localPath == pack.thumbPath } ?: pack.stickers.firstOrNull()
         if (thumbSticker != null) {
             scope.launch {
-                // Превью таба маленькое (~40dp) — рендерим/уменьшаем под него, не 512².
                 val bmp = repository.renderFirstFrame(thumbSticker, maxSize = size)
                 if (bmp != null) {
                     btn.setImageBitmap(bmp)
@@ -211,8 +247,8 @@ class StickerPanelController(
         }
 
         btn.setOnClickListener {
-            currentPackIndex = index
-            showPack(index)
+            currentTabId = pack.name
+            showTab(currentTabId)
             updateTabSelection()
         }
         return btn
@@ -223,23 +259,114 @@ class StickerPanelController(
         val container = binding.stickerTabsContainer
         for (i in 0 until container.childCount) {
             val child = container.getChildAt(i)
-            val isSelected = (i == currentPackIndex)
+            val isSelected = (child.tag == currentTabId)
             child.alpha = if (isSelected) 1f else 0.45f
         }
     }
 
-    private fun showPack(index: Int) {
-        if (index < 0 || index >= packs.size) return
-        val pack = packs[index]
-        panelBinding?.tvStickerPackLabel?.text = pack.title
-        stickerAdapter?.update(pack.stickers)
+    private fun showTab(tabId: String) {
+        if (tabId == TAB_FAVORITES) {
+            panelBinding?.tvStickerPackLabel?.text = context.getString(R.string.sticker_menu_title)
+            panelBinding?.btnStickerRenamePack?.visibility = View.GONE
+
+            // Step 1: Try to show cached data instantly
+            repository.getFavoritesCached()?.let { cached ->
+                stickerAdapter?.update(cached)
+                updateEmptyState(cached.isEmpty())
+            }
+
+            // Step 2: Refresh from disk if needed (non-blocking)
+            scope.launch {
+                val favs = repository.loadFavorites()
+                withContext(Dispatchers.Main) {
+                    stickerAdapter?.update(favs)
+                    updateEmptyState(favs.isEmpty())
+                }
+            }
+        } else {
+            val pack = packs.find { it.name == tabId } ?: return
+            panelBinding?.tvStickerPackLabel?.text = pack.title
+            panelBinding?.btnStickerRenamePack?.visibility = View.VISIBLE
+            panelBinding?.rvStickers?.visibility = View.VISIBLE
+            panelBinding?.stickerEmptyState?.visibility = View.GONE
+            stickerAdapter?.update(pack.stickers)
+        }
+    }
+
+    private fun updateEmptyState(isEmpty: Boolean) {
+        panelBinding?.rvStickers?.visibility = if (isEmpty) View.GONE else View.VISIBLE
+        panelBinding?.stickerEmptyState?.visibility = if (isEmpty) View.VISIBLE else View.GONE
+    }
+
+    // ── Контекстное меню стикера ─────────────────────────────────────────────
+
+    private fun showStickerContextMenu(sticker: Sticker) {
+        scope.launch {
+            val isFav = repository.isFavorite(sticker.fileId)
+            
+            // Находим пак, которому принадлежит стикер (для удаления)
+            val pack = packs.find { p -> p.stickers.any { it.fileId == sticker.fileId } }
+
+            withContext(Dispatchers.Main) {
+                val items = mutableListOf<NeonDialog.Item>()
+
+                items.add(NeonDialog.Item(
+                    label = if (isFav) context.getString(R.string.sticker_remove_favorite) else context.getString(R.string.sticker_add_favorite),
+                    action = { toggleFavorite(sticker) }
+                ))
+
+                if (pack != null) {
+                    items.add(NeonDialog.Item(
+                        label = context.getString(R.string.sticker_delete_action),
+                        action = {
+                            com.atrum.chat.NeonDialog.showConfirm(
+                                ctx = context,
+                                title = context.getString(R.string.sticker_delete_confirm),
+                                positiveText = context.getString(R.string.sticker_settings_delete_confirm),
+                                positiveIsDestructive = true,
+                                negativeText = context.getString(R.string.btn_cancel),
+                                onPositive = {
+                                    scope.launch {
+                                        repository.deleteSticker(sticker, pack.name)
+                                        loadLocalPacks()
+                                    }
+                                }
+                            )
+                        }
+                    ))
+                }
+
+                NeonDialog.showMenu(
+                    ctx = context,
+                    title = context.getString(R.string.sticker_menu_title),
+                    items = items
+                )
+            }
+        }
+    }
+
+    private fun toggleFavorite(sticker: Sticker) {
+        scope.launch {
+            val isFav = repository.isFavorite(sticker.fileId)
+            if (isFav) {
+                repository.removeFromFavorites(sticker.fileId)
+            } else {
+                repository.addToFavorites(sticker)
+            }
+            withContext(Dispatchers.Main) {
+                android.widget.Toast.makeText(context, R.string.sticker_fav_updated, android.widget.Toast.LENGTH_SHORT).show()
+                if (currentTabId == TAB_FAVORITES) {
+                    showTab(TAB_FAVORITES) // Обновляем список, если мы на вкладке избранного
+                }
+            }
+        }
     }
 
     // ── Добавление пака ──────────────────────────────────────────────────────
 
     /** Переименование текущего пака (карандаш у названия в панели). */
     private fun showRenamePackDialog() {
-        val pack = packs.getOrNull(currentPackIndex) ?: return
+        val pack = packs.find { it.name == currentTabId } ?: return
         NeonDialog.showEdit(
             ctx = context,
             title = context.getString(R.string.sticker_rename_title),
@@ -298,7 +425,7 @@ class StickerPanelController(
                 }
                 withContext(Dispatchers.Main) {
                     packs = packs + pack
-                    currentPackIndex = packs.lastIndex
+                    currentTabId = pack.name
                     refreshUI()
                 }
             } catch (e: IllegalArgumentException) {

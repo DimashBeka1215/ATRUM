@@ -64,8 +64,8 @@
     <!-- Create chat -->
     <string name="create_chat_title">New chat</string>
     <string name="create_chat_partner_name">Contact name</string>
-    <string name="create_chat_token">GitHub Token</string>
-    <string name="create_chat_gist">Gist ID</string>
+    <string name="create_chat_token">Relay Token</string>
+    <string name="create_chat_channel">Room ID</string>
     <string name="create_chat_password">Encryption password</string>
     <string name="create_chat_password_hint">Your contact must enter this same password to decrypt messages</string>
     <string name="btn_create_chat">Create chat</string>
@@ -79,34 +79,34 @@
 
     <!-- Auto mode -->
     <string name="auto_token_title">One-time setup</string>
-    <string name="auto_token_hint">To create rooms automatically, a GitHub Token (scope: gist) is required. It is only used to create the gist and write messages — it is not part of encryption.</string>
+    <string name="auto_token_hint">To create rooms automatically, a Relay Token is required. It is only used to create the channel and write messages — it is not part of encryption.</string>
     <string name="create_room_name_label">Room name</string>
     <string name="create_room_name_hint">e.g. Alex</string>
     <string name="create_room_password_label">Room password</string>
     <string name="create_room_password_hint">secret</string>
     <string name="create_room_password_explainer">Your contact must enter this same password to read messages. This password encrypts messages end-to-end.</string>
     <string name="creating_room">Creating room…</string>
-    <string name="error_create_gist">Failed to create gist. Check your token.</string>
-    <string name="error_no_token">Enter a GitHub Token first</string>
+    <string name="error_create_channel">Failed to create channel. Check your token.</string>
+    <string name="error_no_token">Enter a Relay Token first</string>
 
     <!-- OAuth -->
 
     <!-- Create cards -->
     <string name="create_card_manual_title">Create manually</string>
-    <string name="create_card_manual_subtitle">Connect to an existing gist with a ready-made token</string>
-    <string name="create_card_github_title">Create P2P chat</string>
-    <string name="create_card_github_subtitle">Direct device-to-device. No servers — on-device encryption.</string>
-    <string name="create_card_github_cta">Create</string>
+    <string name="create_card_manual_subtitle">Connect to an existing channel with a ready-made token</string>
+    <string name="create_card_p2p_title">Create P2P chat</string>
+    <string name="create_card_p2p_subtitle">Direct device-to-device. No servers — on-device encryption.</string>
+    <string name="create_card_p2p_cta">Create</string>
     <string name="create_card_or">or</string>
     <string name="create_card_advanced">Advanced mode</string>
     <string name="manual_warning_title">For advanced users</string>
-    <string name="manual_warning_text">You need a GitHub token and Gist ID. If you\'re not sure what that is — use the automatic mode.</string>
+    <string name="manual_warning_text">You need a Relay Token and Room ID. If you\'re not sure what that is — use the automatic mode.</string>
     <string name="manual_help_token_title">Where to get a token?</string>
-    <string name="manual_help_token_desc">Create a Personal Access Token (classic). In the "Select scopes" section, make sure to select the "gist" checkbox.</string>
+    <string name="manual_help_token_desc">Create a Relay Access Token. In the settings, make sure to enable channel management.</string>
     <string name="manual_help_token_button">Create Token</string>
-    <string name="manual_help_gist_title">Where to get Gist ID?</string>
-    <string name="manual_help_gist_desc">Create any Gist on the website. The ID is the long code at the end of the URL.</string>
-    <string name="manual_help_gist_button">Open Gist</string>
+    <string name="manual_help_channel_title">Where to get Room ID?</string>
+    <string name="manual_help_channel_desc">Create any Channel on the relay. The ID is the long code at the end of the URL.</string>
+    <string name="manual_help_channel_button">Open Channel</string>
 
 
     <!-- Create chat subtitle and footer -->
@@ -139,14 +139,15 @@
 
     <!-- Delete chat -->
     <string name="action_delete_chat">Delete chat</string>
-    <string name="confirm_delete_chat">Delete this chat? Messages in GitHub Gist will remain, but the chat will be removed from the list.</string>
+    <string name="confirm_delete_chat">Delete this chat? Messages on the Relay will remain, but the chat will be removed from the list.</string>
 
     <!-- Legacy login strings -->
     <string name="title_login">Sign in</string>
-    <string name="hint_token">GitHub Token (ghp_…)</string>
-    <string name="hint_gist">Gist ID</string>
+    <string name="hint_token">Relay Token</string>
+    <string name="hint_channel">Room ID</string>
     <string name="hint_name">Your nickname</string>
     <string name="hint_password">Password (seed phrase)</string>
+    <string name="hint_gist">Gist ID</string>
     <string name="btn_enter">Enter chat</string>
 
     <!-- Chat -->
@@ -185,7 +186,7 @@
     <string name="settings_edit_status_title">Change status</string>
     <string name="settings_saved">Saved</string>
     <string name="settings_reset">Reset account</string>
-    <string name="settings_reset_hint">Deletes all local data: nickname, avatar, chat list. Messages in GitHub Gist will remain.</string>
+    <string name="settings_reset_hint">Deletes all local data: nickname, avatar, chat list. Messages on the Relay will remain.</string>
     <string name="settings_reset_confirm">Delete all local data? This action cannot be undone.</string>
     <string name="cd_change_avatar">Change avatar</string>
     <string name="error_avatar_load">Failed to load image</string>
@@ -202,18 +203,18 @@
 
     <!-- Warning banners -->
     <string name="warn_token_title">Token is invalid</string>
-    <string name="warn_token_message">GitHub is rejecting your token — it may have expired or been revoked. Tap "Update token" and enter a new one — no need to recreate the chat.</string>
+    <string name="warn_token_message">Relay is rejecting your token — it may have expired or been revoked. Tap "Update token" and enter a new one — no need to recreate the chat.</string>
     <string name="btn_update_token">Update token</string>
-    <!-- GitHub rate-limit banner -->
-    <string name="rate_limit_title">Too many requests</string>
-    <string name="rate_limit_retry_in">You can send again in %1$s</string>
-    <string name="dialog_update_token_title">New GitHub token</string>
+    <!-- Relay transport rate-limit banner -->
+    <string name="transport_limit_title">Too many requests</string>
+    <string name="transport_limit_retry_in">You can send again in %1$s</string>
+    <string name="dialog_update_token_title">New Relay token</string>
 
-    <string name="warn_rate_limit_title">GitHub asks to wait a moment</string>
+    <string name="warn_rate_limit_title">Relay asks to wait a moment</string>
     <string name="warn_rate_limit_message">Too many requests in a short time. This is temporary — the app will automatically resume syncing in a minute. Your messages are safe.</string>
 
-    <string name="warn_network_title">No connection to GitHub</string>
-    <string name="warn_network_message">Cannot reach the server. Check your internet — the app will keep retrying automatically. Messages already sent are saved.</string>
+    <string name="warn_network_title">No connection to Relay</string>
+    <string name="warn_network_message">Cannot reach the relay. Check your internet — the app will keep retrying automatically. Messages already sent are saved.</string>
 
     <string name="warn_fs_title">Messages from previous session are hidden</string>
     <string name="warn_fs_message">Some messages are encrypted with a previous session key that has already been destroyed. This is expected — it\'s how forward secrecy works: the past is unreadable even if the password leaks.</string>
@@ -251,26 +252,26 @@
     <string name="cc_duration_30d">30 days</string>
     <string name="cc_duration_90d">90 days</string>
     <string name="cc_duration_unlim">Unlimited</string>
-    <string name="cc_duration_helper">After the period expires, the chat and all data will be permanently deleted from GitHub servers.</string>
+    <string name="cc_duration_helper">After the period expires, the chat and all data will be permanently deleted from Nostr relays.</string>
     <string name="cc_create_button">Create chat</string>
 
     <!-- OAuth warning screen -->
-    <string name="ow_title">GitHub authorisation</string>
-    <string name="ow_subtitle">To create a secure chat we use your GitHub account.</string>
+    <string name="ow_title">Nostr authorisation</string>
+    <string name="ow_subtitle">To create a secure chat we use your Nostr account.</string>
     <string name="ow_need_know_title">What you need to know</string>
-    <string name="ow_need_know_desc">A GitHub page will open in your browser to confirm the sign-in. This is a standard part of GitHub\'s security system.</string>
-    <string name="ow_github_will_show">During confirmation GitHub may show:</string>
+    <string name="ow_need_know_desc">A Nostr login page will open in your browser to confirm the sign-in. This is a standard part of Nostr\'s security system.</string>
+    <string name="ow_nostr_will_show">During confirmation Nostr may show:</string>
     <string name="ow_row_location_title">Approximate location</string>
     <string name="ow_row_location_desc">City and IP address may be visible.</string>
     <string name="ow_row_time_title">Time and device</string>
     <string name="ow_row_time_desc">Date, time and device of sign-in.</string>
     <string name="ow_row_security_title">This is a standard security check</string>
-    <string name="ow_row_security_desc">This data is shown by GitHub to protect your account and is not related to our app.</string>
+    <string name="ow_row_security_desc">This data is shown by Nostr to protect your account and is not related to our app.</string>
     <string name="ow_after_auth">After successful confirmation you can close the browser manually and return to the app.</string>
     <string name="ow_perms_title">The app receives only the necessary permissions:</string>
-    <string name="ow_perm_gist_title">Access to your Gists</string>
-    <string name="ow_perm_gist_desc">Allows creating, reading and deleting Gists for chats to work.</string>
-    <string name="ow_perm_gist_note">No other data is requested or used.</string>
+    <string name="ow_perm_channel_title">Access to your Channels</string>
+    <string name="ow_perm_channel_desc">Allows creating, reading and deleting Channels for chats to work.</string>
+    <string name="ow_perm_channel_note">No other data is requested or used.</string>
     <string name="ow_continue">Continue</string>
     <string name="ow_footer">We do not access your data. The app uses only the necessary permissions and does not store your messages.</string>
 
@@ -278,7 +279,7 @@
     <string name="join_default_partner_name">Chat</string>
     <string name="join_btn_connecting">Connecting…</string>
     <string name="join_status_checking">Checking chat…</string>
-    <string name="join_status_connecting">Connecting to GitHub…</string>
+    <string name="join_status_connecting">Connecting to Relay…</string>
     <string name="join_status_verifying">Verifying password…</string>
     <string name="join_status_saving">Saving chat…</string>
     <string name="join_status_profile">Sharing profile…</string>
@@ -291,8 +292,8 @@
     <string name="join_err_timeout">Request timed out. Please try again.</string>
     <string name="join_err_not_found">This chat no longer exists. It may have been deleted or expired.</string>
     <string name="join_err_access">Access to this chat is closed. The token in the invite password may have been revoked.</string>
-    <string name="join_err_server">GitHub is temporarily unavailable. Try again in a minute.</string>
-    <string name="join_err_empty_response">GitHub returned an empty response. Please try again.</string>
+    <string name="join_err_server">Relay is temporarily unavailable. Try again in a minute.</string>
+    <string name="join_err_empty_response">Relay returned an empty response. Please try again.</string>
     <string name="join_err_generic_fmt">Failed to connect. %1$s</string>
 
     <!-- Join PIN Dialog -->
@@ -311,7 +312,7 @@
 
     <!-- Invite security warning -->
     <string name="invite_warning_title">⚠️ Before sharing</string>
-    <string name="invite_warning_message">The invite code contains a GitHub token and chat password in one string.\n\nIf someone intercepts this code — they get full access to the conversation.\n\nShare the invite only through trusted private channels (e.g. in person or via an encrypted messenger).</string>
+    <string name="invite_warning_message">The invite code contains a Relay token and chat password in one string.\n\nIf someone intercepts this code — they get full access to the conversation.\n\nShare the invite only through trusted private channels (e.g. in person or via an encrypted messenger).</string>
     <string name="invite_warning_confirm">Got it, share</string>
     <string name="invite_pin_title">Invite PIN</string>
     <string name="invite_pin_desc">Set a code for this invite. The recipient will need to enter it to join.</string>
@@ -338,8 +339,15 @@
     <string name="chat_expired_toast">Chat deleted — it has expired.</string>
 
     <!-- Delete chat with gist -->
-    <string name="confirm_delete_chat_gist">Delete this chat? The conversation will be permanently deleted from GitHub.</string>
+    <string name="confirm_delete_chat_channel">Delete this chat? The conversation will be permanently deleted from the Relay.</string>
     <string name="chat_deleted_toast">Chat deleted</string>
+    <string name="confirm_delete_chat_gist">Delete this chat? All local keys will be erased, making it impossible to restore history access.</string>
+    <string name="sticker_menu_title">Stickers</string>
+    <string name="sticker_remove_favorite">Remove from favorites</string>
+    <string name="sticker_add_favorite">Add to favorites</string>
+    <string name="sticker_delete_action">Delete Sticker</string>
+    <string name="sticker_delete_confirm">Delete this sticker from the pack?</string>
+    <string name="sticker_fav_updated">Favorites updated</string>
 
     <!-- Delete profile -->
     <string name="settings_delete_profile">Delete profile</string>
@@ -399,9 +407,13 @@
     <string name="about_title">About</string>
     <string name="about_thanks">Thanks for using Atrum</string>
     <string name="about_links_desc">Below are all the useful links. Be sure to follow updates and share your feedback!</string>
+    <string name="about_source_title">Source Code</string>
+    <string name="about_telegram_title">Telegram</string>
     <string name="about_section_links">LINKS</string>
-    <string name="about_github_desc">Source code and releases</string>
+    <string name="about_source_desc">Source code and releases</string>
     <string name="about_telegram_desc">News and updates</string>
+    <string name="about_telegram_chat_title">Community Chat</string>
+    <string name="about_telegram_chat_desc">Communication and support</string>
     <string name="about_support_desc">DonationAlerts, Boosty, Buy Me a Coffee</string>
 
     <!-- Credits -->
@@ -590,6 +602,9 @@
     <string name="sticker_rename_cd">Rename pack</string>
     <string name="msg_preview_sticker">Sticker</string>
     <string name="msg_preview_voice">Voice message</string>
+    <string name="msg_preview_photo_format">Photo: %1$s</string>
+    <string name="msg_preview_reply_format">Reply: %1$s</string>
+    <string name="msg_preview_self_format">You: %1$s</string>
     <string name="voice_record_cd">Record voice message</string>
     <string name="cd_voice_play">Play voice message</string>
     <string name="voice_slide_to_cancel">slide left to cancel</string>
@@ -611,6 +626,8 @@
     <string name="sticker_error_invalid_link">Invalid sticker pack link</string>
     <string name="sticker_error_not_found">Pack not found</string>
     <string name="sticker_error_network">Network error while loading stickers</string>
+    <string name="sticker_network_error_title">Loading issue</string>
+    <string name="sticker_network_error_message">Failed to connect to Telegram servers. We use Tor (port 9050) for privacy, but it may be unstable in some networks. If stickers aren\'t loading, try using a VPN. Telegram only sees sticker IDs and has no access to your keys or chats.</string>
 
     <!-- Sticker onboarding -->
     <string name="sticker_onboarding_title">How to add stickers</string>
@@ -628,8 +645,8 @@
     <string name="update_screen_title_ok">You are up to date</string>
     <string name="update_screen_subtitle_ok">Version %1$s</string>
     <string name="update_screen_changelog_label">What\'s new</string>
-    <string name="update_screen_github_releases">View on GitHub</string>
-    <string name="update_screen_github_code">Source code</string>
+    <string name="update_screen_source_releases">All releases</string>
+    <string name="update_screen_source_code">Source code</string>
     <string name="reply_photo_label">Photo</string>
     <string name="search_hint">Search</string>
     <string name="search_empty">No chats found</string>
@@ -659,8 +676,6 @@
     <string name="sticker_guide_s5_d">Long-press a sticker → View Sticker Set → ⋯ → Copy Link.</string>
     <string name="sticker_guide_s6_t">Add the pack by link</string>
     <string name="sticker_guide_s6_d">\'Add pack\' → paste t.me/addstickers/… → download → done.</string>
-    <string name="about_github_title">GitHub</string>
-    <string name="about_telegram_title">Telegram</string>
     <string name="btn_apply">Apply</string>
     <string name="cc_invite_only_title">How to connect to the chat</string>
     <string name="cc_invite_only_text">Your partner will get an invite code via «Share invite». The password is set automatically. To set your own password, use Advanced mode.</string>
@@ -695,7 +710,9 @@
     <string name="tor_connected">Connected to Tor</string>
     <string name="tor_failed">Tor unavailable. Retrying…</string>
     <string name="cc_path_label">Message path</string>
-    <string name="cc_path_desc_tor">Via Tor — private: traffic goes through the Tor network, relays don\'t see your IP. A bit slower.</string>
+    <string name="cc_path_desc_tor">Via Tor — private: connection goes through the Tor network, relays do not see your IP.</string>
+    <string name="cc_tor_experimental_title">Experimental Mode</string>
+    <string name="cc_tor_experimental_text">This transport is currently unstable. The author does not recommend using it for important conversations until further testing is completed.</string>
     <string name="cc_path_desc_nostr">Nostr — fast: direct connection to relays. Relays see your IP address.</string>
     <string name="cd_path_nostr">Nostr direct</string>
     <string name="cd_path_tor">Via Tor</string>
@@ -720,6 +737,7 @@
     <string name="bt_failed">Couldn\'t connect over Bluetooth</string>
     <string name="bt_perm_needed">Bluetooth permissions needed</string>
     <string name="voice_load_failed_fmt">Voice failed to load: %1$s</string>
+    <string name="voice_load_failed">Couldn\'t load the voice message. Try again</string>
     <string name="voice_limit_warning">One minute until the recording limit (15 min)</string>
     <string name="voice_limit_title">Recording limit soon</string>
     <string name="voice_limit_msg">1 minute left (max 15:00)</string>
@@ -739,4 +757,98 @@
         <item quantity="one">%1$d item</item>
         <item quantity="other">%1$d items</item>
     </plurals>
+    <!-- Network / relays / publisher -->
+    <string name="settings_section_network">Network</string>
+    <string name="settings_item_relays">Message relays</string>
+    <string name="settings_item_publisher">Relay list publisher</string>
+    <string name="relays_sub_builtin">%1$d built-in</string>
+    <string name="relays_sub_full">%1$d built-in + %2$d added · v%3$d</string>
+    <string name="pub_title">Relay list publisher</string>
+    <string name="pub_no_key_info">Enter the publisher private key. It is stored only on this phone (Keystore) and never leaves it. The relay list is signed with it; users accept only a list signed by the key baked into the app.</string>
+    <string name="pub_key_hint">Private key (hex, 64 chars)</string>
+    <string name="pub_save_key">Save key</string>
+    <string name="pub_gen_pair">Generate new pair</string>
+    <string name="pub_warn_lose_key">Lose the key — you can no longer publish updates. Keep an offline copy.</string>
+    <string name="pub_pubkey_label">Public key (bake it into the build):</string>
+    <string name="pub_copy">Copy</string>
+    <string name="pub_added_relays">Added relays</string>
+    <string name="pub_add_relay_hint">wss://new-relay…</string>
+    <string name="pub_publish">Publish</string>
+    <string name="pub_delete_key">Remove key from this phone</string>
+    <string name="pub_key_saved">Key saved</string>
+    <string name="pub_invalid_key">Invalid key (need 64 hex chars)</string>
+    <string name="pub_published_ok">Published to %1$d relays</string>
+    <string name="pub_publish_fail">Could not publish to any relay</string>
+    <string name="pub_relay_bad">Address must start with wss://</string>
+    <string name="pub_current_ver">Current version: v%1$d</string>
+    <string name="pub_no_pubkey_baked">⚠ Public key is not baked into this build — users won\'t accept the list yet. Give me the public key below.</string>
+    <string name="pub_verify_checking">Checking delivery…</string>
+    <string name="pub_verify_ok">Readable on %1$d of %2$d relays</string>
+    <string name="pub_verify_none">Not readable on any relay yet — wait and publish again</string>
+    <string name="pub_gate_title">Publisher access</string>
+    <string name="pub_gate_hint">Password</string>
+    <string name="pub_gate_wrong">Wrong password</string>
+    <string name="pub_gate_dev_title">Developer window</string>
+    <string name="pub_gate_dev_body">For the developer only — to check relays and the paths messages travel. A regular user does not need this window: everything works by itself.</string>
+    <string name="pub_gate_pwd_label">Password</string>
+    <string name="pub_gate_enter">Enter</string>
+    <string name="pub_gate_delete">Remove this window</string>
+    <string name="pub_gate_delete_hint">Hides the Network section and this entry on your phone. Does not affect how the app works. To restore, clear app data.</string>
+    <string name="pub_gate_delete_confirm">Hide the Network section on this phone? It can only be restored by clearing app data.</string>
+    <string name="pub_gate_deleted">Section hidden</string>
+    <string name="pub_pubkey_label_baked">Public key — baked into the build ✓</string>
+    <string name="action_done">Done</string>
+    <string name="bcrop_safe_show">What is covered</string>
+    <string name="bcrop_safe_hide">Hide</string>
+    <string name="bcrop_reset">Reset</string>
+    <string name="bcrop_sample_name">Name</string>
+    <!-- Invite QR screen -->
+    <string name="invite_qr_title">Invite</string>
+    <string name="invite_qr_pin_label">Pass code</string>
+    <string name="invite_qr_default_name">Chat</string>
+    <string name="invite_qr_share_image">Share</string>
+    <string name="invite_qr_share_text">Send as text</string>
+    <string name="invite_qr_save_image">Save to gallery</string>
+    <string name="invite_qr_copy_send">Copy to send</string>
+    <string name="invite_qr_saved">Saved to album “Atrum QR”</string>
+    <string name="invite_qr_image_copied">QR copied to clipboard</string>
+    <string name="cd_qr_save_gallery">Save QR to gallery</string>
+    <string name="cd_qr_copy_image">Copy QR image</string>
+    <string name="cd_qr_copy_text">Copy invite text</string>
+    <string name="invite_qr_save_failed">Couldn\'t save QR</string>
+    <string name="invite_qr_share_caption">Invite to an encrypted Atrum chat. Scan the QR in the app or with your phone camera. The pass code will be sent separately.</string>
+    <string name="invite_qr_scan">Scan QR code</string>
+    <string name="invite_qr_or">or</string>
+    <string name="invite_qr_copied">Invite code copied — paste it into the chat manually</string>
+    <string name="settings_item_mods">Mods</string>
+    <string name="mods_source">Verified mods only · source.atrum.chat/mods</string>
+    <string name="mods_loading">Loading catalog…</string>
+    <string name="mods_error_fmt">Couldn\'t load catalog: %1$s</string>
+    <string name="mods_empty">No mods yet</string>
+    <string name="mods_signed">signed</string>
+    <string name="mods_unverified">unverified</string>
+    <string name="mods_dev_banner">Publisher not set — catalog signature isn\'t verified</string>
+    <string name="mods_install">Install</string>
+    <string name="mods_install_soon">Mod loading is coming in a future version</string>
+    <string name="mods_loaded_fmt">Mod loaded: %1$s</string>
+    <string name="mods_load_failed_fmt">Failed: %1$s</string>
+    <string name="sticker_delete_from_my">Remove from my stickers</string>
+    <string name="sticker_pack_title_detail">Sticker pack</string>
+    <string name="msg_error_empty">Error: Empty message</string>
+    <string name="settings_section_tester">TESTER</string>
+    <string name="settings_item_tester">Tester Settings</string>
+    <string name="tester_screen_title">Tester Settings</string>
+    <string name="tester_item_crash">Manual App Crash</string>
+    <string name="tester_item_crash_desc">Triggers a RuntimeException for testing</string>
+    <string name="tester_item_screenshots">Allow Screenshots/Recording</string>
+    <string name="tester_item_screenshots_desc">Disables FLAG_SECURE for the entire app</string>
+    <string name="tester_crash_btn">Crash Now</string>
+    <string name="tester_crash_confirm_title">Trigger Crash?</string>
+    <string name="tester_crash_confirm_msg">The app will crash immediately with a RuntimeException.</string>
+    <string name="tester_pwd_dialog_title">Tester Access</string>
+    <string name="tester_pwd_dialog_desc">Enter tester password to access hidden settings.</string>
+    <string name="tester_pwd_hint">Password</string>
+    <string name="tester_pwd_wrong">Access denied</string>
+    <string name="sticker_show_all_format">Show all (%1$d)</string>
+    <string name="media_diag_copied_fmt">Reason copied: %1$s</string>
 </resources>

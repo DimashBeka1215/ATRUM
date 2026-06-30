@@ -123,13 +123,24 @@ object ImageUtils {
         }
     }
 
-    /** base64 → Bitmap. */
+    /** Потолок стороны декодируемой картинки — защита от OOM на гигантском вложении. */
+    private const val MAX_IMAGE_DIM = 2560
+
+    /** base64 → Bitmap. С лимитом размеров (картинка от собеседника недоверенная). */
     fun fromBase64(base64: String?): Bitmap? {
         if (base64.isNullOrBlank()) return null
         return try {
             val bytes = Base64.decode(base64, Base64.DEFAULT)
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            var sample = 1
+            while (bounds.outWidth / sample > MAX_IMAGE_DIM ||
+                   bounds.outHeight / sample > MAX_IMAGE_DIM) sample *= 2
+            val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
         } catch (e: Exception) {
+            null
+        } catch (e: OutOfMemoryError) {
             null
         }
     }

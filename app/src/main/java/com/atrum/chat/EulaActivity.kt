@@ -31,7 +31,9 @@ class EulaActivity : AppCompatActivity() {
 
         binding.btnAccept.setOnClickListener {
             Prefs(this).eulaAccepted = true
-            startActivity(Intent(this, WelcomeActivity::class.java))
+            // Возвращаемся в IntroActivity (точка входа/роутер): на ПЕРВОМ запуске
+            // сразу после EULA покажутся intro-карточки, затем обычный поток.
+            startActivity(Intent(this, IntroActivity::class.java))
             finish()
         }
 

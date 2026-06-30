@@ -194,9 +194,9 @@
                     android:contentDescription="@null" />
             </LinearLayout>
 
-            <!-- GITHUB -->
+            <!-- SOURCE CODE -->
             <LinearLayout
-                android:id="@+id/itemGithub"
+                android:id="@+id/itemSource"
                 android:layout_width="match_parent"
                 android:layout_height="62dp"
                 android:orientation="horizontal"
@@ -216,7 +216,7 @@
                         android:layout_width="20dp"
                         android:layout_height="20dp"
                         android:layout_gravity="center"
-                        android:src="@drawable/ic_github"
+                        android:src="@drawable/ic_code"
                         android:tint="@color/accent"
                         android:contentDescription="@null" />
                 </FrameLayout>
@@ -229,14 +229,14 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="@string/about_github_title"
+                        android:text="@string/about_source_title"
                         android:textColor="@color/text_primary"
                         android:textSize="15sp"
                         android:fontFamily="sans-serif-medium" />
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="@string/about_github_desc"
+                        android:text="@string/about_source_desc"
                         android:textColor="@color/text_secondary"
                         android:textSize="12sp"
                         android:layout_marginTop="2dp" />
@@ -250,7 +250,7 @@
                     android:contentDescription="@null" />
             </LinearLayout>
 
-            <!-- TELEGRAM -->
+            <!-- TELEGRAM (NEWS) -->
             <LinearLayout
                 android:id="@+id/itemTelegram"
                 android:layout_width="match_parent"
@@ -258,6 +258,7 @@
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
                 android:paddingHorizontal="14dp"
+                android:layout_marginBottom="8dp"
                 android:background="@drawable/bg_about_link_item"
                 android:clickable="true"
                 android:focusable="true">
@@ -292,6 +293,61 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="@string/about_telegram_desc"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:src="@drawable/ic_chevron_right"
+                    android:tint="@color/text_quaternary"
+                    android:contentDescription="@null" />
+            </LinearLayout>
+
+            <!-- TELEGRAM CHAT (COMMUNITY) -->
+            <LinearLayout
+                android:id="@+id/itemTelegramChat"
+                android:layout_width="match_parent"
+                android:layout_height="62dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="14dp"
+                android:background="@drawable/bg_about_link_item"
+                android:clickable="true"
+                android:focusable="true">
+
+                <FrameLayout
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:background="@drawable/bg_about_icon_badge"
+                    android:layout_marginEnd="14dp">
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_chat_bubble"
+                        android:tint="@color/accent"
+                        android:contentDescription="@null" />
+                </FrameLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/about_telegram_chat_title"
+                        android:textColor="@color/text_primary"
+                        android:textSize="15sp"
+                        android:fontFamily="sans-serif-medium" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/about_telegram_chat_desc"
                         android:textColor="@color/text_secondary"
                         android:textSize="12sp"
                         android:layout_marginTop="2dp" />

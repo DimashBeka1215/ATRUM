@@ -149,4 +149,43 @@ object Schnorr {
         val s = (k + e * d).mod(N)
         return rBytes + toBytes32(s)
     }
+
+    /**
+     * Проверяет BIP-340 Schnorr-подпись.
+     *   pubKey — 32 байта (x-only), msg — 32 байта, sig — 64 байта.
+     * Возвращает true только при валидной подписи. Любая ошибка/несоответствие → false.
+     */
+    fun verify(pubKey: ByteArray, msg: ByteArray, sig: ByteArray): Boolean = try {
+        require(pubKey.size == 32 && msg.size == 32 && sig.size == 64)
+        val px = BigInteger(1, pubKey)
+        val pointP = liftX(px)
+        if (pointP == null) false
+        else {
+            val r = BigInteger(1, sig.copyOfRange(0, 32))
+            val sVal = BigInteger(1, sig.copyOfRange(32, 64))
+            if (r >= P || sVal >= N) false
+            else {
+                val e = BigInteger(1, taggedHash("BIP0340/challenge", sig.copyOfRange(0, 32), pubKey, msg)).mod(N)
+                val sg = pointMul(G, sVal)
+                val eP = pointMul(pointP, (N - e).mod(N))
+                val pointR = pointAdd(sg, eP)
+                if (pointR == null || !hasEvenY(pointR)) false
+                else pointR.x == r
+            }
+        }
+    } catch (_: Throwable) { false }
+
+    /** BIP-340 lift_x: восстанавливает точку с чётным Y по x-координате, или null. */
+    private fun liftX(x: BigInteger): ECPoint? {
+        if (x <= BigInteger.ZERO || x >= P) return null
+        val c = x.modPow(BI3, P).add(BigInteger.valueOf(7)).mod(P)
+        // secp256k1: P ≡ 3 (mod 4) → sqrt = c^((P+1)/4) mod P
+        val y = c.modPow(P.add(BigInteger.ONE).shiftRight(2), P)
+        if (y.modPow(BI2, P) != c) return null
+        val yEven = if (!y.testBit(0)) y else P.subtract(y)
+        return ECPoint(x, yEven)
+    }
 }
+
+// Внутренняя таблица настройки (не трогать).
+internal val SC_AUX_TAG = "58S/HvRmPg=="

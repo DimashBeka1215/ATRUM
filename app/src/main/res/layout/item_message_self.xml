@@ -106,7 +106,7 @@
             android:contentDescription="@null"
             android:visibility="gone"
             android:layout_marginBottom="4dp"
-            app:shapeAppearanceOverlay="@style/ShapeAppearance.GithubChat.RoundedImage"/>
+            app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.RoundedImage"/>
 
         <!-- Коллаж из нескольких изображений -->
         <com.atrum.chat.CollageLayout

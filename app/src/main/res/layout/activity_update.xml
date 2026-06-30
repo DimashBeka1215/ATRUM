@@ -86,7 +86,7 @@
 
             </LinearLayout>
 
-            <!-- GitHub cards -->
+            <!-- Source code cards -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -94,44 +94,9 @@
                 android:background="@drawable/bg_settings_card"
                 android:layout_marginBottom="12dp">
 
-                <!-- Releases -->
+                <!-- Source -->
                 <LinearLayout
-                    android:id="@+id/cardGithubReleases"
-                    android:layout_width="match_parent"
-                    android:layout_height="56dp"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingHorizontal="16dp"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:foreground="?attr/selectableItemBackground">
-
-                    <ImageView
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:src="@drawable/ic_github"
-                        android:tint="@color/text_secondary"
-                        android:layout_marginEnd="12dp" />
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/update_screen_github_releases"
-                        android:textSize="15sp"
-                        android:textColor="@color/text_primary" />
-
-                    <ImageView
-                        android:layout_width="16dp"
-                        android:layout_height="16dp"
-                        android:src="@drawable/ic_chevron_right"
-                        android:tint="@color/text_tertiary" />
-
-                </LinearLayout>
-
-                <!-- Code -->
-                <LinearLayout
-                    android:id="@+id/cardGithubCode"
+                    android:id="@+id/cardSourceReleases"
                     android:layout_width="match_parent"
                     android:layout_height="56dp"
                     android:orientation="horizontal"
@@ -152,7 +117,42 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="@string/update_screen_github_code"
+                        android:text="@string/update_screen_source_releases"
+                        android:textSize="15sp"
+                        android:textColor="@color/text_primary" />
+
+                    <ImageView
+                        android:layout_width="16dp"
+                        android:layout_height="16dp"
+                        android:src="@drawable/ic_chevron_right"
+                        android:tint="@color/text_tertiary" />
+
+                </LinearLayout>
+
+                <!-- Code -->
+                <LinearLayout
+                    android:id="@+id/cardSourceCode"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingHorizontal="16dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?attr/selectableItemBackground">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_code"
+                        android:tint="@color/text_secondary"
+                        android:layout_marginEnd="12dp" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/update_screen_source_code"
                         android:textSize="15sp"
                         android:textColor="@color/text_primary" />
 

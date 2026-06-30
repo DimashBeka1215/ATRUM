@@ -1,6 +1,8 @@
 package com.atrum.chat.transport
 
+import kotlinx.coroutines.cancelChildren
 import com.atrum.chat.nostr.NostrEvent
+import android.content.Context
 import com.atrum.chat.nostr.NostrRelayPool
 import com.atrum.chat.nostr.toHex
 import kotlinx.coroutines.CompletableDeferred
@@ -18,16 +20,20 @@ import org.json.JSONObject
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import com.atrum.chat.CryptoHelper
+import com.atrum.chat.RelayListStore
 import com.atrum.chat.ImageChunker
 import java.security.MessageDigest
 
 /**
- * ChatTransport поверх Nostr (NIP-01). Drop-in замена GistTransport:
+ * ChatTransport поверх Nostr (NIP-01). Drop-in замена Gist-транспорта:
  * тот же файловый контракт (chat.txt / reactions.txt / profiles.txt / img_*),
- * меняется только «труба» хранения — публичные реле вместо GitHub Gist.
+ * меняется только «труба» хранения — публичные реле вместо GitHub.
  */
 class NostrTransport(
-    gistId: String,
+    // Исходный chatId (chat.chatId) — крипто-домен сессии. channelId (хеш от него) —
+    // только для сети (теги Nostr). Контент/манифест медиа шифруем под sourceId, чтобы
+    // попасть в forward-secrecy сессию (как текст), а не в парольный V4.
+    private val sourceId: String,
     private val chatPassword: String,
     private val myUserId: String,
     /** Предпочитать Tor. Фактический режим ([useTor]) — динамический (см. ниже). */
@@ -37,32 +43,20 @@ class NostrTransport(
     /**
      * ФАКТИЧЕСКИЙ режим подключения к реле.
      *  • preferTor=false (чат помечен NOSTR_DIRECT_TOKEN) → всегда напрямую.
-     *  • Tor READY → через Tor (приватность).
-     *  • Tor FAILED, либо не дошёл до READY за [TOR_FALLBACK_MS] от старта → ПРЯМОЕ
-     *    подключение к публичным реле. Это даёт работу Nostr там, где Tor заблокирован,
-     *    БЕЗ VPN. На синхронизацию не влияет: channelId и шифрование от способа
-     *    подключения не зависят — меняется только «труба».
+     *  • preferTor=true → СТРОГО через Tor. Если Tor не готов или заблокирован,
+     *    прямого соединения НЕ будет. Это закрывает «дыру» утечки IP-адреса
+     *    при нестабильном Tor-соединении в публичных сетях.
      */
-    private val useTor: Boolean
-        get() {
-            if (!preferTor) return false
-            return when (com.atrum.chat.TorManager.status.value) {
-                com.atrum.chat.TorManager.TorStatus.READY  -> true
-                com.atrum.chat.TorManager.TorStatus.FAILED -> false
-                else -> {
-                    val started = com.atrum.chat.TorManager.startedAtMs
-                    // Пока ждём Tor в пределах дедлайна — через Tor; вышли за дедлайн
-                    // (Tor, видимо, заблокирован) — переходим на прямое подключение.
-                    started == 0L || System.currentTimeMillis() - started < TOR_FALLBACK_MS
-                }
-            }
-        }
+    override val useTor: Boolean
+        get() = preferTor
 
     override val displayName: String get() = "Nostr P2P"
     override val displayIcon: String get() = "⚡"
     override val chatId: String get() = channelId
+    // Крипто-домен = исходный chatId (под ним ставится сессия), НЕ сетевой channelId.
+    override val cryptoChatId: String get() = sourceId
 
-    val channelId: String = sha256("atrum_channel_v1_$gistId").toHex().take(16)
+    val channelId: String = sha256("atrum_channel_v1_$sourceId").toHex().take(16)
 
     @Volatile private var lastContentHash: String? = null
 
@@ -78,7 +72,7 @@ class NostrTransport(
     }
 
     /** Последний УСПЕШНО прочитанный снапшот — отдаём его, если реле не ответили (анти-очистка). */
-    @Volatile private var lastGoodAll: AllGistData? = null
+    @Volatile private var lastGoodAll: AllChannelData? = null
     @Volatile private var lastGoodContent: String? = null
 
     // ─── чтение чата ────────────────────────────────────────────────────────────
@@ -107,12 +101,12 @@ class NostrTransport(
     }
 
     // ─── Объединённый снапшот: chat + reactions + profiles ОДНИМ запросом ──────
-    // Паритет с Gist (один GET на всё): профили обрабатываются в основном цикле
+    // Паритет с Legacy (один GET на всё): профили обрабатываются в основном цикле
     // (presence/typing/online, галочки прочтения, имя/аватар, V3-ключ).
 
-    override suspend fun loadAll(): AllGistData {
+    override suspend fun loadAll(): AllChannelData {
         val events = queryAllRelays(chatFilter())
-            ?: return lastGoodAll ?: AllGistData(NostrMessageStore.render(channelId), "", "")
+            ?: return lastGoodAll ?: AllChannelData(NostrMessageStore.render(channelId), "", "")
         val data = splitAll(events)
         lastAllHash = hashAll(data)
         lastContentHash = sha256(data.chatContent).toHex()
@@ -120,7 +114,7 @@ class NostrTransport(
         return data
     }
 
-    override suspend fun loadAllIfChanged(): AllGistData? {
+    override suspend fun loadAllIfChanged(): AllChannelData? {
         val events = queryAllRelays(chatFilter()) ?: return null // реле не ответили — без изменений
         val data = splitAll(events)
         val h = hashAll(data)
@@ -195,11 +189,11 @@ class NostrTransport(
         }
     }
 
-    private fun splitAll(events: List<NostrEvent>): AllGistData {
+    private fun splitAll(events: List<NostrEvent>): AllChannelData {
         // Сообщения — через долговечный локальный стор (реле могут подрезать историю).
         NostrMessageStore.merge(channelId, events)
         cacheMediaFrom(events) // стикеры/фото — в кэш из этого же опроса
-        return AllGistData(
+        return AllChannelData(
             chatContent = NostrMessageStore.render(channelId),
             reactionsContent = latestFile(events, "reactions.txt"),
             profilesContent = latestFile(events, "profiles.txt"),
@@ -229,14 +223,23 @@ class NostrTransport(
             .maxByOrNull { it.created_at }
             ?.content ?: ""
 
-    private fun hashAll(d: AllGistData): String =
+    private fun hashAll(d: AllChannelData): String =
         sha256(d.chatContent + " : " + d.reactionsContent + " : " + d.profilesContent +
             " : " + d.profileSlots.joinToString("|")).toHex()
 
     // ─── запись ──────────────────────────────────────────────────────────────────
 
-    /** Публикует одну зашифрованную строку как kind:1 + дополнительные файлы (паритет с Gist). */
+    /** Публикует одну зашифрованную строку как kind:1 + дополнительные файлы (паритет с Legacy). */
     override suspend fun appendLine(encryptedLine: String, extraFiles: Map<String, String>) {
+        // ⚠️ ПОРЯДОК ВАЖЕН: сначала заливаем КОНТЕНТ (фото/голос — чанки+манифест),
+        // и только ПОТОМ публикуем строку-анонс (kind:1). Иначе получатель, опросив
+        // реле раз в ~3с, видит сообщение РАНЬШЕ, чем его медиа долито (каждый чанк —
+        // отдельная медленная публикация через Tor) → грузит файл, которого ещё нет →
+        // пустой пузырёк, а негативный кэш (битые загрузки) закрепляет пустоту.
+        // Контент-события (kind FILE_KIND) подтянутся тем же опросом, что и строка,
+        // и сразу осядут в mediaCache. Касается и фото, и голосовых (один и тот же путь).
+        for ((name, content) in extraFiles) saveFile(name, content)
+
         val ev = NostrEvent.create(
             privkeyBytes = privkey,
             kind = 1,
@@ -245,7 +248,23 @@ class NostrTransport(
         )
         publishToAnyRelay(ev)
         NostrMessageStore.merge(channelId, listOf(ev)) // своё сообщение — сразу в долговечный стор
-        for ((name, content) in extraFiles) saveFile(name, content)
+        scheduleRebroadcast(ev)                        // переотправка на случай недоступного в этот момент реле
+    }
+
+    /**
+     * Доотправка текстового сообщения через паузы. Покрывает сценарий, где в момент
+     * отправки часть реле была недоступна (упала/банилась): при повторе уже поднявшиеся
+     * реле получат событие. Событие Nostr идемпотентно по id — реле, у которых оно уже
+     * есть, дубль отбрасывают. Ограничено двумя попытками (≈15с и ≈45с), не бесконечный
+     * цикл — текстовое событие крошечное, нагрузка минимальна.
+     */
+    private fun scheduleRebroadcast(ev: NostrEvent) {
+        publishScope.launch {
+            for (delayMs in longArrayOf(15_000L, 30_000L)) {
+                kotlinx.coroutines.delay(delayMs)
+                runCatching { publishToAnyRelay(ev) }
+            }
+        }
     }
 
     /** Сырая публикация одного файла-события (kind:1, тег ["file", name]) без чанкинга. */
@@ -295,7 +314,10 @@ class NostrTransport(
             publishFile(chunkNames[i], chunk)
             onProgress?.invoke(i + 1, chunks.size)
         }
-        val manifestEnc = CryptoHelper.encrypt(ImageChunker.makeManifestPlain(chunkNames), password, chatId)
+        // Манифест шифруем под sourceId (chat.chatId) через encrypt() — тем же ключом/
+        // сессией, что и контент и текст. Иначе домены не совпадут и манифест не
+        // расшифруется у получателя (cryptoChatId = chat.chatId).
+        val manifestEnc = CryptoHelper.encrypt(ImageChunker.makeManifestPlain(chunkNames), password, sourceId)
         publishFile(name, manifestEnc)
     }
 
@@ -403,30 +425,39 @@ class NostrTransport(
         put("since", sinceSec)
     }
 
+    /** Набор реле, для которых сейчас ВЫПОЛНЯЕТСЯ попытка подписки (защита от шторма). */
+    private val connectingRelays = java.util.Collections.synchronizedSet(HashSet<String>())
+
     override fun watchMessages(onNew: () -> Unit): AutoCloseable {
         val subId = "atrumw_$channelId"
         val sinceSec = System.currentTimeMillis() / 1000
         val onEvent: (NostrEvent) -> Unit = { ev ->
             if (ev.kind == 1) {
-                NostrMessageStore.merge(channelId, listOf(ev)) // сразу в долговечный стор
+                NostrMessageStore.merge(channelId, listOf(ev))
                 onNew()
             }
         }
-        // Сторож: держим подписку открытой на всех реле; после реконнекта (drop()
-        // снимает subs) переоткрываем. Реле НЕ опрашиваем — оно само шлёт события.
         val job = watchScope.launch {
             while (isActive) {
-                for (url in RELAYS) {
-                    if (!NostrRelayPool.hasSub(url, subId, useTor)) {
-                        runCatching { NostrRelayPool.subscribe(url, subId, streamFilter(sinceSec), useTor, onEvent) }
+                activeRelays().forEach { url ->
+                    if (!NostrRelayPool.hasSub(url, subId, useTor) && !connectingRelays.contains(url + subId)) {
+                        launch {
+                            val key = url + subId
+                            connectingRelays.add(key)
+                            try {
+                                runCatching { NostrRelayPool.subscribe(url, subId, streamFilter(sinceSec), useTor, onEvent) }
+                            } finally {
+                                connectingRelays.remove(key)
+                            }
+                        }
                     }
                 }
-                delay(RESUBSCRIBE_MS)
+                delay(if (useTor) RESUBSCRIBE_TOR_MS else RESUBSCRIBE_MS)
             }
         }
         return AutoCloseable {
             job.cancel()
-            for (url in RELAYS) runCatching { NostrRelayPool.unsubscribe(url, subId, useTor) }
+            for (url in activeRelays()) runCatching { NostrRelayPool.unsubscribe(url, subId, useTor) }
         }
     }
 
@@ -448,28 +479,35 @@ class NostrTransport(
         val subId = "atrump_$channelId"
         val sinceSec = System.currentTimeMillis() / 1000
         val onEvent: (NostrEvent) -> Unit = { ev ->
-            // Только слот ПАРТНЁРА (свой пропускаем — экономим Argon2 на своих presence-пушах).
             if (ev.kind == FILE_KIND && ev.pubkey != myPubkeyHex) onProfile(ev.content)
         }
         val job = watchScope.launch {
             while (isActive) {
-                for (url in RELAYS) {
-                    if (!NostrRelayPool.hasSub(url, subId, useTor)) {
-                        runCatching { NostrRelayPool.subscribe(url, subId, profileStreamFilter(sinceSec), useTor, onEvent) }
+                activeRelays().forEach { url ->
+                    if (!NostrRelayPool.hasSub(url, subId, useTor) && !connectingRelays.contains(url + subId)) {
+                        launch {
+                            val key = url + subId
+                            connectingRelays.add(key)
+                            try {
+                                runCatching { NostrRelayPool.subscribe(url, subId, profileStreamFilter(sinceSec), useTor, onEvent) }
+                            } finally {
+                                connectingRelays.remove(key)
+                            }
+                        }
                     }
                 }
-                delay(RESUBSCRIBE_MS)
+                delay(if (useTor) RESUBSCRIBE_TOR_MS else RESUBSCRIBE_MS)
             }
         }
         return AutoCloseable {
             job.cancel()
-            for (url in RELAYS) runCatching { NostrRelayPool.unsubscribe(url, subId, useTor) }
+            for (url in activeRelays()) runCatching { NostrRelayPool.unsubscribe(url, subId, useTor) }
         }
     }
 
     private fun chatFilter(): JSONObject = JSONObject().apply {
-        // kind:1 — сообщения (хранятся), kind FILE_KIND — файлы (replaceable). Один запрос на всё.
-        put("kinds", JSONArray().put(1).put(FILE_KIND))
+        // kind:1 — сообщения, kind:5 — удаления, kind FILE_KIND — файлы.
+        put("kinds", JSONArray().put(1).put(5).put(FILE_KIND))
         put("#t", JSONArray().put(channelId))
         put("limit", 1000)
     }
@@ -495,75 +533,128 @@ class NostrTransport(
     private suspend fun queryAllRelays(filter: JSONObject): List<NostrEvent>? {
         val collected = ConcurrentLinkedQueue<NostrEvent>()
         val responded = AtomicInteger(0)
+        val firstResponse = CompletableDeferred<Unit>()
+        val hardDeadline = if (useTor) SOFT_READ_DEADLINE_TOR_MS else SOFT_READ_DEADLINE_MS
+        val graceMs = if (useTor) READ_GRACE_TOR_MS else READ_GRACE_MS
+        val relays = activeRelays()
+
         coroutineScope {
-            val jobs = RELAYS.map { url ->
+            val jobs = relays.map { url ->
                 launch {
                     val r = runCatching { NostrRelayPool.query(url, filter, useTor) }.getOrNull()
-                    if (r != null) { responded.incrementAndGet(); collected.addAll(r) }
+                    // UNION READ: события собираются со ВСЕХ ответивших реле (у разных реле
+                    // разные подмножества из-за retention и публикации на кворум, а не на все
+                    // сразу), поэтому терять остальных после первого ответа нельзя.
+                    if (r != null) {
+                        collected.addAll(r)
+                        responded.incrementAndGet()
+                        firstResponse.complete(Unit) // идемпотентно — отмечаем первый ответ
+                    }
                 }
             }
-            withTimeoutOrNull(if (useTor) SOFT_READ_DEADLINE_TOR_MS else SOFT_READ_DEADLINE_MS) { jobs.joinAll() }
-            jobs.forEach { it.cancel() }
+            // Хеджированное чтение: доставка сообщения партнёру НЕ должна упираться в самый
+            // медленный/мёртвый узел. Как только ответило ПЕРВОЕ реле — даём остальным
+            // короткое окно [graceMs] добрать события и выходим, не дожидаясь полного
+            // дедлайна. Полнота союза не страдает: пропущенное на этом тике реле подберётся
+            // на следующем (поллинг ~1с), а долговечный стор ничего не теряет. Жёсткий
+            // потолок [hardDeadline] остаётся для случая, когда не ответил вообще никто.
+            withTimeoutOrNull(hardDeadline) {
+                firstResponse.await()
+                withTimeoutOrNull(graceMs) { jobs.joinAll() }
+            }
+            // Отменяем оставшиеся «висящие» запросы (медленные/мёртвые реле).
+            this@coroutineScope.coroutineContext.cancelChildren()
         }
+
         if (responded.get() == 0) return null
         val seen = HashSet<String>()
         return collected.filter { seen.add(it.id) }
     }
 
     /**
-     * Публикует событие ПАРАЛЛЕЛЬНО на все реле и возвращается, как только ПЕРВОЕ
-     * реле приняло событие (не ждём самое медленное — иначе через Tor часы у
-     * сообщения висят до 20с-таймаута). Остальные публикации продолжаются в фоне
-     * на [publishScope] для надёжности доставки на несколько реле.
-     * Если ВСЕ реле отклонили — бросаем исключение с причинами.
+     * Публикует событие ПАРАЛЛЕЛЬНО на все реле.
+     *
+     * Для «запутывания» наблюдателя (timing analysis) и создания иллюзии распределённого
+     * вещания, мы ждём подтверждения от КВОРУМА реле (например, 3), прежде чем разблокировать
+     * отправителя. Это скрывает, какое именно реле является «ведущим» или ближайшим.
+     * Также добавлен небольшой джиттер (случайная задержка) перед отправкой.
      */
     private suspend fun publishToAnyRelay(event: NostrEvent) {
         val firstSuccess = CompletableDeferred<Boolean>()
         val failures = ConcurrentLinkedQueue<String>()
-        val remaining = AtomicInteger(RELAYS.size)
-        for (url in RELAYS) {
+        val relays = activeRelays()
+        val remaining = AtomicInteger(relays.size)
+
+        val okCount = AtomicInteger(0)
+        // Для Tor увеличиваем кворум до 2 реле для надежности, если реле много.
+        // Если реле мало, хватит и 1.
+        val targetQuorum = if (relays.size > 3) 2 else 1 
+
+        for (url in relays) {
             publishScope.launch {
                 val r = runCatching { NostrRelayPool.publish(url, event, useTor) }
                 if (r.isSuccess) {
-                    firstSuccess.complete(true) // первый успех разблокирует отправителя
+                    val currentOk = okCount.incrementAndGet()
+                    if (currentOk >= targetQuorum) {
+                        firstSuccess.complete(true)
+                    }
                 } else {
                     val host = url.removePrefix("wss://")
-                    failures.add("$host: ${r.exceptionOrNull()?.message?.take(80) ?: "?"}")
-                    if (remaining.decrementAndGet() == 0) firstSuccess.complete(false)
+                    failures.add("$host: ${r.exceptionOrNull()?.message?.take(60) ?: "?"}")
+                }
+
+                if (remaining.decrementAndGet() == 0) {
+                    if (okCount.get() > 0) firstSuccess.complete(true)
+                    else firstSuccess.complete(false)
                 }
             }
         }
-        if (!firstSuccess.await()) {
-            throw RuntimeException("Все Nostr-реле отклонили событие — ${failures.joinToString("; ")}")
+        
+        // Ждем подтверждения. Увеличиваем общий дедлайн ожидания кворума до 20с для Tor.
+        val result = withTimeoutOrNull(if (useTor) 20_000L else 8_000L) {
+            firstSuccess.await()
+        } ?: false
+
+        if (!result) {
+            val errLog = failures.joinToString("; ")
+            android.util.Log.e("AtrumNostr", "Publish failed for event ${event.id.take(8)}: $errLog")
+            throw RuntimeException("Nostr-реле не подтвердили доставку ($okCount/$targetQuorum) — $errLog")
         }
     }
 
     companion object {
-        /** Маркер транспорта в поле токена чата: token == "nostr" → чат живёт в Nostr-реле. */
-        const val NOSTR_TOKEN = "nostr"
-
-        /** Маркер чата, который ходит к реле НАПРЯМУЮ (без Tor). Всё остальное → через Tor. */
-        const val NOSTR_DIRECT_TOKEN = "nostrdirect"
-
+        const val NOSTR_TOKEN = "NOSTR_V1"
+        const val NOSTR_DIRECT_TOKEN = "NOSTR_DIRECT_V1"
+        private const val FILE_KIND = 1063
         /**
-         * Сколько ждать READY от Tor, прежде чем перейти на ПРЯМОЕ подключение к реле.
-         * Если Tor заблокирован в сети, он не доходит до READY — после этого окна
-         * транспорт автоматически идёт напрямую, чтобы Nostr работал без VPN.
+         * Размер ОДНОГО чанка файла (символов зашифрованного контента).
+         *
+         * ⚠️ Публичные Nostr-реле ограничивают размер ВСЕГО события (~64 КБ на JSON
+         * сообщения `["EVENT",{…}]`, а не только content). К content добавляется обёртка:
+         * id(64) + pubkey(64) + sig(128) + теги + экранирование ≈ 0.5–1 КБ. Поэтому чанк
+         * должен быть ЗАМЕТНО меньше 65536, иначе событие отклоняется ("too large"), и
+         * тогда падает публикация чанка → манифест (шлётся последним) не уходит →
+         * у собеседника фото/файл НЕ СОБИРАЕТСЯ. 48000 оставляет ~16 КБ запаса на обёртку.
+         * Не поднимать к 64*1024 — это как раз и ломало доставку картинок.
          */
-        private const val TOR_FALLBACK_MS = 20_000L
+        private const val NOSTR_CHUNK_CHARS = 48_000
 
-        /** Kind параметризованного replaceable-события (NIP-78) для файлов — реле хранит latest. */
-        const val FILE_KIND = 30078
-
-        /** Максимум символов зашифрованного контента в одном Nostr-событии (крупнее — чанки). */
-        const val NOSTR_CHUNK_CHARS = 48_000
-
-        /** Мягкий дедлайн чтения: не ждём медленное/мёртвое реле дольше этого. */
+    /** Мягкий дедлайн чтения: не ждём медленное/мёртвое реле дольше этого. */
         private const val SOFT_READ_DEADLINE_MS = 8_000L
         /** Для Tor дедлайн чтения больше: построение цепочки + round-trip медленнее. */
         private const val SOFT_READ_DEADLINE_TOR_MS = 15_000L
+        /**
+         * Окно «добора» союза после ПЕРВОГО ответившего реле. Чтение возвращается через
+         * (первый ответ + grace), а не ждёт самый медленный/мёртвый узел до дедлайна —
+         * это и убирает задержку доставки «~10с» при части недоступных реле, сохраняя
+         * union read (остальные события подберутся на следующем тике поллинга).
+         */
+        private const val READ_GRACE_MS = 700L
+        /** Для Tor окно «добора» шире: round-trip через цепочку медленнее. */
+        private const val READ_GRACE_TOR_MS = 1_500L
         /** Как часто сторож проверяет, что стрим-подписка жива (переоткрыть после обрыва). */
-        private const val RESUBSCRIBE_MS = 30_000L
+        private const val RESUBSCRIBE_MS = 10_000L
+        private const val RESUBSCRIBE_TOR_MS = 20_000L
 
         /** LRU неизменяемых медиа-файлов (чанки/манифесты img_/stk_) — повторное чтение из памяти. */
         private const val MEDIA_CACHE_MAX_CHARS = 8 * 1024 * 1024
@@ -575,12 +666,104 @@ class NostrTransport(
             name.startsWith("img_") || name.startsWith("stk_") || name.startsWith("lp_")
 
         /** Публичные Nostr-реле (NIP-01, NIP-09). */
+        /**
+         * Дополнительные реле из подписанного обновляемого списка (RelayListStore).
+         * Пусто по умолчанию и до прихода валидного списка → поведение как раньше.
+         * Заполняется фоновым refreshRelayList(); встроенные RELAYS — неизменный floor.
+         */
+        @Volatile
+        var extraRelays: List<String> = emptyList()
+
+        /** Активный набор: встроенные + добавленные, без дублей. Floor сохраняется всегда. */
+        fun activeRelays(): List<String> = (RELAYS + extraRelays).distinct()
+
+        /**
+         * Одноразово (без цикла) подтягивает подписанный список реле с реле же и применяет.
+         * Безопасно: применит ТОЛЬКО событие с подписью вшитого издателя и версией новее.
+         * Сначала поднимает сохранённый список из RelayListStore (мгновенно), потом сеть.
+         */
+        @Volatile private var lastRelayFetchMs = 0L
+        private const val RELAY_REFRESH_THROTTLE_MS = 10 * 60_000L
+
+        suspend fun refreshRelayList(ctx: Context, useTor: Boolean) {
+            RelayListStore.ensureLoaded(ctx)
+            extraRelays = RelayListStore.extraRelays(ctx)
+            val filter = RelayListStore.filter() ?: return
+            // Троттлинг сети: не чаще раза в 10 мин (чтобы не долбить реле при частых открытиях).
+            val now = System.currentTimeMillis()
+            if (now - lastRelayFetchMs < RELAY_REFRESH_THROTTLE_MS) return
+            lastRelayFetchMs = now
+            val collected = ConcurrentLinkedQueue<NostrEvent>()
+            coroutineScope {
+                val jobs = activeRelays().map { url ->
+                    launch {
+                        val r = runCatching { NostrRelayPool.query(url, filter, useTor) }.getOrNull()
+                        if (r != null) collected.addAll(r)
+                    }
+                }
+                withTimeoutOrNull(if (useTor) 15_000L else 8_000L) { jobs.joinAll() }
+                jobs.forEach { it.cancel() }
+            }
+            collected.sortedByDescending { it.created_at }.forEach { RelayListStore.tryApply(ctx, it) }
+            extraRelays = RelayListStore.extraRelays(ctx)
+        }
+
+        /** Публикует событие-список на все активные реле (для экрана издателя). Возвращает число успехов. */
+        suspend fun publishRelayListEvent(ev: NostrEvent, useTor: Boolean): Int {
+            val ok = AtomicInteger(0)
+            coroutineScope {
+                activeRelays().map { url ->
+                    launch { if (runCatching { NostrRelayPool.publish(url, ev, useTor) }.isSuccess) ok.incrementAndGet() }
+                }.joinAll()
+            }
+            return ok.get()
+        }
+
+        /**
+         * Проверка доставки: опрашивает реле и считает, на СКОЛЬКИХ реально читается
+         * опубликованный список (подпись валидна, версия >= ожидаемой). Это честнее, чем
+         * «реле приняло запись» — подтверждает, что обновление действительно доступно другим.
+         */
+        suspend fun countRelaysWithRelayList(pubkeyHex: String, minVersion: Int, useTor: Boolean): Int {
+            val filter = org.json.JSONObject().apply {
+                put("authors", org.json.JSONArray().put(pubkeyHex))
+                put("kinds", org.json.JSONArray().put(RelayListStore.KIND))
+                put("#d", org.json.JSONArray().put(RelayListStore.D_TAG))
+                put("limit", 1)
+            }
+            val hits = AtomicInteger(0)
+            coroutineScope {
+                activeRelays().map { url ->
+                    launch {
+                        val evs = runCatching { NostrRelayPool.query(url, filter, useTor) }.getOrNull() ?: return@launch
+                        val ok = evs.any { ev ->
+                            ev.pubkey.equals(pubkeyHex, ignoreCase = true) &&
+                                NostrEvent.verifySignature(ev) &&
+                                RelayListStore.versionOf(ev.content) >= minVersion
+                        }
+                        if (ok) hits.incrementAndGet()
+                    }
+                }.joinAll()
+            }
+            return hits.get()
+        }
+
+        /** Сколько всего реле сейчас опрашивается (для строки «M из K»). */
+        fun relayCount(): Int = activeRelays().size
+
         val RELAYS = listOf(
             "wss://nos.lol",
             "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://offchain.pub",
-            "wss://nostr.mom"
+            "wss://nostr.mom",
+            // Резервные реле — больше избыточности на случай бана/падения части реле.
+            // Публикация терпима к мёртвым адресам: неответивший просто уменьшает счётчик.
+            "wss://relay.snort.social",
+            "wss://nostr.oxtr.dev",
+            "wss://nostr-pub.wellorder.net",
+            "wss://relay.nostr.bg",
+            "wss://nostr.bitcoiner.social"
         )
 
         /** Фоновый scope для дослания публикаций на оставшиеся реле (не блокирует отправителя). */

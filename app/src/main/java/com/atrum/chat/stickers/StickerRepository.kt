@@ -30,9 +30,12 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class StickerRepository(private val context: Context) {
 
+    private val prefs = com.atrum.chat.Prefs(context)
+
     private val http = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .proxy(java.net.Proxy(java.net.Proxy.Type.SOCKS, java.net.InetSocketAddress.createUnresolved("127.0.0.1", com.atrum.chat.TorManager.SOCKS_PORT)))
         .build()
 
     private val rootDir: File
@@ -43,6 +46,10 @@ class StickerRepository(private val context: Context) {
         @Volatile private var packsCache: List<StickerPack>? = null
         /** Сбросить кеш паков — после любого изменения на диске (add/remove/rename). */
         fun invalidatePacksCache() { packsCache = null }
+
+        @Volatile private var favoritesCache: List<Sticker>? = null
+
+        private const val FAVORITES_FILE = "favorites.json"
 
         /** Сколько стикеров качаем одновременно. Шквал из 100+ параллельных запросов
          *  Telegram режет → часть файлов не скачивалась вовсе. Ограничиваем. */
@@ -164,6 +171,55 @@ class StickerRepository(private val context: Context) {
     }
 
     /**
+     * Удаляет один стикер из пака.
+     */
+    suspend fun deleteSticker(sticker: Sticker, packName: String) = withContext(Dispatchers.IO) {
+        val packDir = File(rootDir, packName)
+        val pack = readMeta(packDir) ?: return@withContext
+
+        // 1. Удаляем файл с диска
+        sticker.localPath?.let { path ->
+            val file = File(path)
+            if (file.exists()) file.delete()
+        }
+
+        // 2. Обновляем метаданные
+        val updatedStickers = pack.stickers.filter { it.fileId != sticker.fileId }
+        if (updatedStickers.isEmpty()) {
+            removePack(packName)
+            return@withContext
+        }
+
+        var newThumb = pack.thumbPath
+        if (pack.thumbPath == sticker.localPath) {
+            newThumb = updatedStickers.firstOrNull { it.localPath != null }?.localPath
+        }
+        writeMeta(packDir, pack.copy(stickers = updatedStickers, thumbPath = newThumb))
+
+        // 3. Очистка из избранного и кешей
+        removeFromFavorites(sticker.fileId)
+        sticker.localPath?.let { path ->
+            com.atrum.chat.ImageCache.removeBitmap(path)
+            com.atrum.chat.ImageCache.removeComposition(path)
+            com.atrum.chat.StickerFrameCache.remove(sticker.fileId) // Используем fileId как ключ
+
+            // Удаляем также из дискового кеша фреймов
+            com.atrum.chat.StickerDiskCache.remove(context.cacheDir, sticker.fileId)
+
+            // Очищаем Argon2 кеш путей к стикерам
+            prefs.setStickerContentRef(packName, sticker.fileId, "")
+
+            // Превью (без размера и в размере списка паков)
+            com.atrum.chat.ImageCache.removeBitmap("thumb_${sticker.fileId}_0")
+            val thumbPx = (56 * context.resources.displayMetrics.density).toInt()
+            com.atrum.chat.ImageCache.removeBitmap("thumb_${sticker.fileId}_$thumbPx")
+        }
+
+        // 4. Сбрасываем кеш
+        invalidatePacksCache()
+    }
+
+    /**
      * Переименовывает пак — меняет ТОЛЬКО отображаемое название (title в meta.json).
      * Техническое имя пака и папка на диске не трогаются.
      */
@@ -174,6 +230,77 @@ class StickerRepository(private val context: Context) {
         val pack = readMeta(packDir) ?: return@withContext
         writeMeta(packDir, pack.copy(title = clean))
         invalidatePacksCache()
+    }
+
+    // ── Избранное ────────────────────────────────────────────────────────────
+
+    /** Возвращает список избранных стикеров. */
+    suspend fun loadFavorites(): List<Sticker> = withContext(Dispatchers.IO) {
+        favoritesCache?.let { return@withContext it }
+        val file = File(rootDir, FAVORITES_FILE)
+        if (!file.exists()) return@withContext emptyList()
+        val loaded = try {
+            val arr = JSONArray(file.readText())
+            (0 until arr.length()).map { i ->
+                val obj = arr.getJSONObject(i)
+                Sticker(
+                    fileId = obj.getString("fileId"),
+                    localPath = obj.getString("localPath").takeIf { it.isNotBlank() },
+                    type = StickerType.valueOf(obj.getString("type")),
+                    emoji = obj.optString("emoji", "")
+                )
+            }.filter { it.localPath != null && File(it.localPath).exists() }
+        } catch (_: Exception) {
+            emptyList()
+        }
+        favoritesCache = loaded
+        loaded
+    }
+
+    /** Синхронно возвращает кеш избранного (может быть null до первой загрузки). */
+    fun getFavoritesCached(): List<Sticker>? = favoritesCache
+
+    /** Добавляет стикер в избранное (в начало списка). */
+    suspend fun addToFavorites(sticker: Sticker) = withContext(Dispatchers.IO) {
+        val current = loadFavorites().toMutableList()
+        current.removeAll { it.fileId == sticker.fileId }
+        current.add(0, sticker)
+        saveFavorites(current.take(100)) // Лимит 100 избранных
+    }
+
+    /** Удаляет стикер из избранного. */
+    suspend fun removeFromFavorites(fileId: String) = withContext(Dispatchers.IO) {
+        val current = loadFavorites().toMutableList()
+        if (current.removeAll { it.fileId == fileId }) {
+            saveFavorites(current)
+        }
+    }
+
+    /** Проверяет, в избранном ли стикер. */
+    suspend fun isFavorite(fileId: String): Boolean = withContext(Dispatchers.IO) {
+        loadFavorites().any { it.fileId == fileId }
+    }
+
+    /** Фиксирует использование стикера (для раздела "Часто используемые"). */
+    suspend fun recordUsage(sticker: Sticker) = withContext(Dispatchers.IO) {
+        val current = loadFavorites().toMutableList()
+        current.removeAll { it.fileId == sticker.fileId }
+        current.add(0, sticker)
+        saveFavorites(current.take(50)) // Храним топ-50
+    }
+
+    private fun saveFavorites(list: List<Sticker>) {
+        favoritesCache = list
+        val arr = JSONArray()
+        list.forEach { s ->
+            arr.put(JSONObject().apply {
+                put("fileId", s.fileId)
+                put("localPath", s.localPath ?: "")
+                put("type", s.type.name)
+                put("emoji", s.emoji)
+            })
+        }
+        File(rootDir, FAVORITES_FILE).writeText(arr.toString())
     }
 
 
@@ -190,11 +317,14 @@ class StickerRepository(private val context: Context) {
         sticker: Sticker,
         maxSize: Int = 0
     ): android.graphics.Bitmap? = withContext(Dispatchers.IO) {
+        val cacheKey = "thumb_${sticker.fileId}_$maxSize"
+        com.atrum.chat.ImageCache.getBitmap(cacheKey)?.let { return@withContext it }
+
         val path = sticker.localPath ?: return@withContext null
         val file = File(path)
         if (!file.exists()) return@withContext null
         try {
-            when (sticker.type) {
+            val bmp = when (sticker.type) {
                 StickerType.STATIC -> {
                     android.graphics.BitmapFactory.decodeFile(path)
                 }
@@ -213,11 +343,11 @@ class StickerRepository(private val context: Context) {
                     val bh = comp.bounds.height().takeIf { it > 0 } ?: 512
                     // Под превью рендерим сразу в нужный размер — без 512²-аллокации.
                     val (w, h) = scaledDims(bw, bh, maxSize)
-                    val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
-                    val canvas = android.graphics.Canvas(bmp)
+                    val b = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+                    val canvas = android.graphics.Canvas(b)
                     drawable.setBounds(0, 0, w, h)
                     drawable.draw(canvas)
-                    return@withContext bmp  // уже нужного размера
+                    b  // уже нужного размера
                 }
                 StickerType.VIDEO -> {
                     val retriever = android.media.MediaMetadataRetriever()
@@ -228,7 +358,13 @@ class StickerRepository(private val context: Context) {
                         retriever.release()
                     }
                 }
-            }?.let { bmp -> if (maxSize > 0) downscale(bmp, maxSize) else bmp }
+            }
+            
+            bmp?.let {
+                val result = if (maxSize > 0) downscale(it, maxSize) else it
+                com.atrum.chat.ImageCache.putBitmap(cacheKey, result)
+                result
+            }
         } catch (_: Exception) { null }
     }
 

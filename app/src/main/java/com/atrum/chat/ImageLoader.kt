@@ -6,15 +6,25 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 /**
- * Загружает картинку чата через ChatTransport (Gist или Nostr).
+ * Загружает картинку чата через ChatTransport (Channel или Nostr).
  *
  * Поддерживаемые форматы imageFileName:
  *
- *   "gist:GIST_ID"   — новый формат: изображение в отдельном gist.
- *   "img_xxx.txt"    — старый формат: файл в основном чат-gist.
+ *   "gist:GIST_ID"   — новый формат: изображение в отдельном источнике.
+ *   "img_xxx.txt"    — старый формат: файл в основном контенте чата.
  *
  * Дедупликация одновременных загрузок:
  *   [inFlight] хранит CompletableDeferred для каждого ref, по которому
@@ -24,7 +34,25 @@ import java.util.concurrent.ConcurrentHashMap
  *   Это устраняет race condition при быстрых прокрутках (30 изображений
  *   в трёх коллажах → только 30 уникальных запросов, не 30×N).
  */
-class ImageLoader(private val api: ChatTransport, private val password: String) {
+private const val MAX_PARALLEL_CHUNKS = 6
+
+/**
+ * Сколько НЕ повторять загрузку файла после неудачи. Битое/недоступное фото (например со
+ * старыми слишком большими чанками, которые реле отвергли) иначе грузится заново на КАЖДЫЙ
+ * bind/тик — тяжёлый декод/дешифр в бесконечном цикле → GC-шторм и ANR. По истечении окна
+ * пробуем снова (вдруг реле уже отдало недостающие чанки).
+ */
+private const val FAILED_RETRY_MS = 60_000L
+
+class ImageLoader(
+    private val api: ChatTransport,
+    private val password: String,
+    // Крипто-домен для расшифровки контента. ДОЛЖЕН совпадать с тем, под которым
+    // устанавливается forward-secrecy сессия (chat.chatId) — иначе медиа не попадёт
+    // в сессионный ключ (как текст) и будет зависеть от пароля. По умолчанию —
+    // сетевой chatId (channelId) для обратной совместимости вызовов.
+    private val cryptoChatId: String = api.cryptoChatId
+) {
 
     /**
      * In-flight запросы: ref → Deferred<base64?>.
@@ -32,17 +60,86 @@ class ImageLoader(private val api: ChatTransport, private val password: String) 
      */
     private val inFlight = ConcurrentHashMap<String, CompletableDeferred<String?>>()
 
+    /** Негативный кэш: ref → время последней неудачной загрузки (мс). */
+    private val failedLoads = ConcurrentHashMap<String, Long>()
+
+    /**
+     * Сбрасывает негативный кэш для [fileName] — следующая загрузка пойдёт по сети
+     * немедленно, не дожидаясь [FAILED_RETRY_MS]. Нужно для ЯВНЫХ повторов по тапу
+     * пользователя (например тап по play голосового): пользователь хочет попробовать
+     * сейчас, а не через минуту.
+     */
+    fun forget(fileName: String) {
+        failedLoads.remove(fileName)
+    }
+
     // ── Public API ─────────────────────────────────────────────────────────────
 
     /**
      * Загружает сырые байты файла (для TGS-стикеров).
-     * Контент хранится как base64 в gist — декодируем обратно в байты.
+     * Контент хранится как base64 — декодируем обратно в байты.
      */
     suspend fun loadRawBytes(fileName: String): ByteArray? {
         val base64 = loadBase64(fileName) ?: return null
         return try {
             android.util.Base64.decode(base64, android.util.Base64.NO_WRAP)
         } catch (_: Exception) { null }
+    }
+
+    /**
+     * Диагностика: где именно рвётся загрузка медиа-ссылки (фото/голос/стикер).
+     * Возвращает человекочитаемую причину: не найден на реле / не расшифровался /
+     * манифест без чанков / битый base64 / файл цел (сбой воспроизведения).
+     */
+    suspend fun diagnoseMedia(ref: String): String = try {
+        val raw = withContext(Dispatchers.IO) { api.loadFileOrNull(ref) }
+        when {
+            raw == null -> "файл не найден на реле"
+            else -> {
+                val dec = CryptoHelper.decrypt(raw, password, cryptoChatId)
+                when {
+                    dec == null -> "найден, не расшифр (len=${raw.length}, fmt=${raw.take(5)}, " +
+                        "diag=[${if (raw.trim().startsWith("\$G4\$")) CryptoHelper.decryptV4Diag(raw.trim(), password, cryptoChatId) else "notV4"}])"
+                    dec.startsWith(ImageChunker.CHUNKED_MARKER) -> {
+                        val names = ImageChunker.parseManifest(dec)
+                        if (names.isNullOrEmpty()) "манифест пуст/битый"
+                        else {
+                            // Реально грузим каждый чанк, смотрим его длину, склеиваем и
+                            // пробуем расшифровать — чтобы понять, рвётся ли это на обрезке
+                            // чанка реле, порядке или формате.
+                            val parts = names.map { runCatching { api.loadFile(it) }.getOrNull() }
+                            val lens = parts.map { it?.length ?: -1 }
+                            val joined = parts.joinToString("") { it ?: "" }
+                            val redec = CryptoHelper.decrypt(joined, password, cryptoChatId)
+                            // Проверяем, валиден ли сам base64 склейки (после префикса $G4$):
+                            // если нет — данные искажены в передаче; если да — целы, значит
+                            // проблема в ключе/nonce (Argon2/chatId), а не в чанках.
+                            val body = joined.removePrefix("\$G4\$")
+                            val b64ok = runCatching {
+                                android.util.Base64.decode(body, android.util.Base64.NO_WRAP).isNotEmpty()
+                            }.getOrDefault(false)
+                            // Хвосты крайних чанков — увидеть склейку на границах.
+                            val edges = parts.mapIndexed { i, p ->
+                                "c$i:${p?.take(3) ?: "NUL"}/${p?.takeLast(3) ?: ""}"
+                            }
+                            "чанки=${names.size} длины=$lens сумма=${joined.length} " +
+                                if (redec == null) "НЕ расшифр fmt=${joined.take(5)} b64ok=$b64ok " +
+                                    "diag=[${CryptoHelper.decryptV4Diag(joined, password, cryptoChatId)}] edges=$edges"
+                                else "OK declen=${redec.length}"
+                        }
+                    }
+                    else -> {
+                        val bytes = runCatching {
+                            android.util.Base64.decode(dec, android.util.Base64.NO_WRAP)
+                        }.getOrNull()
+                        if (bytes == null) "одиночный: base64 битый (declen=${dec.length})"
+                        else "одиночный ок (байт=${bytes.size}) — сбой воспроизведения"
+                    }
+                }
+            }
+        }
+    } catch (e: Exception) {
+        "ошибка: ${e.message?.take(100)}"
     }
 
     /** Загружает Bitmap. Возвращает null если что-то пошло не так. */
@@ -64,6 +161,14 @@ class ImageLoader(private val api: ChatTransport, private val password: String) 
         // Быстрый путь: уже в кеше
         ImageCache.getBase64(fileName)?.let { return it }
 
+        // Негативный кэш: недавно упавшую загрузку НЕ повторяем (иначе битые фото грузятся
+        // на каждый bind/тик → тяжёлый декод/дешифр в цикле → GC-шторм и ANR). Раз в
+        // FAILED_RETRY_MS пробуем снова.
+        failedLoads[fileName]?.let { ts ->
+            if (System.currentTimeMillis() - ts < FAILED_RETRY_MS) return null
+            failedLoads.remove(fileName)
+        }
+
         // Дедупликация: пытаемся зарегистрироваться первыми
         val ours = CompletableDeferred<String?>()
         val existing = inFlight.putIfAbsent(fileName, ours)
@@ -74,15 +179,23 @@ class ImageLoader(private val api: ChatTransport, private val password: String) 
 
         // Мы первые — выполняем загрузку
         return try {
-            val base64 = if (fileName.startsWith("gist:")) {
-                loadFromImageGist(fileName)
-            } else {
-                loadFromChatGist(fileName)
+            val base64 = when {
+                fileName.startsWith("gist:") -> loadFromImageSource(fileName)
+                fileName.startsWith("http://", true) || fileName.startsWith("https://", true) -> {
+                    loadFromExternalUrl(fileName)
+                }
+                else -> loadFromChatContent(fileName)
             }
-            if (base64 != null) ImageCache.put(fileName, base64, null)
+            if (base64 != null) {
+                ImageCache.put(fileName, base64, null)
+                failedLoads.remove(fileName)
+            } else {
+                failedLoads[fileName] = System.currentTimeMillis()
+            }
             ours.complete(base64)
             base64
         } catch (e: Exception) {
+            failedLoads[fileName] = System.currentTimeMillis()
             ours.complete(null)
             null
         } finally {
@@ -93,21 +206,56 @@ class ImageLoader(private val api: ChatTransport, private val password: String) 
     // ── Private loaders ────────────────────────────────────────────────────────
 
     /**
-     * Загружает изображение из отдельного gist (формат "gist:GIST_ID").
-     * GistTransport.loadImageByRef() склеивает чанки и возвращает зашифрованный контент.
+     * Загружает изображение по внешней ссылке http/https.
+     * Использует Tor, если транспорт настроен на работу через него.
      */
-    private suspend fun loadFromImageGist(ref: String): String? {
-        val encryptedContent = withContext(Dispatchers.IO) { api.loadImageByRef(ref) }
-        return CryptoHelper.decrypt(encryptedContent, password, api.chatId)
+    private suspend fun loadFromExternalUrl(url: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val client = createHttpClient(api.useTor)
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (compatible; Atrum/1.0)")
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val bytes = response.body?.bytes() ?: return@withContext null
+                // Возвращаем как base64, чтобы ImageCache и ImageUtils.fromBase64 работали единообразно
+                android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun createHttpClient(useTor: Boolean): OkHttpClient {
+        val builder = OkHttpClient.Builder()
+            .connectTimeout(if (useTor) 30 else 10, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .followRedirects(true)
+
+        if (useTor) {
+            builder.proxy(Proxy(Proxy.Type.SOCKS, InetSocketAddress.createUnresolved("127.0.0.1", TorManager.SOCKS_PORT)))
+        }
+        return builder.build()
     }
 
     /**
-     * Загружает изображение из основного чат-gist (старый формат).
+     * Загружает изображение из отдельного источника (формат "gist:GIST_ID").
+     * ChatTransport.loadImageByRef() склеивает чанки и возвращает зашифрованный контент.
+     */
+    private suspend fun loadFromImageSource(ref: String): String? {
+        val encryptedContent = withContext(Dispatchers.IO) { api.loadImageByRef(ref) }
+        return CryptoHelper.decrypt(encryptedContent, password, cryptoChatId)
+    }
+
+    /**
+     * Загружает изображение из основного контента чата (старый формат).
      * Обрабатывает plain base64, CHUNKED-манифест и любые другие форматы.
      */
-    private suspend fun loadFromChatGist(fileName: String): String? {
+    private suspend fun loadFromChatContent(fileName: String): String? {
         val mainContent = loadFileRetry(fileName)
-        val decrypted = CryptoHelper.decrypt(mainContent, password, api.chatId) ?: return null
+        val decrypted = CryptoHelper.decrypt(mainContent, password, cryptoChatId) ?: return null
         return if (decrypted.startsWith(ImageChunker.CHUNKED_MARKER)) {
             assembleChunkedImage(decrypted)
         } else {
@@ -116,17 +264,22 @@ class ImageLoader(private val api: ChatTransport, private val password: String) 
     }
 
     /**
-     * Собирает CHUNKED-изображение из отдельных файлов основного чат-gist.
+     * Собирает CHUNKED-изображение из отдельных файлов основного контента чата.
      */
     private suspend fun assembleChunkedImage(manifest: String): String? {
         val chunkNames = ImageChunker.parseManifest(manifest) ?: return null
         if (chunkNames.isEmpty()) return null
         return try {
-            val sb = StringBuilder()
-            for (chunkName in chunkNames) {
-                sb.append(loadFileRetry(chunkName))
+            // Чанки качаем ПАРАЛЛЕЛЬНО (с ограничением одновременных запросов), порядок
+            // сохраняем по индексу — это резко ускоряет длинные медиа (голос 10+ мин =
+            // сотни чанков): вместо последовательного цикла через Tor — пачками.
+            val sem = Semaphore(MAX_PARALLEL_CHUNKS)
+            val parts = coroutineScope {
+                chunkNames.map { name ->
+                    async(Dispatchers.IO) { sem.withPermit { loadFileRetry(name) } }
+                }.awaitAll()
             }
-            CryptoHelper.decrypt(sb.toString(), password, api.chatId)
+            CryptoHelper.decrypt(parts.joinToString(""), password, cryptoChatId)
         } catch (e: Exception) {
             null
         }

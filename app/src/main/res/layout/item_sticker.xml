@@ -19,4 +19,13 @@
         android:visibility="gone"
         android:layout_gravity="center"/>
 
+    <View
+        android:id="@+id/sticker_foreground"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:clickable="true"
+        android:focusable="true"
+        android:longClickable="true" />
+
 </FrameLayout>

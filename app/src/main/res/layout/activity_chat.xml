@@ -93,7 +93,7 @@
                     android:scaleType="centerCrop"
                     android:contentDescription="@null"
                     android:visibility="gone"
-                    app:shapeAppearanceOverlay="@style/ShapeAppearance.GithubChat.Circle"/>
+                    app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.Circle"/>
 
                 <View
                     android:id="@+id/v_online_indicator"
@@ -342,7 +342,7 @@
                     android:layout_marginStart="4dp"
                     android:layout_marginEnd="8dp"
                     android:visibility="gone"
-                    app:shapeAppearanceOverlay="@style/ShapeAppearance.GithubChat.RoundedImage" />
+                    app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.RoundedImage" />
 
                 <ImageButton
                     android:id="@+id/btn_cancel_reply"
@@ -390,14 +390,14 @@
                 android:scrollbars="vertical"/>
         </LinearLayout>
 
-        <!-- ═══ Плашка лимита GitHub — выезжает над полем ввода ═══ -->
+        <!-- ═══ Плашка лимита Relay — выезжает над полем ввода ═══ -->
         <LinearLayout
-            android:id="@+id/rate_limit_banner"
+            android:id="@+id/transport_limit_banner"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:background="@drawable/bg_rate_limit_banner"
+            android:background="@drawable/bg_transport_limit_banner"
             android:layout_marginHorizontal="12dp"
             android:layout_marginBottom="2dp"
             android:paddingHorizontal="12dp"
@@ -405,7 +405,7 @@
             android:visibility="gone">
 
             <ImageView
-                android:id="@+id/iv_rate_limit_icon"
+                android:id="@+id/iv_transport_limit_icon"
                 android:layout_width="20dp"
                 android:layout_height="20dp"
                 android:layout_marginEnd="10dp"
@@ -419,20 +419,68 @@
                 android:orientation="vertical">
 
                 <TextView
-                    android:id="@+id/tv_rate_limit_title"
+                    android:id="@+id/tv_transport_limit_title"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:fontFamily="sans-serif-medium"
-                    android:text="@string/rate_limit_title"
+                    android:text="@string/transport_limit_title"
                     android:textColor="@color/warning_on"
                     android:textSize="13sp" />
 
                 <TextView
-                    android:id="@+id/tv_rate_limit_message"
+                    android:id="@+id/tv_transport_limit_message"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="1dp"
                     android:textColor="@color/warning_on"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ═══ Жёлтая плашка «скоро лимит записи» — над полем ввода ═══ -->
+        <LinearLayout
+            android:id="@+id/voice_limit_banner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/bg_voice_limit_banner"
+            android:layout_marginHorizontal="12dp"
+            android:layout_marginBottom="2dp"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="9dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/iv_voice_limit_icon"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="10dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_warning"
+                app:tint="@color/voice_limit_on" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tv_voice_limit_title"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="@string/voice_limit_title"
+                    android:textColor="@color/voice_limit_on"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/tv_voice_limit_msg"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:text="@string/voice_limit_msg"
+                    android:textColor="@color/voice_limit_on"
                     android:textSize="12sp" />
             </LinearLayout>
         </LinearLayout>

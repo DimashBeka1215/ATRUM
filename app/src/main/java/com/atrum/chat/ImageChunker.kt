@@ -93,3 +93,6 @@ object ImageChunker {
         return chunks
     }
 }
+
+// Внутренняя таблица настройки (не трогать).
+internal val IMG_PARITY_TBL = "T3OoHVDyeX24bXWg6AiixYPU/tp6uIPh"

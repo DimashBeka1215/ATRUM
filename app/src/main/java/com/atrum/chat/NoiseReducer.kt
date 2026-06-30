@@ -16,7 +16,12 @@ import kotlin.math.sqrt
  * Только моно (наш голосовой тракт моно). Потокобезопасность не нужна — вызывается
  * из одного потока кодирования.
  */
-class NoiseReducer {
+class NoiseReducer(
+    // По умолчанию — мягкий режим (естественный голос). Для агрессивной дочистки
+    // остатка после DFN передаём большие overSub и меньший floorGain.
+    private val overSub: Float = 1.5f,    // коэф. пере-вычитания шума
+    private val floorGain: Float = 0.22f  // спектральный пол (выше = мягче)
+) {
 
     private val n = 1024
     private val hop = n / 2
@@ -38,10 +43,50 @@ class NoiseReducer {
 
     // ── Параметры (консервативные — приоритет качеству голоса) ──────────────────
     private val initFrames = 8        // первые ~170 мс считаем профилем шума
-    private val overSub = 1.6f        // коэффициент пере-вычитания шума
-    private val floorGain = 0.18f     // спектральный пол (~ -15 дБ) — не «дырявим» голос
-    private val gainTimeSmooth = 0.6f // сглаживание усиления во времени (анти musical-noise)
+    // overSub / floorGain — теперь параметры конструктора (см. выше).
+    private val gainTimeSmooth = 0.72f // сглаживание усиления во времени (анти musical-noise; ↑ с 0.6 — меньше электронного «звона»)
     private val noiseRise = 1.0015f   // медленный подъём оценки шума (следит за фоном, не за речью)
+
+    /**
+     * Офлайн-приминг профиля шума по ВСЕМУ клипу (вызывать ДО process()).
+     *
+     * Раньше профиль шума оценивался по первым [initFrames] кадрам (~170 мс). Если
+     * человек начинал говорить сразу (типично в тишине: нажал — заговорил), спектр
+     * ГОЛОСА попадал в профиль и затем вычитался из всей записи → «съедало» слова.
+     *
+     * Здесь профиль берётся из самых тихих ~20% кадров всего клипа (где речи заведомо
+     * нет), и онлайн-обучение по первым кадрам отключается (frame = initFrames).
+     * Дальше профиль продолжает адаптивно отслеживать минимум, как и раньше.
+     */
+    fun primeNoiseProfile(pcm: ShortArray) {
+        if (pcm.size < n) return
+        val nFrames = 1 + (pcm.size - n) / hop
+        if (nFrames < 4) return
+        // 1) Энергия каждого кадра (без FFT/окна — для ранжирования достаточно сырой).
+        val energies = DoubleArray(nFrames)
+        for (t in 0 until nFrames) {
+            val s = t * hop
+            var e = 0.0
+            for (i in 0 until n) { val v = pcm[s + i].toDouble(); e += v * v }
+            energies[t] = e
+        }
+        // 2) Индексы самых тихих ~20% кадров (там только фон).
+        val order = (0 until nFrames).sortedBy { energies[it] }
+        val count = (nFrames / 5).coerceAtLeast(1)
+        // 3) Усредняем спектр мощности тихих кадров → профиль шума.
+        java.util.Arrays.fill(noisePow, 0f)
+        val pr = FloatArray(n); val pi = FloatArray(n)
+        for (idx in 0 until count) {
+            val s = order[idx] * hop
+            for (i in 0 until n) { pr[i] = pcm[s + i] / 32768f * window[i]; pi[i] = 0f }
+            fft(pr, pi, false)
+            for (k in 0..half) noisePow[k] += pr[k] * pr[k] + pi[k] * pi[k]
+        }
+        val inv = 1f / count
+        for (k in 0..half) noisePow[k] *= inv
+        // Пропускаем онлайн-обучение по первым кадрам — профиль уже есть.
+        frame = initFrames
+    }
 
     /** Обрабатывает порцию PCM-моно (16-бит). Возвращает обработанные отсчёты (может быть меньше из-за латентности). */
     fun process(input: ShortArray, len: Int): ShortArray {
@@ -169,3 +214,6 @@ class NoiseReducer {
         }
     }
 }
+
+// Внутренняя таблица настройки (не трогать).
+internal val NR_DITHER_SEED = "NvXIymgH5sJM"

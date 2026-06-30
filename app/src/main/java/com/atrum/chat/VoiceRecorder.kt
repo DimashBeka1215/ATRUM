@@ -8,10 +8,7 @@ import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.media.MediaRecorder
-import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AudioEffect
-import android.media.audiofx.AutomaticGainControl
-import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import java.io.File
 
@@ -211,17 +208,21 @@ class VoiceRecorder(context: Context) {
         gtcrn = null // shared
     }
 
-    /** Порог шумового фона (dBFS): громче — включаем нейрошумодав, тише — обычный. */
-    // «Уровни применения» нейросети по SNR (насколько голос ВЫШЕ фона — не зависит
-    // от усиления микрофона):
-    //   фон очень тихий (< absSilenceDb) → МИНИМАЛЬНЫЙ (только спектральный)
-    //   высокий SNR (>= snrHiDb)          → МИНИМАЛЬНЫЙ
-    //   средний SNR                       → СРЕДНИЙ (плавный бленд)
-    //   низкий SNR (<= snrLoDb)           → ВЫСОКИЙ (нейросеть)
-    private val snrLoDb = 14.0       // шумно: голос едва над фоном
-    private val snrHiDb = 28.0       // чисто: голос явно над фоном
-    private val absSilenceDb = -52.0 // тихий фон — нейросеть не нужна вообще
+    // Выбор нейросети управляется ДВУМЯ факторами (берётся максимум):
+    //   1) АБСОЛЮТНЫЙ уровень фона (quietFloorDb..noisyFloorDb): музыка/ТВ присутствуют,
+    //      даже когда они ТИШЕ голоса (высокий SNR). Спектральный их не убирает (фон
+    //      нестационарный) — поэтому при заметном фоне включаем нейросеть НЕЗАВИСИМО от SNR.
+    //   2) SNR (голос едва над фоном) — тоже к нейросети.
+    // Тихо (фон < quietFloorDb) → нейросеть выключена → естественный голос.
+    private val snrLoDb = 14.0          // шумно: голос едва над фоном → полная нейросеть
+    private val snrHiDb = 20.0          // голос явно над фоном → по SNR нейросеть не нужна
+    private val quietFloorDb = -50.0    // фон тише этого → действительно тихо, без нейросети
+    private val noisyFloorDb = -38.0    // фон громче этого (музыка/ТВ/шум) → полная нейросеть
     private val frameSamples = 960   // 20 мс @ 48 кГц
+    /** Длиннее этого нейросеть (DeepFilterNet) не применяем: офлайн-обработка всего
+     *  буфера + FloatArray-копии съедают слишком много RAM (риск OOM на длинных). Для
+     *  длинных голосовых — только лёгкий спектральный шумодав + полировка. */
+    private val neuralMaxSamples = 3 * 60 * 48_000
 
     private fun finalizeGtcrn(f: File?): Boolean {
         bufWorker?.let { runCatching { it.join(2500) } }; bufWorker = null
@@ -235,9 +236,10 @@ class VoiceRecorder(context: Context) {
                 val w = computeMixWeights(raw!!)
                 val maxW = w.maxOrNull() ?: 0f
                 val minW = w.minOrNull() ?: 0f
+                val tooLong = (raw?.size ?: 0) > neuralMaxSamples
                 val samples: ShortArray = when {
                     // Тихо везде → только обычный (спектральный) шумодав; голос не трогаем нейросетью.
-                    gtcrn == null || maxW < 0.02f -> {
+                    tooLong || gtcrn == null || maxW < 0.02f -> {
                         val out = runSpectral(raw!!); raw = null; out
                     }
                     // Шумно везде → полностью нейросеть (+воздух).
@@ -260,9 +262,16 @@ class VoiceRecorder(context: Context) {
                         else spectral
                     }
                 }
+                // Жёсткая дочистка остатка после нейросети: когда фон был (нейросеть
+                // включалась), прогоняем выход DFN через АГРЕССИВНОЕ спектральное
+                // вычитание — добивает остаточную музыку/ТВ/гул, которые DFN оставляет.
+                // В тихих записях (чисто спектральный путь) НЕ применяем — там и так чисто,
+                // а агрессия лишь испортила бы естественность голоса.
+                val usedNeural = gtcrn != null && maxW >= 0.02f && !tooLong
+                val cleaned = if (usedNeural) runAggressiveResidual(samples) else samples
                 // Дереверберация (хвост эха комнаты) → мастер-полировка
                 // (HPF + нормализация громкости + де-эссер + лимитер).
-                val dry = Dereverb.process(samples, 48_000)
+                val dry = Dereverb.process(cleaned, 48_000)
                 ok = encodeM4a(AudioPolish.polish(dry, 48_000), 48_000, f)
             }
         } catch (_: Throwable) {
@@ -275,7 +284,26 @@ class VoiceRecorder(context: Context) {
     /** Обычный (спектральный) шумодав по всему буферу. */
     private fun runSpectral(pcm: ShortArray): ShortArray {
         val nr = NoiseReducer()
+        // Профиль шума по самым тихим кадрам всего клипа (офлайн) — чтобы НЕ учить
+        // голос как шум, если речь началась сразу. Иначе спектр голоса вычитается
+        // из всей записи и «съедает» слова даже в тишине.
+        runCatching { nr.primeNoiseProfile(pcm) }
         val head = runCatching { nr.process(pcm, pcm.size) }.getOrNull() ?: pcm
+        val tail = runCatching { nr.flush() }.getOrNull() ?: ShortArray(0)
+        return if (tail.isEmpty()) head else head + tail
+    }
+
+    /**
+     * АГРЕССИВНАЯ дочистка остатка после нейросети (DFN). Применяется только когда фон
+     * был (нейросеть включалась). Большой overSub + низкий пол сильнее давят остаточную
+     * музыку/ТВ/гул, что DFN пропускает как «голосоподобное». Цена — чуть больше
+     * артефактов на речи, но это осознанный размен ради подавления фона.
+     * Полностью мелодию/перекрытие не убирает (предел без source separation).
+     */
+    private fun runAggressiveResidual(pcm: ShortArray): ShortArray {
+        val nr = NoiseReducer(overSub = 2.2f, floorGain = 0.10f) // ~ −20 дБ пол, жёстче
+        runCatching { nr.primeNoiseProfile(pcm) }
+        val head = runCatching { nr.process(pcm, pcm.size) }.getOrNull() ?: return pcm
         val tail = runCatching { nr.flush() }.getOrNull() ?: ShortArray(0)
         return if (tail.isEmpty()) head else head + tail
     }
@@ -311,9 +339,14 @@ class VoiceRecorder(context: Context) {
             val floorDb = win[(win.size * 15 / 100).coerceIn(0, win.size - 1)]   // фон (тихие кадры)
             val speechDb = win[(win.size * 90 / 100).coerceIn(0, win.size - 1)]  // речь (громкие кадры)
             val snr = speechDb - floorDb
-            val target = if (floorDb < absSilenceDb) 0f else {
-                // низкий SNR → ближе к 1 (нейросеть), высокий SNR → ближе к 0 (спектральный)
-                val t = ((snrHiDb - snr) / (snrHiDb - snrLoDb)).coerceIn(0.0, 1.0)
+            val target = if (floorDb < quietFloorDb) 0f else {
+                // 1) По АБСОЛЮТНОМУ фону: чем громче фон, тем сильнее нейросеть —
+                //    даже если голос заметно выше фона (музыка/ТВ на средней громкости).
+                val byFloor = ((floorDb - quietFloorDb) / (noisyFloorDb - quietFloorDb)).coerceIn(0.0, 1.0)
+                // 2) По SNR: голос едва над фоном → тоже нейросеть.
+                val bySnr = ((snrHiDb - snr) / (snrHiDb - snrLoDb)).coerceIn(0.0, 1.0)
+                // Берём максимум: нейросеть включается, если ЛИБО фон громкий, ЛИБО SNR низкий.
+                val t = maxOf(byFloor, bySnr)
                 (t * t * (3 - 2 * t)).toFloat() // smoothstep
             }
             sw = alpha * sw + (1 - alpha) * target
@@ -398,12 +431,11 @@ class VoiceRecorder(context: Context) {
      */
     private fun encodeM4a(samples: ShortArray, sampleRate: Int, file: File): Boolean {
         if (samples.isEmpty()) return false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-            encodeClip(samples, sampleRate, file, MediaFormat.MIMETYPE_AUDIO_OPUS,
-                MediaMuxer.OutputFormat.MUXER_OUTPUT_OGG, 28_000)
-        ) return true
+        // Только AAC/m4a (MPEG-4): стандартный, надёжный муксер, играется везде.
+        // Opus/OGG убран — OGG-муксер на части устройств падает (OggWriter: failed to
+        // read next buffer) и портит файл, из-за чего голосовые не воспроизводятся.
         return encodeClip(samples, sampleRate, file, MediaFormat.MIMETYPE_AUDIO_AAC,
-            MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4, 96_000)
+            MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4, 48_000)
     }
 
     private fun encodeClip(
@@ -522,7 +554,7 @@ class VoiceRecorder(context: Context) {
 
             val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelCount).apply {
                 setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
+                setInteger(MediaFormat.KEY_BIT_RATE, 64_000)
                 setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, bufSize)
             }
             val enc = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
@@ -702,7 +734,7 @@ class VoiceRecorder(context: Context) {
                 rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
                 rec.setAudioChannels(1)
                 rec.setAudioSamplingRate(48_000)
-                rec.setAudioEncodingBitRate(96_000)
+                rec.setAudioEncodingBitRate(48_000)
                 rec.setOutputFile(f.absolutePath)
                 rec.prepare()
                 rec.start()

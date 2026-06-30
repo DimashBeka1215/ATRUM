@@ -14,7 +14,7 @@ class LocalTransport(
     private val context: Context
 ) : ChatTransport {
     override val displayName: String = "Local"
-    override val displayIcon: String = "★"
+    override val displayIcon: String = "S" // Changed from ★ to S (Sparkle/Secure/Storage)
     override val chatId: String = "local_$chatIdLong" // Используем фиксированный ID для локального чата
 
     private val storageFile: File
@@ -61,7 +61,7 @@ class LocalTransport(
     }
 
     override suspend fun loadFileOrNull(name: String): String? = try {
-        val f = File(context.filesDir, "local_chat_${chatIdLong}_$name")
+        val f = File(context.filesDir, "local_chat_${chatIdLong}_${safeChatFileName(name)}")
         if (f.exists()) f.readText(Charsets.UTF_8) else null
     } catch (_: Exception) { null }
 
@@ -69,7 +69,7 @@ class LocalTransport(
 
     override suspend fun saveFile(name: String, content: String) {
         try {
-            val f = File(context.filesDir, "local_chat_${chatIdLong}_$name")
+            val f = File(context.filesDir, "local_chat_${chatIdLong}_${safeChatFileName(name)}")
             f.writeText(content, Charsets.UTF_8)
         } catch (_: Exception) { }
     }

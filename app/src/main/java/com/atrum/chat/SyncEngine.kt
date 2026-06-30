@@ -1,6 +1,6 @@
 package com.atrum.chat
 
-import com.atrum.chat.transport.AllGistData
+import com.atrum.chat.transport.AllChannelData
 import com.atrum.chat.transport.ChatTransport
 import com.atrum.chat.transport.NostrTransport
 import kotlinx.coroutines.*
@@ -12,31 +12,22 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Единый ETag-polling engine. Single-flight: параллельные GET невозможны.
  *
  * Архитектура:
- *  • Один GET за тик. ETag/304 = 0 трафика если gist не изменился.
+ *  • Один GET за тик. ETag/304 = 0 трафика если канал не изменился.
  *  • Single-flight guard (AtomicBoolean): новый тик пропускается если
- *    предыдущий ещё не завершён (slow GitHub CDN не создаёт request storm).
+ *    предыдущий ещё не завершён.
  *  • Adaptive interval: ACTIVE_MS пока чат открыт, BACKGROUND_MS иначе.
  *  • Rate limit: пауза на Retry-After при 429 / 403.
  *  • forceSync(): внеплановый тик после отправки сообщения.
- *
- * Использование:
- *   val engine = SyncEngine(transport)
- *   engine.start(lifecycleScope)
- *   launch { engine.events.collect { data -> handleNewData(data) } }
- *   engine.forceSync(delayMs = 1_500)   // после отправки
- *   engine.stop()                         // onPause / onDestroy
  */
 class SyncEngine(private val transport: ChatTransport) {
 
     // ── Public events ─────────────────────────────────────────────────────────
 
-    private val _events = MutableSharedFlow<AllGistData>(extraBufferCapacity = 4)
+    private val _events = MutableSharedFlow<AllChannelData>(extraBufferCapacity = 4)
     /**
-     * Горячий поток: данные от GitHub только когда gist реально изменился (200 ≠ 304).
-     * Несколько подписчиков получают одни и те же данные. Нет backpressure loss:
-     * extraBufferCapacity гарантирует что tryEmit() не дропает при медленном consumer.
+     * Горячий поток: данные от Реле только когда канал реально изменился (200 ≠ 304).
      */
-    val events: SharedFlow<AllGistData> = _events
+    val events: SharedFlow<AllChannelData> = _events
 
     // ── Internal state ────────────────────────────────────────────────────────
 
@@ -47,7 +38,7 @@ class SyncEngine(private val transport: ChatTransport) {
     @Volatile private var forceSyncAtMs    = Long.MAX_VALUE
     /**
      * Активный интервал зависит от транспорта: для Nostr — быстрый (своя сеть,
-     * нет GitHub-rate-limit), для Gist/прочих — прежние 5с (GitHub rate limit).
+     * нет Relay-rate-limit), для Channel/прочих — прежние 5с (Relay rate limit).
      */
     private val activeInterval: Long
         get() = if (transport is NostrTransport) NOSTR_ACTIVE_INTERVAL_MS else ACTIVE_INTERVAL_MS
@@ -131,12 +122,12 @@ class SyncEngine(private val transport: ChatTransport) {
 
     private suspend fun doSync() {
         try {
-            val data: AllGistData? = withContext(Dispatchers.IO) {
+            val data: AllChannelData? = withContext(Dispatchers.IO) {
                 transport.loadAllIfChanged()
             }
 
             if (data == null) {
-                // 304 Not Modified — gist не изменился
+                // 304 Not Modified — канал не изменился
                 // Продлеваем TTL кэша-подсказки appendLine (без GET не протухнет)
                 transport.touchChatContentHint()
                 return
@@ -149,7 +140,7 @@ class SyncEngine(private val transport: ChatTransport) {
             _events.tryEmit(data)
 
         } catch (e: RateLimitException) {
-            // GitHub rate limit — пауза на рекомендованное время (min 30s, max 2min)
+            // Relay rate limit — пауза на рекомендованное время (min 30s, max 2min)
             rateLimitUntilMs = System.currentTimeMillis() +
                 e.retryAfterMs.coerceIn(30_000L, 120_000L)
         } catch (_: CancellationException) {
@@ -163,27 +154,21 @@ class SyncEngine(private val transport: ChatTransport) {
     companion object {
         /**
          * Интервал опроса когда чат на переднем плане.
-         * 5с: среднее время получения сообщения = 2.5с.
-         * Нагрузка: 12 GET/мин при ETag (большинство — 304, ~0 трафика).
-         * GitHub rate limit: 5000/час = 83/мин → 14% утилизации. Безопасно.
+         * 2с: среднее время получения сообщения = 1с + задержка сети.
+         * Нагрузка: 30 GET/мин при ETag (большинство — 304, ~0 трафика).
          */
-        const val ACTIVE_INTERVAL_MS     = 5_000L    // 5 с (Gist — под GitHub rate limit)
+        const val ACTIVE_INTERVAL_MS     = 2_000L    // 2 с
 
         /**
-         * Интервал опроса для Nostr на переднем плане — 0.5 с.
-         * Persistent WebSocket (NostrRelayPool) делает каждый тик дешёвым.
-         * ⚠️ Публичные реле могут ограничивать частоту REQ-подписок: если реле
-         * начнут отваливаться/ругаться — подними это значение (напр. 1000–1500).
-         * Настоящий «push» (одна живая подписка вместо опроса) убрал бы опрос совсем,
-         * но требует переписать единый polling-цикл (CLAUDE.md §1).
+         * Интервал опроса для Nostr на переднем плане — 1 с.
          */
-        const val NOSTR_ACTIVE_INTERVAL_MS = 3_000L
+        const val NOSTR_ACTIVE_INTERVAL_MS = 1_000L
 
         /** Интервал опроса когда чат уходит в фон (не используется — onPause stop). */
         const val BACKGROUND_INTERVAL_MS = 30_000L   // 30 с
 
         /** Задержка форсированного sync после отправки сообщения. */
-        const val POST_SEND_SYNC_DELAY_MS = 1_500L
+        const val POST_SEND_SYNC_DELAY_MS = 0L
 
         /** Пауза перед повтором при single-flight: предыдущий GET ещё в полёте. */
         private const val SINGLE_FLIGHT_RETRY_MS = 500L

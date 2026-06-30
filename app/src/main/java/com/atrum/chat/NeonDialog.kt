@@ -58,7 +58,7 @@ object NeonDialog {
     // ── Reusable primitives ───────────────────────────────────────────────────
 
     /** Фоновый drawable: поверхность с фиолетовой рамкой и скруглениями 20dp. */
-    private fun Context.neonBg() = GradientDrawable().apply {
+    fun Context.neonBg() = GradientDrawable().apply {
         shape      = GradientDrawable.RECTANGLE
         setColor(bgColor())
         setStroke(dp(1f), BORDER)

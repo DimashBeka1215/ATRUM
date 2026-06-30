@@ -45,7 +45,7 @@ class MessageSendManager(
     /** Вызывается когда блокировка снята. */
     private val onPunishmentEnd: () -> Unit,
     /** Вызывается если сообщение не удалось отправить после всех retry. */
-    private val onSendFailed: (text: String, reason: String) -> Unit,
+    private val onSendFailed: (item: MessageSendManager.QueueItem, reason: String) -> Unit,
     /**
      * Вызывается при ответе GitHub «лимит запросов» (RateLimitException) с
      * рекомендованной паузой в мс — UI показывает жёлтую плашку с обратным отсчётом.
@@ -270,7 +270,7 @@ class MessageSendManager(
                     // Возвращаем токен: сообщение не ушло из-за сети/rate limit, не из-за спама.
                     // Без этого после серии ошибок bucket пустел и следующая отправка ждала пополнения.
                     tokens = minOf(MAX_TOKENS, tokens + 1)
-                    onSendFailed(item.text, lastError)
+                    onSendFailed(item, lastError)
                     // При ошибке pending нужно убрать сразу — сообщение не ушло
                     onQueueChanged(queueSnapshot())
                 }

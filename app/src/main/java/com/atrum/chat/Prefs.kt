@@ -28,10 +28,10 @@ class Prefs(private val context: Context) {
      * Зачем: EncryptedSharedPreferences иногда падает на некоторых устройствах/версиях
      * Android, и при этом мы переключаемся на fallback-файл, в котором userId нет →
      * генерируется новый UUID → все ранее отправленные сообщения становятся «чужими»
-     * (parsedUserId из gist != currentUserId из нового UUID).
+     * (parsedUserId из реле != currentUserId из нового UUID).
      *
      * Решение: всегда зеркалируем userId в этот обычный (нешифрованный) файл.
-     * userId — публичный идентификатор (он в любом случае виден в gist всем участникам
+     * userId — публичный идентификатор (он в любом случае виден в реле всем участникам
      * чата), поэтому его хранение без шифрования безопасно.
      */
     private val stablePrefs: SharedPreferences =
@@ -239,7 +239,7 @@ class Prefs(private val context: Context) {
     }
 
     /**
-     * Дедуп стикеров: ссылка на уже залитый в ОТДЕЛЬНЫЙ gist контент стикера.
+     * Дедуп стикеров: ссылка на уже залитый контент стикера.
      * Ключ — чат + стикер, потому что контент шифруется паролем чата
      * (одну и ту же ссылку нельзя переиспользовать в другом чате — там другой пароль).
      * Благодаря этому повторная отправка того же стикера не делает новой загрузки.
@@ -268,7 +268,7 @@ class Prefs(private val context: Context) {
         set(v) = prefs.edit().putString(KEY_LANGUAGE, v).apply()
 
     /**
-     * Был ли показан intro-onboarding (4 экрана с объяснением шифрования/Gist/Beta).
+     * Был ли показан intro-onboarding (4 экрана с объяснением шифрования/Source/Beta).
      * После первого Skip/Get Started ставим true — больше не показываем.
      */
     /**
@@ -312,6 +312,11 @@ class Prefs(private val context: Context) {
         get() = prefs.getBoolean(KEY_STICKER_ONBOARDING, false)
         set(v) = prefs.edit().putBoolean(KEY_STICKER_ONBOARDING, v).apply()
 
+    /** Показывалась ли анимация-подсказка, что пак можно открыть. */
+    var stickerPackHintShown: Boolean
+        get() = prefs.getBoolean("sticker_pack_hint_shown", false)
+        set(v) = prefs.edit().putBoolean("sticker_pack_hint_shown", v).apply()
+
     var stickerBotToken: String
         get() = prefs.getString(KEY_STICKER_BOT_TOKEN, "") ?: ""
         set(v) = prefs.edit().putString(KEY_STICKER_BOT_TOKEN, v).apply()
@@ -333,8 +338,7 @@ class Prefs(private val context: Context) {
     }
 
     /**
-     * Опциональный GitHub token, который используется для автосоздания gist'ов
-     * в Auto режиме создания чата.
+     * Опциональный токен транспорта, который используется для автосоздания каналов.
      *
      * ВАЖНО: этот токен — чисто transport, он НЕ участвует в шифровании сообщений.
      * Шифрование зависит только от пароля комнаты (chatPassword), который вводится
@@ -342,7 +346,7 @@ class Prefs(private val context: Context) {
      *
      * null = токен не сохранён, Auto режим недоступен (доступен только Manual).
      */
-    var defaultGistToken: String?
+    var defaultTransportToken: String?
         get() = prefs.getString(KEY_DEFAULT_TOKEN, null)?.takeIf { it.isNotBlank() }
         set(v) {
             if (v.isNullOrBlank()) prefs.edit().remove(KEY_DEFAULT_TOKEN).apply()
@@ -393,6 +397,28 @@ class Prefs(private val context: Context) {
     fun setEphemeralRotatedAt(chatId: String, ts: Long) {
         prefs.edit().putLong("eph_rot_$chatId", ts).apply()
     }
+
+    // ─── Ключ издателя списка реле (есть только у владельца) ───────────────────
+    // Приватный ключ подписи списка реле. Хранится в EncryptedSharedPreferences/Keystore,
+    // в сеть НЕ уходит. Наличие ключа => в настройках появляется экран «Издатель».
+    fun getPublisherPriv(): ByteArray? =
+        prefs.getString("relay_publisher_priv", null)
+            ?.let { android.util.Base64.decode(it, android.util.Base64.NO_WRAP) }
+
+    fun setPublisherPriv(priv: ByteArray) {
+        prefs.edit()
+            .putString("relay_publisher_priv",
+                android.util.Base64.encodeToString(priv, android.util.Base64.NO_WRAP))
+            .apply()
+    }
+
+    fun clearPublisherPriv() { prefs.edit().remove("relay_publisher_priv").apply() }
+
+    /** Локально скрыть раздел «Сеть»/издателя на этом телефоне (по кнопке «Удалить это окно»). */
+    var relaySectionHidden: Boolean
+        get() = prefs.getBoolean("relay_section_hidden", false)
+        set(v) { prefs.edit().putBoolean("relay_section_hidden", v).apply() }
+    fun hasPublisherKey(): Boolean = prefs.contains("relay_publisher_priv")
 
     /**
      * Ключ локального шифр-архива истории (AES-256, один на устройство).
@@ -574,7 +600,7 @@ class Prefs(private val context: Context) {
      * Полная очистка локальных настроек, но СОХРАНЯЕТ myUserId.
      *
      * Это важно: если сбросить myUserId, то старый профиль пользователя
-     * в profiles.txt (в gist'ах) останется с прежним userId и алгоритм
+     * в profiles.txt (в источнике) останется с прежним userId и алгоритм
      * findPartner воспримет старого "себя" как собеседника, отображая
      * собственные имя/аватарку в шапке чата.
      */

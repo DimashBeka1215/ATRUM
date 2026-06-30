@@ -1,0 +1,33 @@
+﻿<!DOCTYPE html>
+<html lang='en'>
+<head>
+    <meta charset='UTF-8'>
+    <style>
+        body { background-color: #121212; color: #E0E0E0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; }
+        .banner { background-color: #2C2C2C; border: 1px solid #FF9800; border-radius: 8px; padding: 14px; display: flex; align-items: flex-start; max-width: 500px; }
+        .icon { width: 20px; height: 20px; background-color: #FF9800; mask: url('data:image/svg+xml;utf8,<svg viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M12 2L1 21h22L12 2zm0 3.99L20.53 19H3.47L12 5.99zM11 16h2v2h-2v-2zm0-6h2v4h-2v-4z\" fill=\"currentColor\"/></svg>') center / contain no-repeat; margin-right: 12dp; margin-top: 1px; flex-shrink: 0; }
+        .content { display: flex; flex-direction: column; margin-left: 12px; }
+        .title { color: #FF9800; font-weight: bold; font-size: 13px; margin-bottom: 4px; }
+        .message { color: #B0B0B0; font-size: 12px; line-height: 1.4; }
+    </style>
+</head>
+<body>
+    <h3>RU Mockup</h3>
+    <div class='banner'>
+        <div class='icon'></div>
+        <div class='content'>
+            <div class='title'>Проблема с загрузкой</div>
+            <div class='message'>Не удалось связаться с серверами Telegram. Мы используем локальный Tor-прокси (порт 9050), чтобы скрыть ваш IP от Telegram и обеспечить приватность. Если стикеры не грузятся — проверьте статус Tor или попробуйте VPN. Telegram видит только ID стикеров и токен бота, у него нет доступа к вашим перепискам или ключам.</div>
+        </div>
+    </div>
+    <br>
+    <h3>EN Mockup</h3>
+    <div class='banner'>
+        <div class='icon'></div>
+        <div class='content'>
+            <div class='title'>Loading issue</div>
+            <div class='message'>Failed to connect to Telegram servers. We route requests through a local Tor proxy (port 9050) to hide your IP from Telegram and ensure privacy. If stickers aren't loading, check Tor status or try a VPN. Telegram only sees sticker IDs and the bot token; it has no access to your chats or keys.</div>
+        </div>
+    </div>
+</body>
+</html>

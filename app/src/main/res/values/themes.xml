@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <style name="Theme.GithubChat" parent="Theme.MaterialComponents.NoActionBar">
+    <style name="Theme.AtrumChat" parent="Theme.MaterialComponents.NoActionBar">
         <item name="colorPrimary">@color/accent</item>
         <item name="colorPrimaryVariant">@color/accent_dark</item>
         <item name="colorOnPrimary">@color/white</item>
@@ -27,7 +27,7 @@
     </style>
 
     <!-- AlertDialog — светлая тема: Light-родитель даёт тёмный текст по умолчанию -->
-    <style name="Theme.GithubChat.Dialog" parent="Theme.MaterialComponents.Light.Dialog.Alert">
+    <style name="Theme.AtrumChat.Dialog" parent="Theme.MaterialComponents.Light.Dialog.Alert">
         <item name="colorPrimary">@color/accent</item>
         <item name="colorAccent">@color/accent</item>
         <item name="android:textColorPrimary">@color/text_primary</item>
@@ -39,17 +39,17 @@
 
 
     <!-- BottomSheet — фон из темы (@color/surface, dark override в values-night/themes.xml) -->
-    <style name="Theme.GithubChat.BottomSheet" parent="Theme.MaterialComponents.BottomSheetDialog">
-        <item name="bottomSheetStyle">@style/Widget.GithubChat.BottomSheet</item>
+    <style name="Theme.AtrumChat.BottomSheet" parent="Theme.MaterialComponents.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/Widget.AtrumChat.BottomSheet</item>
         <item name="android:navigationBarColor">@color/surface</item>
     </style>
 
-    <style name="Widget.GithubChat.BottomSheet" parent="Widget.MaterialComponents.BottomSheet">
+    <style name="Widget.AtrumChat.BottomSheet" parent="Widget.MaterialComponents.BottomSheet">
         <item name="backgroundTint">@color/surface</item>
-        <item name="shapeAppearance">@style/ShapeAppearance.GithubChat.BottomSheet</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.AtrumChat.BottomSheet</item>
     </style>
 
-    <style name="ShapeAppearance.GithubChat.BottomSheet" parent="">
+    <style name="ShapeAppearance.AtrumChat.BottomSheet" parent="">
         <item name="cornerFamily">rounded</item>
         <item name="cornerSizeTopLeft">20dp</item>
         <item name="cornerSizeTopRight">20dp</item>
@@ -58,13 +58,13 @@
     </style>
 
     <!-- ShapeAppearance для круглых ImageView (аватарки) -->
-    <style name="ShapeAppearance.GithubChat.Circle" parent="">
+    <style name="ShapeAppearance.AtrumChat.Circle" parent="">
         <item name="cornerFamily">rounded</item>
         <item name="cornerSize">50%</item>
     </style>
 
     <!-- ShapeAppearance для картинок в сообщениях со скруглением -->
-    <style name="ShapeAppearance.GithubChat.RoundedImage" parent="">
+    <style name="ShapeAppearance.AtrumChat.RoundedImage" parent="">
         <item name="cornerFamily">rounded</item>
         <item name="cornerSize">14dp</item>
     </style>

@@ -72,8 +72,12 @@ class App : Application() {
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             private var startedCount = 0
             override fun onActivityStarted(activity: Activity) {
+                val wasBackground = startedCount == 0
                 startedCount++
                 inForeground = true
+                // Вернулись на передний план — закрываем «окно шеринга», чтобы дальше
+                // автоблокировка работала как обычно.
+                if (wasBackground) AppLock.endShareGrace()
                 // Пользователь открыл приложение — убираем пуш о непрочитанных и
                 // сбрасываем счётчик (если останутся непрочитанные — пуш вернётся в фоне).
                 NotificationHelper.cancelMessages(activity)
@@ -84,7 +88,13 @@ class App : Application() {
                 if (startedCount <= 0) {
                     startedCount = 0
                     inForeground = false
-                    if (!activity.isChangingConfigurations && prefs.hasLocalPassword()) {
+                    // Не блокируем во время исходящего шеринга (см. AppLock.beginShareGrace):
+                    // иначе возврат из Telegram перебивается экраном блокировки.
+                    if (!activity.isChangingConfigurations && prefs.hasLocalPassword()
+                        && !AppLock.shareGraceActive()) {
+                        // Запоминаем момент ухода в фон: краткий возврат (в пределах
+                        // AUTO_LOCK_GRACE_MS) не будет перепрашивать пароль (см. SecureActivity).
+                        AppLock.markBackgrounded()
                         AppLock.locked = true
                     }
                 }
@@ -124,7 +134,7 @@ class App : Application() {
     }
 
     /**
-     * One-time migration: reads gistToken/chatPassword from plaintext Room DB rows
+     * One-time migration: reads chat secrets from plaintext Room DB rows
      * (before MIGRATION_9_10 zeroes them) and saves them in EncryptedSharedPreferences.
      *
      * Safe to call every launch — if secrets already exist in Prefs we skip.
@@ -132,7 +142,7 @@ class App : Application() {
      */
     private fun migrateChatSecretsToPrefs(prefs: Prefs) {
         try {
-            val dbFile = getDatabasePath("githubchat.db")
+            val dbFile = getDatabasePath("atrum.db")
             if (!dbFile.exists()) return
             val db = android.database.sqlite.SQLiteDatabase.openDatabase(
                 dbFile.absolutePath,

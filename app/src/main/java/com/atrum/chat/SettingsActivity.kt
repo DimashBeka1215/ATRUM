@@ -34,16 +34,6 @@ class SettingsActivity : SecureActivity() {
         ActivityResultContracts.GetContent()
     ) { uri: Uri? -> if (uri != null) startCrop(uri) }
 
-    private val requestNotifPerm = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) enablePush()
-        else {
-            binding.switchPush.isChecked = false
-            Toast.makeText(this, R.string.push_need_permission, Toast.LENGTH_SHORT).show()
-        }
-    }
-
     private val cropImage = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -89,9 +79,18 @@ class SettingsActivity : SecureActivity() {
             }
         }
 
-        binding.switchPush.isChecked = prefs.pushEnabled
-        binding.itemNotifications.setOnClickListener { togglePush() }
+        binding.itemNotifications.setOnClickListener {
+            startActivity(Intent(this, NotificationsActivity::class.java))
+        }
 
+        /* CLAUDE_HINT: Mods section entry point. To restore, uncomment this block.
+        binding.itemStickers.setOnClickListener {
+            startActivity(Intent(this, StickerSettingsActivity::class.java))
+        }
+        binding.itemMods.setOnClickListener {
+            startActivity(Intent(this, ModsActivity::class.java))
+        }
+        */
         binding.itemStickers.setOnClickListener {
             startActivity(Intent(this, StickerSettingsActivity::class.java))
         }
@@ -105,7 +104,11 @@ class SettingsActivity : SecureActivity() {
         binding.itemCredits.setOnClickListener {
             startActivity(Intent(this, CreditsActivity::class.java))
         }
+        binding.itemTester.setOnClickListener { showTesterPasswordDialog() }
         binding.btnLogout.setOnClickListener { confirmLogout() }
+
+        // Реле: скрытый вход в издателя — 7 нажатий подряд по строке, затем запрос пароля.
+        binding.itemRelays.setOnClickListener { onRelayTap() }
 
         setupVersionRow()
         setupParallax()
@@ -117,7 +120,36 @@ class SettingsActivity : SecureActivity() {
         setupBanner()
         setupProfile()
         setupBiometric()
+        refreshRelaysSection()
     }
+
+    private fun refreshRelaysSection() {
+        val hidden = prefs.relaySectionHidden
+        binding.sectionNetworkTitle.visibility = if (hidden) View.GONE else View.VISIBLE
+        binding.sectionNetworkCard.visibility = if (hidden) View.GONE else View.VISIBLE
+        if (hidden) return
+        val builtin = com.atrum.chat.transport.NostrTransport.RELAYS.size
+        val extra = RelayListStore.extraRelays(this).size
+        val ver = RelayListStore.currentVersion(this)
+        binding.tvRelaysSub.text = if (ver < 0 || extra == 0)
+            getString(R.string.relays_sub_builtin, builtin)
+        else getString(R.string.relays_sub_full, builtin, extra, ver)
+        binding.itemPublisher.visibility = View.GONE
+    }
+
+    // ─── Скрытый вход в издателя: 7 нажатий → пароль ───────────────────────────
+    private var relayTaps = 0
+    private var lastRelayTapMs = 0L
+
+    private fun onRelayTap() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastRelayTapMs > 1500) relayTaps = 0
+        lastRelayTapMs = now
+        relayTaps++
+        if (relayTaps >= 7) { relayTaps = 0; startActivity(Intent(this, PublisherGateActivity::class.java)) }
+    }
+
+
 
     /**
      * Настройка строки «Вход по отпечатку».
@@ -143,31 +175,6 @@ class SettingsActivity : SecureActivity() {
         if (BiometricHelper.canUse(this)) {
             binding.warnBiometric.visibility = View.GONE
         }
-    }
-
-    /** Включает/выключает push-уведомления и фоновый сервис. */
-    private fun togglePush() {
-        if (binding.switchPush.isChecked) {
-            prefs.pushEnabled = false
-            binding.switchPush.isChecked = false
-            MessageWatchService.stop(this)
-            return
-        }
-        // Android 13+ требует runtime-разрешение на показ уведомлений.
-        if (android.os.Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS)
-            != android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            requestNotifPerm.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            enablePush()
-        }
-    }
-
-    private fun enablePush() {
-        prefs.pushEnabled = true
-        binding.switchPush.isChecked = true
-        MessageWatchService.start(this)
     }
 
     private fun toggleBiometric() {
@@ -348,7 +355,10 @@ class SettingsActivity : SecureActivity() {
         val status = prefs.myStatus
         binding.tvProfileStatus.text = status.ifBlank { null }
 
-        binding.flAvatarContainer.setOnClickListener { pickImage.launch("image/*") }
+        binding.flAvatarContainer.setOnClickListener {
+            AppLock.beginShareGrace()
+            pickImage.launch("image/*")
+        }
         binding.tvProfileName.setOnClickListener { showEditNameDialog() }
         binding.tvProfileTag.setOnClickListener { showEditTagDialog() }
         binding.tvProfileStatus.setOnClickListener { showEditStatusDialog() }
@@ -367,6 +377,16 @@ class SettingsActivity : SecureActivity() {
             binding.ivTopBarAvatar.visibility = View.GONE
             binding.flTopBarAvatarInitial.visibility = View.VISIBLE
         }
+    }
+
+    private fun updateAllAvatarViews(bitmap: Bitmap) {
+        binding.ivAvatar.setImageBitmap(bitmap)
+        binding.ivAvatar.visibility = View.VISIBLE
+        binding.flAvatarInitial.visibility = View.GONE
+
+        binding.ivTopBarAvatar.setImageBitmap(bitmap)
+        binding.ivTopBarAvatar.visibility = View.VISIBLE
+        binding.flTopBarAvatarInitial.visibility = View.GONE
     }
 
     private fun showEditNameDialog() {
@@ -415,6 +435,9 @@ class SettingsActivity : SecureActivity() {
 
         prefs.myStatus = trimmed
         binding.tvProfileStatus.text = trimmed.ifBlank { null }
+        
+        val avatar = AvatarUtils.fromBase64(prefs.myAvatarBase64)
+        updateTopBar(prefs.myName, avatar)
 
         val myProfile = Profile(
             userId = prefs.myUserId,
@@ -485,13 +508,13 @@ class SettingsActivity : SecureActivity() {
             val db = AppDatabase.get(appContext)
             for (chat in db.chatDao().getAll()) {
                 try {
-                    val token = settingsPrefs.getChatToken(chat.gistId)
+                    val token = settingsPrefs.getChatToken(chat.chatId)
                         .takeIf { it.isNotEmpty() }
-                        ?: @Suppress("DEPRECATION") chat.gistToken
-                    val password = settingsPrefs.getChatPassword(chat.gistId)
+                        ?: @Suppress("DEPRECATION") chat.transportToken
+                    val password = settingsPrefs.getChatPassword(chat.chatId)
                         .takeIf { it.isNotEmpty() }
                         ?: @Suppress("DEPRECATION") chat.chatPassword
-                    val api = TransportFactory.forChat(applicationContext, chat.gistId, token, password, settingsPrefs.myUserId)
+                    val api = TransportFactory.forChat(applicationContext, chat.chatId, token, password, settingsPrefs.myUserId)
                     ProfileSync.pushMyProfile(api, password, profile)
                 } catch (_: Exception) {}
             }
@@ -527,9 +550,7 @@ class SettingsActivity : SecureActivity() {
                 Toast.makeText(this@SettingsActivity, R.string.error_avatar_load, Toast.LENGTH_SHORT).show()
                 return@launch
             }
-            binding.ivAvatar.setImageBitmap(bitmap)
-            binding.ivAvatar.visibility = View.VISIBLE
-            binding.flAvatarInitial.visibility = View.GONE
+            updateAllAvatarViews(bitmap)
             saveAvatarNow(bitmap)
         }
     }
@@ -551,12 +572,30 @@ class SettingsActivity : SecureActivity() {
     }
 
     private fun confirmLogout() {
-        AlertDialog.Builder(this, R.style.Theme_GithubChat_Dialog)
+        AlertDialog.Builder(this, R.style.Theme_AtrumChat_Dialog)
             .setTitle(R.string.logout_title)
             .setMessage(R.string.logout_message)
             .setPositiveButton(R.string.logout_confirm) { _, _ -> performLogout() }
             .setNegativeButton(R.string.btn_cancel, null)
             .show()
+    }
+
+    private fun showTesterPasswordDialog() {
+        NeonDialog.showEdit(
+            ctx = this,
+            title = getString(R.string.tester_pwd_dialog_title),
+            subtitle = getString(R.string.tester_pwd_dialog_desc),
+            initialText = "",
+            positiveText = getString(R.string.btn_next),
+            negativeText = getString(R.string.btn_cancel),
+            isPassword = true
+        ) { pwd ->
+            if (prefs.checkTesterPassword(pwd)) {
+                startActivity(Intent(this, TesterSettingsActivity::class.java))
+            } else {
+                Toast.makeText(this, R.string.tester_pwd_wrong, Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     private fun performLogout() {
@@ -568,16 +607,16 @@ class SettingsActivity : SecureActivity() {
             val db = AppDatabase.get(appContext)
             for (chat in db.chatDao().getAll()) {
                 try {
-                    val token = logoutPrefs.getChatToken(chat.gistId)
+                    val token = logoutPrefs.getChatToken(chat.chatId)
                         .takeIf { it.isNotEmpty() }
-                        ?: @Suppress("DEPRECATION") chat.gistToken
-                    val password = logoutPrefs.getChatPassword(chat.gistId)
+                        ?: @Suppress("DEPRECATION") chat.transportToken
+                    val password = logoutPrefs.getChatPassword(chat.chatId)
                         .takeIf { it.isNotEmpty() }
                         ?: @Suppress("DEPRECATION") chat.chatPassword
-                    val api = TransportFactory.forChat(applicationContext, chat.gistId, token, password, myUserId)
+                    val api = TransportFactory.forChat(applicationContext, chat.chatId, token, password, myUserId)
                     ProfileSync.pushDeletedMarker(api, password, myUserId)
                 } catch (_: Exception) {}
-                logoutPrefs.deleteChatSecrets(chat.gistId)
+                logoutPrefs.deleteChatSecrets(chat.chatId)
             }
             db.clearAllTables()
         }

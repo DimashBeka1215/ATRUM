@@ -5,25 +5,26 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 
 /**
- * Один чат с собеседником. Каждый чат — это отдельный GitHub Gist.
+ * Один чат с собеседником. Каждый чат — это отдельный транспортный канал (Nostr/BT).
  */
 @Entity(tableName = "chats")
 data class Chat(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
 
-    val gistId: String,
+    @ColumnInfo(name = "channelId")
+    val chatId: String,
 
     /**
      * ⚠️ DEPRECATED — всегда пустая строка с версии DB 10.
-     * Токен теперь хранится в EncryptedSharedPreferences через Prefs.getChatToken(gistId).
+     * Токен теперь хранится в EncryptedSharedPreferences через Prefs.getChatToken(chatId).
      */
     @Deprecated("Stored in EncryptedSharedPreferences via Prefs. Always empty in DB v10+.")
-    @ColumnInfo(name = "gistToken")
-    val gistToken: String = "",
+    @ColumnInfo(name = "transportToken")
+    val transportToken: String = "",
 
     /**
      * ⚠️ DEPRECATED — всегда пустая строка с версии DB 10.
-     * Пароль теперь хранится в EncryptedSharedPreferences через Prefs.getChatPassword(gistId).
+     * Пароль теперь хранится в EncryptedSharedPreferences через Prefs.getChatPassword(chatId).
      */
     @Deprecated("Stored in EncryptedSharedPreferences via Prefs. Always empty in DB v10+.")
     @ColumnInfo(name = "chatPassword")
@@ -38,7 +39,7 @@ data class Chat(
     val unreadCount: Int = 0,
 
     /**
-     * Сколько строк было в gist при последнем открытии чата.
+     * Сколько сообщений было в канале при последнем открытии чата.
      * Используется для подсчёта новых сообщений с тех пор как пользователь
      * закрыл чат.
      */

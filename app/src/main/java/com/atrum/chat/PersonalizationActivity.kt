@@ -4,7 +4,6 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.content.Intent
 import android.graphics.Bitmap
-import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.view.ViewAnimationUtils
@@ -139,7 +138,7 @@ class PersonalizationActivity : SecureActivity() {
         val values = arrayOf(App.THEME_DARK, App.THEME_LIGHT, App.THEME_SYSTEM)
         val current = values.indexOf(prefs.appTheme).coerceAtLeast(0)
 
-        AlertDialog.Builder(this, R.style.Theme_GithubChat_Dialog)
+        AlertDialog.Builder(this, R.style.Theme_AtrumChat_Dialog)
             .setTitle(R.string.theme_dialog_title)
             .setSingleChoiceItems(themes, current) { dialog, which ->
                 val chosen = values[which]
@@ -155,7 +154,7 @@ class PersonalizationActivity : SecureActivity() {
     }
 
     private fun showLightThemeWarning() {
-        AlertDialog.Builder(this, R.style.Theme_GithubChat_Dialog)
+        AlertDialog.Builder(this, R.style.Theme_AtrumChat_Dialog)
             .setTitle(R.string.theme_light_warning_title)
             .setMessage(R.string.theme_light_warning_message)
             .setPositiveButton(R.string.theme_light_warning_confirm) { dialog, _ -> 
@@ -217,7 +216,7 @@ class PersonalizationActivity : SecureActivity() {
         val values = arrayOf(App.LANG_RU, App.LANG_EN, App.LANG_SYSTEM)
         val current = values.indexOf(prefs.appLanguage).coerceAtLeast(0)
 
-        AlertDialog.Builder(this, R.style.Theme_GithubChat_Dialog)
+        AlertDialog.Builder(this, R.style.Theme_AtrumChat_Dialog)
             .setTitle(R.string.lang_dialog_title)
             .setSingleChoiceItems(langs, current) { dialog, which ->
                 dialog.dismiss()
@@ -242,12 +241,15 @@ class PersonalizationActivity : SecureActivity() {
             getString(R.string.wallpaper_change),
             getString(R.string.wallpaper_clear)
         )
-        AlertDialog.Builder(this, R.style.Theme_GithubChat_Dialog)
+        AlertDialog.Builder(this, R.style.Theme_AtrumChat_Dialog)
             .setTitle(R.string.settings_wallpaper_title)
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> startActivity(Intent(this, WallpaperPreviewActivity::class.java))
-                    1 -> pickWallpaper.launch("image/*")
+                    1 -> {
+                        AppLock.beginShareGrace()
+                        pickWallpaper.launch("image/*")
+                    }
                     2 -> {
                         prefs.wallpaperPortrait = null
                         prefs.wallpaperLandscape = null
@@ -277,7 +279,7 @@ class PersonalizationActivity : SecureActivity() {
         val values = arrayOf(Prefs.CHAT_UI_CLASSIC, Prefs.CHAT_UI_GLASS)
         val current = values.indexOf(prefs.chatUiStyle).coerceAtLeast(0)
 
-        AlertDialog.Builder(this, R.style.Theme_GithubChat_Dialog)
+        AlertDialog.Builder(this, R.style.Theme_AtrumChat_Dialog)
             .setTitle(R.string.settings_item_chat_ui_style)
             .setSingleChoiceItems(styles, current) { dialog, which ->
                 dialog.dismiss()

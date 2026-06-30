@@ -219,7 +219,7 @@ class CreditsActivity : AppCompatActivity() {
     // ═══ Donate dialog ═══
 
     private fun showDonateDialog() {
-        val dialog = BottomSheetDialog(this, R.style.Theme_GithubChat_BottomSheet)
+        val dialog = BottomSheetDialog(this, R.style.Theme_AtrumChat_BottomSheet)
         val view = LayoutInflater.from(this).inflate(R.layout.dialog_donate, null, false)
         view.findViewById<View>(R.id.optionDonationAlerts).setOnClickListener {
             dialog.dismiss(); openUrl(urlDonationAlerts)
@@ -235,6 +235,9 @@ class CreditsActivity : AppCompatActivity() {
     }
 
     private fun openUrl(url: String) {
-        try { startActivity(Intent(Intent.ACTION_VIEW, url.toUri())) } catch (_: Exception) {}
+        try {
+            AppLock.beginShareGrace()
+            startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
+        } catch (_: Exception) {}
     }
 }

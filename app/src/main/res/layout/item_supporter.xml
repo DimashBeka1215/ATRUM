@@ -38,7 +38,7 @@
                 android:layout_gravity="center"
                 android:scaleType="centerCrop"
                 android:visibility="gone"
-                app:shapeAppearanceOverlay="@style/ShapeAppearance.GithubChat.Circle"
+                app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.Circle"
                 xmlns:app="http://schemas.android.com/apk/res-auto"/>
 
             <!-- Initial placeholder -->

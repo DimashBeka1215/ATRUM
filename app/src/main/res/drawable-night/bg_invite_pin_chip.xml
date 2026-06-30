@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Тёмная тема: чип код-пароля поверх узора — акцентная заливка ~18% для отделения. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#2E9D4EDD" />
+    <corners android:radius="12dp" />
+</shape>

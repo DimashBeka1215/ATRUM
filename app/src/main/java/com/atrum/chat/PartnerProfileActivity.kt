@@ -27,8 +27,8 @@ class PartnerProfileActivity : AppCompatActivity() {
         const val EXTRA_TAG           = "tag"
         const val EXTRA_STATUS        = "status"
         const val EXTRA_AVATAR_BASE64 = "avatar_base64"
-        const val EXTRA_GIST_ID       = "gist_id"
-        const val EXTRA_GIST_TOKEN    = "gist_token"
+        const val EXTRA_CHANNEL_ID    = "channel_id"
+        const val EXTRA_TRANSPORT_TOKEN = "transport_token"
         const val EXTRA_CHAT_PASSWORD = "chat_password"
         const val EXTRA_CHAT_ID       = "chat_id"
         const val EXTRA_IMAGE_REFS    = "image_refs"
@@ -51,13 +51,13 @@ class PartnerProfileActivity : AppCompatActivity() {
 
     // Данные для перехода в список медиа и к исходным сообщениям.
     private var chatIdForMedia: Long = -1L
-    private var mGistId = ""; private var mGistToken = ""; private var mChatPassword = ""
+    private var mchatId = ""; private var mtransportToken = ""; private var mChatPassword = ""
     private var photoRefsAll = ArrayList<String>(); private var photoMsgIds = ArrayList<String>(); private var photoSelf = ArrayList<String>()
     private var voiceItemsAll = ArrayList<String>(); private var voiceMsgIds = ArrayList<String>(); private var voiceSelf = ArrayList<String>()
     private var linkItemsAll = ArrayList<String>(); private var linkMsgIds = ArrayList<String>(); private var linkSelf = ArrayList<String>()
 
     // ── Взаимная сверка (живой статус) ─────────────────────────────────────────
-    private var verifyGistId = ""
+    private var verifychatId = ""
     private var verifyToken = ""
     private var verifyPassword = ""
     private var verifySyncJob: Job? = null   // лёгкий опрос профиля партнёра, пока экран открыт
@@ -72,15 +72,15 @@ class PartnerProfileActivity : AppCompatActivity() {
         val tag          = intent.getStringExtra(EXTRA_TAG)
         val status       = intent.getStringExtra(EXTRA_STATUS)
         val avatarBase64 = intent.getStringExtra(EXTRA_AVATAR_BASE64)
-        val gistId       = intent.getStringExtra(EXTRA_GIST_ID) ?: ""
-        val gistToken    = intent.getStringExtra(EXTRA_GIST_TOKEN) ?: ""
+        val chatId       = intent.getStringExtra(EXTRA_CHANNEL_ID) ?: ""
+        val transportToken    = intent.getStringExtra(EXTRA_TRANSPORT_TOKEN) ?: ""
         val chatPassword = intent.getStringExtra(EXTRA_CHAT_PASSWORD) ?: ""
         val imageRefs    = intent.getStringArrayListExtra(EXTRA_IMAGE_REFS) ?: arrayListOf()
         val voiceItems   = intent.getStringArrayListExtra(EXTRA_VOICE_REFS) ?: arrayListOf()
         val linkItems    = intent.getStringArrayListExtra(EXTRA_LINKS) ?: arrayListOf()
 
         chatIdForMedia = intent.getLongExtra(EXTRA_CHAT_ID, -1L)
-        mGistId = gistId; mGistToken = gistToken; mChatPassword = chatPassword
+        mchatId = chatId; mtransportToken = transportToken; mChatPassword = chatPassword
         photoRefsAll = imageRefs
         photoMsgIds = intent.getStringArrayListExtra(EXTRA_IMAGE_MSGIDS) ?: arrayListOf()
         photoSelf   = intent.getStringArrayListExtra(EXTRA_IMAGE_SELF) ?: arrayListOf()
@@ -92,13 +92,13 @@ class PartnerProfileActivity : AppCompatActivity() {
         linkSelf   = intent.getStringArrayListExtra(EXTRA_LINK_SELF) ?: arrayListOf()
 
         // Сохраняем для живой сверки (публикация подтверждения + опрос профиля партнёра).
-        verifyGistId = gistId
-        verifyToken = gistToken
+        verifychatId = chatId
+        verifyToken = transportToken
         verifyPassword = chatPassword
 
         // Security fingerprint
         val tvFingerprint = findViewById<TextView>(R.id.tv_security_fingerprint)
-        val fingerprint = CryptoHelper.getSessionKeyFingerprint(gistId)
+        val fingerprint = CryptoHelper.getSessionKeyFingerprint(chatId)
         if (fingerprint != null) {
             tvFingerprint.text = fingerprint
         } else {
@@ -115,7 +115,7 @@ class PartnerProfileActivity : AppCompatActivity() {
         }
 
         // Статус проверки идентичности партнёра (пункт 7, информативно).
-        applyIdentityBadge(gistId)
+        applyIdentityBadge(chatId)
 
         // Back button
         findViewById<ImageButton>(R.id.btn_back).setOnClickListener { finish() }
@@ -166,24 +166,24 @@ class PartnerProfileActivity : AppCompatActivity() {
             photosSection.visibility = View.GONE
         } else {
             photosSection.visibility = View.VISIBLE
-            loadPhotoGrid(imageRefs, gistId, gistToken, chatPassword, gridContainer, photosCount, photosAllBtn)
+            loadPhotoGrid(imageRefs, chatId, transportToken, chatPassword, gridContainer, photosCount, photosAllBtn)
         }
 
         // Голосовые и Ссылки
-        setupVoiceSection(voiceItems, gistId, gistToken, chatPassword)
+        setupVoiceSection(voiceItems, chatId, transportToken, chatPassword)
         setupLinksSection(linkItems)
     }
 
     private fun loadPhotoGrid(
         refs: List<String>,
-        gistId: String,
-        gistToken: String,
+        chatId: String,
+        transportToken: String,
         chatPassword: String,
         row1: LinearLayout,
         countView: TextView,
         allBtn: View
     ) {
-        val transport = TransportFactory.forChat(this@PartnerProfileActivity, gistId, gistToken, chatPassword, prefs.myUserId)
+        val transport = TransportFactory.forChat(this@PartnerProfileActivity, chatId, transportToken, chatPassword, prefs.myUserId)
         val loader = ImageLoader(transport, chatPassword)
 
         countView.text = refs.size.toString()
@@ -247,8 +247,8 @@ class PartnerProfileActivity : AppCompatActivity() {
             putExtra(MediaListActivity.EXTRA_MODE, mode)
             putExtra(MediaListActivity.EXTRA_TITLE, title)
             putExtra(MediaListActivity.EXTRA_CHAT_ID, chatIdForMedia)
-            putExtra(MediaListActivity.EXTRA_GIST_ID, mGistId)
-            putExtra(MediaListActivity.EXTRA_GIST_TOKEN, mGistToken)
+            putExtra(MediaListActivity.EXTRA_CHANNEL_ID, mchatId)
+            putExtra(MediaListActivity.EXTRA_TRANSPORT_TOKEN, mtransportToken)
             putExtra(MediaListActivity.EXTRA_CHAT_PASSWORD, mChatPassword)
             putStringArrayListExtra(MediaListActivity.EXTRA_ITEMS, items)
             putStringArrayListExtra(MediaListActivity.EXTRA_MSGIDS, msgIds)
@@ -302,13 +302,14 @@ class PartnerProfileActivity : AppCompatActivity() {
 
     private fun openUrl(url: String) {
         try {
+            AppLock.beginShareGrace()
             val u = if (url.startsWith("http", true)) url else "http://$url"
             startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(u)))
         } catch (_: Exception) {}
     }
 
     // ─── Голосовые ───────────────────────────────────────────────────────────
-    private fun setupVoiceSection(items: List<String>, gistId: String, gistToken: String, chatPassword: String) {
+    private fun setupVoiceSection(items: List<String>, chatId: String, transportToken: String, chatPassword: String) {
         val section = findViewById<View>(R.id.section_voice)
         val parsed = items.mapNotNull {
             val parts = it.split('\u0001')
@@ -320,7 +321,7 @@ class PartnerProfileActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.tv_voice_count).text = parsed.size.toString()
         val container = findViewById<LinearLayout>(R.id.ll_voice_container)
         val allBtn = findViewById<View>(R.id.btn_voice_all)
-        val transport = TransportFactory.forChat(this, gistId, gistToken, chatPassword, prefs.myUserId)
+        val transport = TransportFactory.forChat(this, chatId, transportToken, chatPassword, prefs.myUserId)
         val loader = ImageLoader(transport, chatPassword)
         val preview = 3
         renderVoice(container, parsed.take(preview), loader)
@@ -408,7 +409,7 @@ class PartnerProfileActivity : AppCompatActivity() {
      * красный (с крестиком) — ключ партнёра изменился. Данные берём из intent
      * (надёжно, не зависит от тайминга polling).
      */
-    private fun applyIdentityBadge(gistId: String) {
+    private fun applyIdentityBadge(chatId: String) {
         val shield = findViewById<android.widget.ImageButton>(R.id.btn_shield_status)
         val card = findViewById<View>(R.id.card_security)
 
@@ -430,20 +431,20 @@ class PartnerProfileActivity : AppCompatActivity() {
         // Авто-статус: подпись эфемерного ключа + TOFU.
         val sigValid = eph != null && esig != null && try {
             val data = android.util.Base64.decode(eph, android.util.Base64.NO_WRAP) +
-                gistId.toByteArray(Charsets.UTF_8)
+                chatId.toByteArray(Charsets.UTF_8)
             CryptoHelper.verifyIdentitySignature(idk, data, esig)
         } catch (_: Exception) { false }
 
         val myIdk = prefs.myIdentityPubKey
-        val confirmed = prefs.getConfirmedPartnerIdentity(gistId) == idk
+        val confirmed = prefs.getConfirmedPartnerIdentity(chatId) == idk
         // Партнёр подтвердил меня: живой флаг из IdentityState ИЛИ снимок из intent (фолбэк).
-        val partnerConfirmedMe = IdentityState.get(gistId).partnerVerifiedMe ||
+        val partnerConfirmedMe = IdentityState.get(chatId).partnerVerifiedMe ||
             (intentVpk != null && intentVpk == myIdk)
-        val knownIdk = prefs.getKnownPartnerIdentity(gistId)
+        val knownIdk = prefs.getKnownPartnerIdentity(chatId)
         val keyChanged = knownIdk != null && knownIdk != idk
 
         // TOFU: запоминаем identity-ключ партнёра при первом появлении.
-        if (knownIdk == null) prefs.setKnownPartnerIdentity(gistId, idk)
+        if (knownIdk == null) prefs.setKnownPartnerIdentity(chatId, idk)
 
         val badge     = findViewById<ImageView>(R.id.iv_security_badge)
         val tvBadge   = findViewById<TextView>(R.id.tv_security_badge)
@@ -500,7 +501,7 @@ class PartnerProfileActivity : AppCompatActivity() {
         if (pulse) startShieldPulse(shield) else stopShieldPulse(shield)
 
         // Живая плашка взаимной сверки (waiting / both).
-        renderVerifyPill(confirmed, partnerConfirmedMe, gistId, shield)
+        renderVerifyPill(confirmed, partnerConfirmedMe, chatId, shield)
 
         // Щит раскрывает/прячет секцию безопасности.
         shield.setOnClickListener {
@@ -511,16 +512,16 @@ class PartnerProfileActivity : AppCompatActivity() {
         btnVerify.text = if (confirmed) getString(R.string.verify_cancel_btn)
                          else getString(R.string.verify_confirm_btn)
         btnVerify.setOnClickListener {
-            if (prefs.getConfirmedPartnerIdentity(gistId) == idk) {
-                prefs.clearConfirmedPartnerIdentity(gistId)
+            if (prefs.getConfirmedPartnerIdentity(chatId) == idk) {
+                prefs.clearConfirmedPartnerIdentity(chatId)
                 // Снятие подтверждения долетит до собеседника при возврате в чат
                 // (ChatActivity заново публикует профиль уже без vpk).
             } else {
-                prefs.setConfirmedPartnerIdentity(gistId, idk)
+                prefs.setConfirmedPartnerIdentity(chatId, idk)
                 // Публикуем подтверждение СРАЗУ — собеседник узнает, не дожидаясь чата.
-                publishMyConfirmation(gistId, idk)
+                publishMyConfirmation(chatId, idk)
             }
-            applyIdentityBadge(gistId)
+            applyIdentityBadge(chatId)
         }
     }
 
@@ -554,7 +555,7 @@ class PartnerProfileActivity : AppCompatActivity() {
     private fun renderVerifyPill(
         confirmed: Boolean,
         partnerConfirmedMe: Boolean,
-        gistId: String,
+        chatId: String,
         shield: View
     ) {
         val pill  = findViewById<LinearLayout>(R.id.ll_verify_status)
@@ -586,7 +587,7 @@ class PartnerProfileActivity : AppCompatActivity() {
                 sub.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
                 startDots(sub)
                 lastBothConfirmed = false
-                startVerifySync(gistId)   // пока экран открыт — ловим подтверждение партнёра
+                startVerifySync(chatId)   // пока экран открыт — ловим подтверждение партнёра
             }
             else -> {
                 pill.visibility = View.GONE
@@ -620,11 +621,11 @@ class PartnerProfileActivity : AppCompatActivity() {
     }
 
     /** Одноразово публикует моё подтверждение. pushPresence сохраняет eph/sig — FS не ломается. */
-    private fun publishMyConfirmation(gistId: String, partnerIdk: String) {
+    private fun publishMyConfirmation(chatId: String, partnerIdk: String) {
         if (verifyToken.isBlank() || verifyPassword.isBlank()) return
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val transport = TransportFactory.forChat(this@PartnerProfileActivity, gistId, verifyToken, verifyPassword, prefs.myUserId)
+                val transport = TransportFactory.forChat(this@PartnerProfileActivity, chatId, verifyToken, verifyPassword, prefs.myUserId)
                 ProfileSync.pushPresence(
                     api = transport, password = verifyPassword, myUserId = prefs.myUserId,
                     typingTs = 0L, onlineTs = 0L,
@@ -641,11 +642,11 @@ class PartnerProfileActivity : AppCompatActivity() {
      * Это не сообщенческий цикл: ChatActivity на паузе → второго опросчика одновременно нет.
      * Только через ChatTransport, ~2.5 c, авто-стоп на «оба»/паузе. Тайминги чата не трогаются.
      */
-    private fun startVerifySync(gistId: String) {
+    private fun startVerifySync(chatId: String) {
         if (verifySyncJob != null) return
         if (verifyToken.isBlank() || verifyPassword.isBlank()) return
         verifySyncJob = lifecycleScope.launch {
-            val transport = TransportFactory.forChat(this@PartnerProfileActivity, gistId, verifyToken, verifyPassword, prefs.myUserId)
+            val transport = TransportFactory.forChat(this@PartnerProfileActivity, chatId, verifyToken, verifyPassword, prefs.myUserId)
             while (true) {
                 try {
                     val profiles = withContext(Dispatchers.IO) {
@@ -654,12 +655,12 @@ class PartnerProfileActivity : AppCompatActivity() {
                     val partner = profiles.values.firstOrNull { it.userId != prefs.myUserId }
                     val partnerVerifiedMe = partner?.verifiedPartnerIdk != null &&
                         partner.verifiedPartnerIdk == prefs.myIdentityPubKey
-                    val cur = IdentityState.get(gistId)
+                    val cur = IdentityState.get(chatId)
                     if (cur.partnerVerifiedMe != partnerVerifiedMe) {
-                        IdentityState.set(gistId, cur.copy(partnerVerifiedMe = partnerVerifiedMe))
-                        applyIdentityBadge(gistId)  // перерисует плашку; при «оба» сам остановит цикл
+                        IdentityState.set(chatId, cur.copy(partnerVerifiedMe = partnerVerifiedMe))
+                        applyIdentityBadge(chatId)  // перерисует плашку; при «оба» сам остановит цикл
                     }
-                    if (partnerVerifiedMe && prefs.getConfirmedPartnerIdentity(gistId) != null) break
+                    if (partnerVerifiedMe && prefs.getConfirmedPartnerIdentity(chatId) != null) break
                 } catch (_: Exception) {}
                 delay(2500L)
             }
@@ -670,7 +671,7 @@ class PartnerProfileActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (verifyGistId.isNotEmpty()) applyIdentityBadge(verifyGistId)  // живой ре-рендер + рестарт sync
+        if (verifychatId.isNotEmpty()) applyIdentityBadge(verifychatId)  // живой ре-рендер + рестарт sync
     }
 
     override fun onPause() {

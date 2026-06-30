@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Жёлтая плашка «скоро лимит записи». Фон @color/voice_limit_bg (#FFD23F) в обеих
+     темах, поэтому текст/иконка поверх — @color/voice_limit_on (тёмный). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/voice_limit_bg" />
+    <corners android:radius="12dp" />
+</shape>

@@ -36,8 +36,8 @@ class MediaListActivity : AppCompatActivity() {
         const val EXTRA_MODE          = "mode"          // "photos" | "links" | "voice"
         const val EXTRA_TITLE         = "title"
         const val EXTRA_CHAT_ID       = "chat_id"
-        const val EXTRA_GIST_ID       = "gist_id"
-        const val EXTRA_GIST_TOKEN    = "gist_token"
+        const val EXTRA_CHANNEL_ID    = "channel_id"
+        const val EXTRA_TRANSPORT_TOKEN = "transport_token"
         const val EXTRA_CHAT_PASSWORD = "chat_password"
         const val EXTRA_ITEMS         = "items"
         const val EXTRA_MSGIDS        = "msgids"
@@ -46,8 +46,8 @@ class MediaListActivity : AppCompatActivity() {
 
     private var mode = "links"
     private var chatId = -1L
-    private var gistId = ""
-    private var gistToken = ""
+    private var channelId = ""
+    private var transportToken = ""
     private var chatPassword = ""
     private var items = ArrayList<String>()
     private var msgIds = ArrayList<String>()
@@ -71,14 +71,14 @@ class MediaListActivity : AppCompatActivity() {
 
         mode         = intent.getStringExtra(EXTRA_MODE) ?: "links"
         chatId       = intent.getLongExtra(EXTRA_CHAT_ID, -1L)
-        gistId       = intent.getStringExtra(EXTRA_GIST_ID) ?: ""
-        gistToken    = intent.getStringExtra(EXTRA_GIST_TOKEN) ?: ""
+        channelId    = intent.getStringExtra(EXTRA_CHANNEL_ID) ?: ""
+        transportToken = intent.getStringExtra(EXTRA_TRANSPORT_TOKEN) ?: ""
         chatPassword = intent.getStringExtra(EXTRA_CHAT_PASSWORD) ?: ""
         items        = intent.getStringArrayListExtra(EXTRA_ITEMS) ?: arrayListOf()
         msgIds       = intent.getStringArrayListExtra(EXTRA_MSGIDS) ?: arrayListOf()
         selfFlags    = intent.getStringArrayListExtra(EXTRA_SELF) ?: arrayListOf()
 
-        val transport = TransportFactory.forChat(this, gistId, gistToken, chatPassword, prefs.myUserId)
+        val transport = TransportFactory.forChat(this, channelId, transportToken, chatPassword, prefs.myUserId)
         loader = ImageLoader(transport, chatPassword)
 
         findViewById<ImageButton>(R.id.btn_back).setOnClickListener {
@@ -182,6 +182,7 @@ class MediaListActivity : AppCompatActivity() {
 
     // ── Tap-действия (короткое нажатие) ───────────────────────────────────────
     private fun openPhoto(pos: Int) {
+        AppLock.beginShareGrace()
         startActivity(android.content.Intent(this, ImageViewActivity::class.java).apply {
             putExtra(ImageViewActivity.EXTRA_REFS, ArrayList(items))
             putExtra(ImageViewActivity.EXTRA_START_INDEX, pos)
@@ -190,6 +191,7 @@ class MediaListActivity : AppCompatActivity() {
 
     private fun openLink(url: String) {
         try {
+            AppLock.beginShareGrace()
             val u = if (url.startsWith("http", true)) url else "http://$url"
             startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(u)))
         } catch (_: Exception) {}
@@ -267,6 +269,7 @@ class MediaListActivity : AppCompatActivity() {
     private inner class PhotoVH(v: View) : RecyclerView.ViewHolder(v) {
         private val iv: ImageView = v.findViewById(R.id.iv_photo_cell)
         private val sel: View = v.findViewById(R.id.v_photo_sel)
+        private val cell: View = v.findViewById(R.id.fl_photo_cell)
         fun bind(position: Int) {
             sel.visibility = if (position == selectedPos) View.VISIBLE else View.GONE
             iv.setImageDrawable(null)
@@ -279,10 +282,10 @@ class MediaListActivity : AppCompatActivity() {
                     if (bmp != null && bindingAdapterPosition == position) iv.setImageBitmap(bmp)
                 }
             }
-            itemView.setOnClickListener {
+            cell.setOnClickListener {
                 if (selectedPos >= 0) clearSelection() else openPhoto(position)
             }
-            itemView.setOnLongClickListener { select(position); true }
+            cell.setOnLongClickListener { select(position); true }
         }
     }
 

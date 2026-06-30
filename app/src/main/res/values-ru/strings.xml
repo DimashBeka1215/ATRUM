@@ -1,9 +1,390 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_name">Atrum Chat</string>
+
+    <!-- Welcome -->
+    <string name="welcome_title">Добро пожаловать в\nAtrum Chat</string>
+    <string name="welcome_subtitle">Зашифрованный мессенджер\nбез серверов</string>
+    <string name="welcome_start">Начать</string>
+    <string name="welcome_hint">end-to-end шифрование AES-256</string>
+
+    <!-- Intro pager (4 экрана) -->
+    <string name="intro_donate_title">Поддержите проект</string>
+    <string name="intro_donate_subtitle">Atrum создаётся одним человеком, без финансирования и рекламы. Если приложение вам нравится — пожалуйста, поддержите его развитие. Любой донат, большой или маленький, помогает проекту жить.\n\nПоддержать можно в любой момент через Настройки → Поддержать.</string>
+    <string name="intro_skip">Пропустить</string>
+    <string name="intro_next">Далее</string>
+    <string name="intro_get_started">Начать</string>
+
+    <string name="intro_1_title">Добро пожаловать</string>
+    <string name="intro_1_subtitle">Приватный мессенджер для двух людей.\nБез серверов. Без рекламы. Без логов.</string>
+
+    <string name="intro_2_title">End-to-end шифрование</string>
+    <string name="intro_2_subtitle">Сообщения шифруются прямо на твоём устройстве, ещё до отправки. Пароль комнаты остаётся на телефоне и не передаётся на серверы.</string>
+
+    <string name="intro_3_title">Куда уходят сообщения?</string>
+    <string name="intro_3_subtitle">У Atrum нет своих серверов. Сообщения передаются через открытую сеть уже зашифрованными — посредники видят только зашифрованные данные. Без регистрации и номера телефона.</string>
+
+    <string name="intro_4_title">Это бета-версия</string>
+    <string name="intro_4_subtitle">Atrum ещё развивается — что-то может меняться и работать не идеально. Просто будь чуть внимательнее. Спасибо, что пробуешь и помогаешь сделать его лучше.</string>
+    <string name="intro_5_title">Безопасность не абсолютна</string>
+    <string name="intro_5_subtitle">Идеальной защиты не существует, и автор её не гарантирует. Многое зависит от тебя: используй надёжные пароли для приглашений и передавай код приглашения только надёжным способом. Если он утечёт или попадёт в незащищённый мессенджер — переписку теоретически смогут прочитать.</string>
+
+    <string name="badge_beta">EXPERIMENTAL BETA</string>
+
+    <!-- Onboarding -->
+    <string name="onboarding_name_title">Как вас зовут?</string>
+    <string name="onboarding_name_hint">Это имя увидят ваши собеседники</string>
+    <string name="onboarding_pwd_title">Придумайте пароль</string>
+    <string name="onboarding_pwd_hint">Обязательный пароль для разблокировки приложения.\nХранится только на вашем устройстве.</string>
+    <string name="onboarding_pwd_field">Пароль</string>
+    <string name="onboarding_pwd_repeat">Повторите пароль</string>
+    <string name="onboarding_pwd_skip">Пропустить (без пароля)</string>
+    <string name="btn_next">Далее</string>
+    <string name="btn_finish">Готово</string>
+    <string name="error_empty_name">Введите имя</string>
+    <string name="error_empty_tag">Введите тег</string>
+    <string name="hint_tag">Ваш тег (@username)</string>
+    <string name="error_pwd_short">Пароль слишком короткий (минимум 4 символа)</string>
+    <string name="error_pwd_mismatch">Пароли не совпадают</string>
+
+    <!-- Lock -->
+    <string name="lock_title">Введите пароль</string>
+    <string name="lock_hint">Чтобы открыть Atrum Chat</string>
+    <string name="lock_field">Пароль</string>
+    <string name="lock_unlock">Открыть</string>
+    <string name="lock_wrong">Неверный пароль</string>
+
+    <!-- Chat -->
+    <string name="chat_empty">Здесь пока ничего нет</string>
+
+    <!-- Список чатов -->
+    <string name="chats_title">ATRUM</string>
+    <string name="chats_empty_title">Пока нет чатов</string>
+    <string name="chats_empty_hint">Нажмите + чтобы создать новый чат</string>
+    <string name="cd_create_chat">Создать чат</string>
+
+    <!-- Создание чата -->
+    <string name="create_chat_title">Новый чат</string>
+    <string name="create_chat_partner_name">Имя собеседника</string>
+    <string name="create_chat_token">Relay Token</string>
+    <string name="create_chat_channel">Room ID</string>
+    <string name="create_chat_password">Пароль шифрования</string>
+    <string name="create_chat_password_hint">Этот же пароль введёт собеседник, чтобы расшифровать сообщения</string>
+    <string name="btn_create_chat">Создать чат</string>
+    <string name="btn_connect_chat">Подключиться</string>
+    <string name="btn_create_room">Создать комнату</string>
+    <string name="error_create_chat">Заполните все поля</string>
+
+    <!-- Режимы создания чата -->
+    <string name="create_mode_auto">Авто</string>
+    <string name="create_mode_manual">Вручную</string>
+
+    <!-- Auto режим -->
+    <string name="auto_token_title">Разовая настройка</string>
+    <string name="auto_token_hint">Чтобы создавать комнаты автоматически, нужен Relay Token. Он используется только для создания канала и записи сообщений — в шифровании не участвует.</string>
+    <string name="create_room_name_label">Название комнаты</string>
+    <string name="create_room_name_hint">Например: Алекс</string>
+    <string name="create_room_password_label">Пароль комнаты</string>
+    <string name="create_room_password_hint">секрет</string>
+    <string name="create_room_password_explainer">Тот же пароль нужно ввести собеседнику чтобы видеть сообщения. Этот пароль шифрует сообщения end-to-end.</string>
+    <string name="creating_room">Создаём комнату…</string>
+    <string name="error_create_channel">Не удалось создать канал. Проверь токен.</string>
+    <string name="error_no_token">Сначала введи Relay Token</string>
+
+    <!-- Карточки в Create -->
+    <string name="create_card_manual_title">Создать вручную</string>
+    <string name="create_card_manual_subtitle">Подключиться к существующему каналу с готовым токеном</string>
+    <string name="create_card_p2p_title">Создать P2P-чат</string>
+    <string name="create_card_p2p_subtitle">Прямое соединение между устройствами. Без серверов — шифрование на устройстве.</string>
+    <string name="create_card_p2p_cta">Создать</string>
+    <string name="create_card_or">или</string>
+    <string name="create_card_advanced">Продвинутый режим</string>
+    <string name="manual_warning_title">Режим для опытных пользователей</string>
+    <string name="manual_warning_text">Нужны Relay Token и Room ID. Если ты не уверен что это — лучше используй автоматический режим.</string>
+    <string name="manual_help_token_title">Где взять токен?</string>
+    <string name="manual_help_token_desc">Создай Access Token в настройках реле. Убедись, что разрешено управление каналами.</string>
+    <string name="manual_help_token_button">Создать токен</string>
+    <string name="manual_help_channel_title">Где взять Room ID?</string>
+    <string name="manual_help_channel_desc">Создай любой канал на реле. ID — это длинный код в конце ссылки.</string>
+    <string name="manual_help_channel_button">Открыть Канал</string>
+
+    <!-- Create chat — subtitle и футер -->
+    <string name="create_chat_subtitle">Приватно. Локально. Только у вас.</string>
+    <string name="create_chat_footer">Ваши данные доступны только\nу вас на устройстве.</string>
+
+    <!-- Карточка "Присоединиться к существующему чату" -->
+    <string name="create_card_join_title">Присоединиться к существующему чату</string>
+    <string name="create_card_join_subtitle">Вам нужен пароль от друга.</string>
+    <string name="create_card_bt_title">Подключиться по Bluetooth</string>
+    <string name="create_card_bt_subtitle">Сканировать QR рядом · без интернета</string>
+    <string name="qr_scan_title">Сканировать QR</string>
+    <string name="qr_scan_hint">Наведите на QR собеседника</string>
+    <string name="qr_scan_camera_needed">Нужен доступ к камере</string>
+    <string name="qr_scan_not_atrum">Это не QR Atrum для Bluetooth</string>
+
+    <!-- Экран Join -->
+    <string name="join_chat_title">Присоединиться к чату</string>
+    <string name="join_chat_subtitle">Введите код приглашения, чтобы подключиться к существующему чату.</string>
+    <string name="join_chat_password_label">Код приглашения</string>
+    <string name="join_chat_password_hint">Вставьте код (ATRM…)</string>
+    <string name="join_chat_info">Код приглашения (ATRM...) должен быть получен от участника чата. Он не хранится на серверах.</string>
+    <string name="join_chat_connect">Подключиться</string>
+    <string name="join_chat_back">Назад</string>
+    <string name="cd_toggle_password">Показать / скрыть пароль</string>
+
+    <string name="notif_auth_success_title">Авторизация успешна</string>
+    <string name="notif_auth_success_text">Открыть чат: %1$s</string>
+
+    <!-- Action: удалить чат -->
+    <string name="action_delete_chat">Удалить чат</string>
+    <string name="confirm_delete_chat">Удалить этот чат? Сообщения в Relay останутся, но чат пропадёт из списка.</string>
+
+    <!-- Старые строки (login) — оставлены для совместимости -->
+    <string name="title_login">Вход</string>
+    <string name="hint_token">Relay Token</string>
+    <string name="hint_channel">Room ID</string>
+    <string name="hint_name">Ваш ник</string>
+    <string name="hint_password">Пароль (сид-фраза)</string>
+    <string name="hint_gist">ID гиста</string>
+    <string name="btn_enter">Войти в чат</string>
+
+    <!-- Chat -->
+    <string name="hint_message">Сообщение…</string>
+    <string name="cd_send">Отправить</string>
+    <string name="cd_refresh">Обновить</string>
+    <string name="cd_logout">Выйти</string>
+    <string name="cd_settings">Настройки</string>
+    <string name="cd_back">Назад</string>
+    <string name="chat_subtitle_encrypted">Зашифрованный чат</string>
+    <string name="typing_indicator">печатает…</string>
+    <string name="recording_indicator">записывает голосовое…</string>
+    <string name="cd_cancel_reply">Отменить ответ</string>
+    <string name="action_reply">Ответить</string>
+
+    <!-- Картинки -->
+    <string name="cd_attach">Прикрепить</string>
+    <string name="image_compressing">Сжимаем картинку…</string>
+    <string name="image_reading">Читаем картинку…</string>
+    <string name="image_uploading">Загружаем картинку…</string>
+    <string name="image_uploading_chunk">Загрузка: %1$d / %2$d…</string>
+    <string name="image_uploading_multi">Загрузка %1$d / %2$d…</string>
+    <string name="image_upload_wait">Подождите, изображения отправляются…</string>
+    <string name="error_too_many_images">Максимум %1$d изображений в одном сообщении</string>
+    <string name="image_too_big">Картинка слишком большая</string>
+    <string name="error_image_load">Не удалось загрузить картинку</string>
+
+    <!-- Настройки -->
+    <string name="settings_title">Настройки</string>
+    <string name="settings_name_label">Ваш ник</string>
+    <string name="settings_status_hint">Статус…</string>
+    <string name="settings_tag_label">Ваш тег</string>
+    <string name="settings_tag_no_at">Тег должен начинаться с @</string>
+    <string name="settings_tag_hint">@tag</string>
+    <string name="settings_display_name_label">Ваше имя</string>
+    <string name="settings_edit_name_title">Изменить имя</string>
+    <string name="settings_edit_tag_title">Изменить тег</string>
+    <string name="settings_edit_status_title">Изменить статус</string>
+    <string name="settings_saved">Сохранено</string>
+    <string name="settings_reset">Сбросить аккаунт</string>
+    <string name="settings_reset_hint">Удалит все локальные данные: ник, аватарку, список чатов. Сообщения на реле останутся.</string>
+    <string name="settings_reset_confirm">Удалить все локальные данные? Это действие нельзя отменить.</string>
+    <string name="cd_change_avatar">Сменить аватарку</string>
+    <string name="error_avatar_load">Не удалось загрузить изображение</string>
+    <string name="crop_avatar_title">Обрезать фото</string>
+
+    <!-- Ошибки -->
+    <string name="error_empty_fields">Заполни все поля</string>
+    <string name="error_network">Ошибка сети</string>
+    <string name="error_load">Не удалось загрузить чат</string>
+    <string name="error_send">Не удалось отправить</string>
+    <string name="confirm_logout">Выйти из чата?</string>
+    <string name="yes">Да</string>
+    <string name="no">Нет</string>
+
+    <!-- Warning banner в чате -->
+    <string name="warn_token_title">Токен недействителен</string>
+    <string name="warn_token_message">Реле не принимает токен — возможно, он истёк или был отозван. Нажми «Обновить токен» и введи новый — пересоздавать чат не нужно.</string>
+    <string name="btn_update_token">Обновить токен</string>
+    <string name="transport_limit_title">Слишком много запросов</string>
+    <string name="transport_limit_retry_in">Можно отправлять через %1$s</string>
+    <string name="dialog_update_token_title">Новый Relay-токен</string>
+
+    <string name="warn_rate_limit_title">Реле просит немного подождать</string>
+    <string name="warn_rate_limit_message">Слишком много запросов за короткое время. Это временно — приложение само восстановит синхронизацию через минуту. Сообщения никуда не пропадут.</string>
+
+    <string name="warn_network_title">Нет соединения с Relay</string>
+    <string name="warn_network_message">Не удаётся связаться с реле. Проверь интернет — приложение продолжит попытки автоматически. Уже отправленные сообщения сохранены.</string>
+
+    <string name="warn_fs_title">Сообщения предыдущей сессии скрыты</string>
+    <string name="warn_fs_message">Часть сообщений зашифрована ключом прошлой сессии, который уже уничтожен. Это нормально — именно так работает защита forward secrecy: прошлое нечитаемо даже при утечке пароля.</string>
+
+    <string name="chat_loading">Загрузка сообщений…</string>
+
+    <!-- Меню действий над сообщением -->
+    <string name="action_edit">Редактировать</string>
+    <string name="action_delete">Удалить</string>
+    <string name="action_copy">Скопировать</string>
+    <string name="dialog_edit_title">Изменить сообщение</string>
+    <string name="dialog_delete_title">Удалить сообщение?</string>
+    <string name="dialog_delete_message">Сообщение будет удалено для всех. Это действие нельзя отменить.</string>
+    <string name="btn_save">Сохранить</string>
+    <string name="btn_cancel">Отмена</string>
+    <string name="network_connecting">Подключение…</string>
+    <string name="msg_copied">Скопировано</string>
+    <string name="error_message_not_found">Сообщение уже изменено или удалено</string>
+    <string name="error_edit">Не удалось изменить</string>
+    <string name="error_delete">Не удалось удалить</string>
+
+    <!-- Create chat (new single-screen design) -->
+    <string name="cc_profile_title">Ваш профиль</string>
+    <string name="cc_profile_subtitle">Этот чат будет создан с использованием вашего текущего профиля.</string>
+    <string name="cc_feature_exchange_title">Профили обмениваются</string>
+    <string name="cc_feature_exchange_desc">В этом чате каждый участник увидит имя и аватарку другого.</string>
+    <string name="cc_feature_e2e_title">Сквозное шифрование</string>
+    <string name="cc_feature_e2e_desc">Все сообщения защищены end-to-end шифрованием.</string>
+    <string name="cc_password_label">Пароль для подключения</string>
+    <string name="cc_password_hint">Введите пароль</string>
+    <string name="cc_password_helper">Этот пароль нужно передать собеседнику для подключения. Он шифрует все сообщения end-to-end.</string>
+    <string name="cc_duration_label">Срок существования чата</string>
+    <string name="cc_duration_1d">1 день</string>
+    <string name="cc_duration_7d">7 дней</string>
+    <string name="cc_duration_30d">30 дней</string>
+    <string name="cc_duration_90d">90 дней</string>
+    <string name="cc_duration_unlim">Бессрочно</string>
+    <string name="cc_duration_helper">После окончания срока чат и все данные будут безвозвратно удалены с Nostr реле.</string>
+    <string name="cc_create_button">Создать чат</string>
+
+    <!-- OAuth warning screen -->
+    <string name="ow_title">Авторизация Nostr</string>
+    <string name="ow_subtitle">Для создания защищённого чата мы используем ваш аккаунт Nostr.</string>
+    <string name="ow_need_know_title">Что нужно знать</string>
+    <string name="ow_need_know_desc">Для подтверждения входа откроется страница Nostr в вашем браузере. Это стандартная часть системы безопасности Nostr.</string>
+    <string name="ow_nostr_will_show">Во время подтверждения Nostr может показать:</string>
+    <string name="ow_row_location_title">Примерное местоположение</string>
+    <string name="ow_row_location_desc">Город и IP-адрес могут быть видны.</string>
+    <string name="ow_row_time_title">Время и устройство</string>
+    <string name="ow_row_time_desc">Дата, время и устройство входа.</string>
+    <string name="ow_row_security_title">Это стандартная проверка безопасности</string>
+    <string name="ow_row_security_desc">Эти данные отображаются Nostr для защиты вашего аккаунта и не связаны с нашим приложением.</string>
+    <string name="ow_after_auth">После успешного подтверждения вы можете закрыть браузер вручную и вернуться в приложение.</string>
+    <string name="ow_perms_title">Приложение получает только необходимые разрешения:</string>
+    <string name="ow_perm_channel_title">Доступ к вашим каналам</string>
+    <string name="ow_perm_channel_desc">Позволяет создавать, читать и удалять каналы для работы чатов.</string>
+    <string name="ow_perm_channel_note">Больше никаких данных не запрашивается и не используется.</string>
+    <string name="ow_continue">Продолжить</string>
+    <string name="ow_footer">Мы не получаем доступ к вашим данным. Приложение использует только необходимые разрешения и не хранит ваши сообщения.</string>
+
+    <!-- Join chat — статусы и ошибки -->
+    <string name="join_default_partner_name">Чат</string>
+    <string name="join_btn_connecting">Подключаемся…</string>
+    <string name="join_status_checking">Проверяем чат…</string>
+    <string name="join_status_connecting">Подключаемся к Relay…</string>
+    <string name="join_status_verifying">Проверяем пароль…</string>
+    <string name="join_status_saving">Сохраняем чат…</string>
+    <string name="join_status_profile">Делимся профилем…</string>
+    <string name="join_status_already">Этот чат уже в вашем списке</string>
+    <string name="join_err_empty">Введите пароль приглашения, который дал друг.</string>
+    <string name="join_err_not_invite">Это не похоже на пароль приглашения. Попросите у друга длинный пароль, начинающийся с ATRM.</string>
+    <string name="join_err_corrupt">Пароль приглашения повреждён или скопирован не полностью. Попросите у друга свежий.</string>
+    <string name="join_err_password">Пароль не подходит к этому чату. Возможно у вас устаревший пароль.</string>
+    <string name="join_err_no_internet">Нет подключения к интернету. Проверьте сеть и попробуйте снова.</string>
+    <string name="join_err_timeout">Превышено время ожидания. Попробуйте ещё раз.</string>
+    <string name="join_err_not_found">Чат больше не существует. Возможно его удалили или истёк срок.</string>
+    <string name="join_err_access">Доступ к чату закрыт. Возможно токен в пароле приглашения был отозван.</string>
+    <string name="join_err_server">Relay временно недоступен. Попробуйте через минуту.</string>
+    <string name="join_err_empty_response">Relay вернул пустой ответ. Попробуйте ещё раз.</string>
+    <string name="join_err_generic_fmt">Не удалось подключиться. %1$s</string>
+
+    <!-- Join PIN Dialog -->
+    <string name="join_pin_title">Защищённый вход</string>
+    <string name="join_pin_desc">Этот код приглашения зашифрован. Введите PIN-код, который вам передал создатель чата.</string>
+    <string name="join_pin_hint">PIN-код</string>
+    <string name="join_err_wrong_pin">Неверный PIN-код или повреждённое приглашение.</string>
+    <string name="join_err_expired">Срок действия приглашения истёк. Попросите создать новое.</string>
+
+    <!-- Share invite -->
+    <string name="invite_share_action">Поделиться приглашением</string>
+    <string name="invite_share_action_locked">Чат уже занят</string>
+    <string name="invite_share_title">Поделиться приглашением</string>
+    <string name="invite_share_text_fmt">Приглашаю тебя в зашифрованный чат Atrum. Открой приложение, нажми «Присоединиться к существующему чату» и вставь этот пароль:\n\n%1$s</string>
+    <string name="chat_locked_toast">Этот чат уже занят. Невозможно пригласить ещё одного человека.</string>
+
+    <!-- Invite security warning dialog -->
+    <string name="invite_warning_title">⚠️ Перед отправкой</string>
+    <string name="invite_warning_message">Код приглашения содержит Relay-токен и пароль чата в одной строке.\n\nЕсли кто-то перехватит этот код — он получит полный доступ к переписке.\n\nПередавай приглашение только через доверенные личные каналы (например, при личной встрече или через зашифрованный мессенджер).</string>
+    <string name="invite_warning_confirm">Понятно, отправить</string>
+    <string name="invite_pin_title">PIN для приглашения</string>
+    <string name="invite_pin_desc">Придумайте код для этого приглашения. Получателю нужно будет ввести его, чтобы подключиться.</string>
+    <string name="invite_pin_hint">Код приглашения</string>
+    <string name="invite_pin_warning">Передайте код получателю отдельно — не вместе со ссылкой. Без него приглашение не открыть.</string>
+    <string name="invite_pin_share">Поделиться</string>
+    <string name="invite_pin_regenerate">Сгенерировать новый код</string>
+    <string name="invite_pin_empty">Введите код приглашения</string>
+    <string name="invite_create_failed">Не удалось создать приглашение</string>
+
+    <!-- Password mode toggle -->
+    <string name="cc_pwd_mode_generate">Сгенерировать</string>
+    <string name="cc_pwd_mode_custom">Свой пароль</string>
+    <string name="cc_pwd_custom_hint">Введите свой пароль</string>
+    <string name="cc_pwd_warning_title">Как делиться паролем</string>
+    <string name="cc_pwd_warning_text">Свой пароль удобно сообщить вживую — голосом или с глазу на глаз. Для отправки в любые мессенджеры безопаснее использовать «Поделиться приглашением» из списка чатов: это длинная строка, в которую защищённо зашит весь набор для подключения.</string>
+    <string name="cc_pwd_copy_cd">Скопировать пароль</string>
+    <string name="cc_pwd_copied_toast">Пароль скопирован</string>
+    <string name="cc_invite_only_title">Как подключиться к чату</string>
+    <string name="cc_invite_only_text">Собеседник получит код-приглашение через раздел «Поделиться приглашением». Пароль задаётся автоматически. Если хотите указать свой пароль — используйте продвинутый режим.</string>
+
+    <!-- Chat full -->
+    <string name="join_err_chat_full">Этот чат уже занят. К нему уже подключился другой собеседник.</string>
+    <string name="chat_expired_toast">Чат удалён — истёк срок жизни.</string>
+
+    <!-- Удаление чата -->
+    <string name="confirm_delete_chat_channel">Удалить этот чат? Переписка будет безвозвратно удалена с Relay.</string>
+    <string name="chat_deleted_toast">Чат удалён</string>
+    <string name="confirm_delete_chat_gist">Удалить этот чат? Все локальные ключи будут стерты, восстановить доступ к истории будет невозможно.</string>
+    <string name="sticker_menu_title">Стикеры</string>
+    <string name="sticker_remove_favorite">Удалить из избранного</string>
+    <string name="sticker_add_favorite">В избранное</string>
+    <string name="sticker_delete_action">Удалить стикер</string>
+    <string name="sticker_delete_confirm">Удалить этот стикер из пака?</string>
+    <string name="sticker_fav_updated">Список избранного обновлен</string>
+
+    <!-- Удаление профиля -->
+    <string name="settings_delete_profile">Удалить профиль</string>
+    <string name="settings_delete_profile_hint">Уведомит всех собеседников об удалении и сотрёт данные навсегда.</string>
+    <string name="settings_delete_profile_confirm">Все ваши собеседники увидят заглушку «Профиль удалён» вместо вашей аватарки. Все локальные данные и история будут стёрты. Это действие нельзя отменить.</string>
+    <string name="settings_delete_profile_action">Удалить</string>
+    <string name="deleting_profile">Удаляем профиль…</string>
+
+    <!-- Удалённый профиль партнёра -->
+    <string name="profile_deleted_label">Профиль удалён</string>
+    <string name="partner_deleted_subtitle">Профиль удалён</string>
+
+    <!-- Язык приложения -->
+    <string name="lang_dialog_title">Язык приложения</string>
+    <string name="lang_russian">Русский</string>
+    <string name="lang_english">English</string>
+    <string name="lang_system">Системный</string>
+
+    <!-- Тема -->
+    <string name="theme_dark">Тёмная</string>
+    <string name="theme_light">Светлая</string>
+    <string name="theme_system">Системная</string>
+    <string name="theme_dialog_title">Тема оформления</string>
+    <string name="theme_light_warning_title">⚠️ Подождите!</string>
+    <string name="theme_light_warning_message">Вы выбираете белую тему.\n\nПриложение задумано работать на тёмной теме.\n\nВы теряете стиль и 1000 очков SWAG.</string>
+    <string name="theme_light_warning_confirm">Всё равно включить</string>
+    <string name="theme_light_warning_cancel">Оставить тёмную</string>
+
+    <!-- Настройки — диалоги -->
+    <string name="logout_title">Выйти из аккаунта?</string>
+    <string name="logout_message">Все локальные чаты и данные будут удалены. Это действие необратимо.</string>
+    <string name="logout_confirm">Выйти</string>
+    <string name="avatar_updated">Аватар обновлён</string>
+    <string name="no_name">Без имени</string>
+
     <!-- Settings sections -->
     <string name="settings_section_main">ОСНОВНОЕ</string>
     <string name="settings_section_extra">ДОПОЛНИТЕЛЬНО</string>
-    <string name="settings_section_security">БЕЗОПАСНОСТЬ</string>
     <string name="settings_section_more">ЕЩЁ</string>
     <string name="settings_item_main">Аккаунт</string>
     <string name="settings_item_personalization">Персонализация</string>
@@ -12,9 +393,21 @@
     <string name="settings_item_about">О приложении</string>
     <string name="settings_item_support">Поддержать</string>
 
-    <!-- Intro donate page -->
-    <string name="intro_donate_title">Поддержите проект</string>
-    <string name="intro_donate_subtitle">Atrum создаётся одним человеком, без финансирования и рекламы. Если приложение вам нравится — пожалуйста, поддержите его развитие. Любой донат, большой или маленький, помогает проекту жить.\n\nПоддержать можно в любой момент через Настройки → Поддержать.</string>
+    <!-- Tester Settings -->
+    <string name="settings_section_tester">ТЕСТИРОВЩИК</string>
+    <string name="settings_item_tester">Настройки тестировщика</string>
+    <string name="tester_pwd_dialog_title">Доступ для тестировщиков</string>
+    <string name="tester_pwd_dialog_desc">Введите пароль для доступа к скрытым настройкам.</string>
+    <string name="tester_pwd_hint">Пароль</string>
+    <string name="tester_pwd_wrong">Доступ запрещён</string>
+    <string name="tester_screen_title">Настройки тестировщика</string>
+    <string name="tester_item_screenshots">Разрешить скриншоты</string>
+    <string name="tester_item_screenshots_desc">Отключает FLAG_SECURE для всего приложения</string>
+    <string name="tester_item_crash">Принудительный вылет</string>
+    <string name="tester_item_crash_desc">Вызывает RuntimeException для теста</string>
+    <string name="tester_crash_confirm_title">Вызвать вылет?</string>
+    <string name="tester_crash_confirm_msg">Приложение немедленно завершится с ошибкой.</string>
+    <string name="tester_crash_btn">Вылет сейчас</string>
 
     <!-- Wallpaper -->
     <string name="settings_wallpaper_title">Обои чатов</string>
@@ -24,8 +417,6 @@
     <string name="wallpaper_change">Выбрать обои</string>
     <string name="wallpaper_clear">Удалить обои</string>
     <string name="wallpaper_cleared">Обои удалены</string>
-
-    <!-- Logout -->
     <string name="settings_logout">Выйти из аккаунта</string>
 
     <!-- Personalization section headers -->
@@ -57,9 +448,98 @@
     <string name="mock_msg_self">Всё хорошо, спасибо! 👍</string>
     <string name="mock_msg_time">14:32 ✓✓</string>
 
-    <!-- Change PIN -->
-    <string name="error_old_pin_wrong">Неверный текущий PIN-код</string>
-    <string name="settings_pin_changed">PIN-код успешно изменен</string>
+    <!-- About screen -->
+    <string name="about_title">О приложении</string>
+    <string name="about_thanks">Спасибо, что используете Atrum</string>
+    <string name="about_links_desc">Ниже — все полезные ссылки. Обязательно следите за обновлениями и делитесь фидбеком!</string>
+    <string name="about_source_title">Исходный код</string>
+    <string name="about_telegram_title">Telegram</string>
+    <string name="about_section_links">ССЫЛКИ</string>
+    <string name="about_source_desc">Исходный код и релизы</string>
+    <string name="about_telegram_desc">Новости и обновления</string>
+    <string name="about_telegram_chat_title">Чат сообщества</string>
+    <string name="about_telegram_chat_desc">Общение и поддержка</string>
+    <string name="about_support_desc">DonationAlerts, Boosty, Buy Me a Coffee</string>
+
+    <!-- Credits -->
+    <string name="credits_title">Благодарности</string>
+    <string name="credits_thanks_main">Спасибо всем, кто поддерживал проект на разных этапах — тестировал, предлагал идеи и помогал финансово.</string>
+    <string name="credits_section_supporters">ПОДДЕРЖАЛИ ПРОЕКТ</string>
+    <string name="credits_join_title">Хочешь попасть сюда?</string>
+    <string name="credits_join_desc">Поддержи проект или помоги с тестированием</string>
+
+    <!-- Selection bar -->
+    <string name="selection_count_fmt">%1$d выбрано</string>
+
+    <!-- Pinned chats & Favorites -->
+    <string name="action_pin">Закрепить</string>
+    <string name="action_unpin">Открепить</string>
+    <string name="favorites_name">Избранное</string>
+    <string name="favorites_description">Мои заметки</string>
+
+    <!-- Donate dialog -->
+    <string name="donate_title">Поддержать проект</string>
+    <string name="donate_subtitle">Выберите удобный способ</string>
+    <string name="donate_donationalerts">DonationAlerts</string>
+    <string name="donate_boosty">Boosty</string>
+    <string name="donate_buymeacoffee">Buy Me a Coffee</string>
+
+    <!-- Crash screen -->
+    <string name="crash_title">Что-то пошло не так</string>
+    <string name="crash_subtitle">Нашли баг — помоги его исправить.</string>
+    <string name="crash_copied_pill">Лог скопирован</string>
+    <string name="crash_tg_title">Чат для приёма багов</string>
+    <string name="crash_tg_text">Лог уже скопирован — вставь его в чат.</string>
+    <string name="crash_tg_hint">Приложи скриншот и опиши что делал перед вылетом — это поможет найти причину быстрее.</string>
+    <string name="crash_log_label">Отчёт об ошибке</string>
+    <string name="crash_copy">Скопировать</string>
+    <string name="crash_open_tg">Чат для приёма багов</string>
+    <string name="crash_close">Закрыть</string>
+    <string name="crash_log_unavailable">Лог недоступен.</string>
+    <string name="crash_copied_toast">Лог скопирован в буфер обмена</string>
+
+    <!-- EULA -->
+    <string name="eula_title">Пользовательское соглашение</string>
+    <string name="eula_subtitle">Прочитайте перед использованием</string>
+    <string name="eula_accept">Принять и продолжить</string>
+    <string name="eula_decline">Отказаться</string>
+    <string name="eula_warning">Отказ от соглашения закрывает приложение.</string>
+
+    <!-- Update checker -->
+    <string name="settings_version_label">Версия</string>
+    <string name="settings_version_checking">Проверяется…</string>
+    <string name="settings_version_up_to_date">Актуальная</string>
+    <string name="settings_version_update_badge">Обновить</string>
+    <string name="update_dialog_title" formatted="false">Доступно обновление %s</string>
+    <string name="update_dialog_body_fallback">Доступна новая версия приложения.</string>
+    <string name="update_dialog_positive">Обновить</string>
+    <string name="update_dialog_negative">Позже</string>
+
+    <!-- Partner profile screen -->
+    <string name="profile_status_label">Статус</string>
+    <string name="profile_photos_label">Фото</string>
+    <string name="profile_photos_all">все</string>
+    <string name="profile_voice_label">Голосовые</string>
+    <string name="profile_links_label">Ссылки</string>
+    <string name="link_preview_open">Открыть ссылку</string>
+    <string name="profile_security_label">Безопасность</string>
+    <string name="fingerprint_loading">Загрузка…</string>
+    <string name="fingerprint_none">Сессия не установлена</string>
+    <string name="fingerprint_description">Код сверки (SAS) для защиты от MITM. Если код или QR совпадают у обоих собеседников — канал защищён.</string>
+    <string name="identity_verified">Идентичность подтверждена</string>
+    <string name="identity_unverified">Идентичность не подтверждена</string>
+    <string name="identity_changed">Ключ партнёра изменился</string>
+    <string name="identity_changed_warn">Долговременный ключ собеседника изменился. Это бывает при переустановке приложения, но может означать подмену. Сверьте код или QR лично, прежде чем доверять.</string>
+    <string name="verify_hint">Сравните код или QR с собеседником лично, затем подтвердите.</string>
+    <string name="verify_confirm_btn">Подтвердить подлинность</string>
+    <string name="verify_cancel_btn">Отменить подтверждение</string>
+    <string name="identity_confirmed_both">Подлинность подтверждена обоими</string>
+    <string name="identity_confirmed_waiting">Вы подтвердили — ждём собеседника</string>
+    <string name="identity_not_confirmed">Не подтверждено лично</string>
+    <string name="verify_status_waiting_title">Вы подтвердили личность</string>
+    <string name="verify_status_waiting_sub">Ждём подтверждения собеседника</string>
+    <string name="verify_status_both_title">Подтверждено обоими</string>
+    <string name="verify_status_both_sub">Личность сверена с обеих сторон</string>
 
     <!-- Profile Banner / Header -->
     <string name="header_settings_title">Настройка шапки</string>
@@ -72,7 +552,6 @@
     <string name="header_settings_tip_title">Рекомендуемый размер</string>
     <string name="header_settings_tip_body">Соотношение сторон 3:1\nНапример 1500 × 500 px</string>
     <string name="header_settings_no_banner">Шапка не установлена</string>
-    <!-- Banner validation errors -->
     <string name="header_error_format">Поддерживаются только JPG, PNG и WebP. GIF и анимации не поддерживаются.</string>
     <string name="header_error_size">Файл слишком большой. Максимум — 8 МБ.</string>
     <string name="header_error_resolution">Изображение слишком маленькое. Минимум: 1200 × 400 пикселей.</string>
@@ -83,6 +562,54 @@
     <string name="header_content_rules">Шапка не должна содержать откровенный контент, насилие или запрещённые материалы.</string>
 
     <string name="settings_item_stickers">Стикеры</string>
+    <!-- Push-уведомления -->
+    <string name="settings_item_push">Push-уведомления</string>
+    <string name="settings_item_push_desc">Фоновая проверка новых сообщений</string>
+    <string name="push_new_message">У вас новое сообщение.</string>
+    <string name="push_messages_overflow">У вас 90+ сообщений</string>
+    <plurals name="push_new_messages">
+        <item quantity="one">У вас %d сообщение</item>
+        <item quantity="few">У вас %d сообщения</item>
+        <item quantity="many">У вас %d сообщений</item>
+        <item quantity="other">У вас %d сообщения</item>
+    </plurals>
+    <string name="push_service_running">Проверка сообщений активна</string>
+    <string name="push_channel_messages">Новые сообщения</string>
+    <string name="push_channel_messages_desc">Уведомления о новых сообщениях</string>
+    <string name="push_channel_service">Фоновая работа</string>
+    <string name="push_channel_service_desc">Постоянное уведомление, пока приложение проверяет сообщения</string>
+    <string name="push_need_permission">Для пушей нужно разрешение на уведомления</string>
+    <string name="settings_section_security">БЕЗОПАСНОСТЬ</string>
+    <string name="settings_item_change_pin">Изменить PIN-код</string>
+    <string name="settings_item_change_pin_desc">Пароль для входа в приложение</string>
+    <string name="settings_item_biometric">Вход по отпечатку</string>
+    <string name="settings_item_biometric_desc">Системная биометрия телефона</string>
+    <string name="biometric_warn_title">Отпечаток не добавлен</string>
+    <string name="biometric_warn_desc">Сначала зарегистрируйте отпечаток в настройках телефона. Atrum не записывает биометрию сам.</string>
+    <string name="biometric_open_settings">Открыть настройки телефона</string>
+    <string name="biometric_need_pin">Сначала установите PIN-код</string>
+    <string name="biometric_first_title">Точно будете пользоваться?</string>
+    <string name="biometric_first_body">Вход по отпечатку автор добавил, по сути, для себя. Можно оставить, временно скрыть или убрать совсем.</string>
+    <string name="biometric_first_keep">Буду пользоваться</string>
+    <string name="biometric_first_hide">Скрыть</string>
+    <string name="biometric_first_remove">Убрать навсегда</string>
+    <string name="biometric_hide_hint">«Скрыть» убирает строку из настроек. Вернуть: 7 тапов по иконке приложения в разделе «О приложении».</string>
+    <string name="biometric_restored">Вход по отпечатку возвращён</string>
+    <string name="biometric_prompt_title">Вход в Atrum</string>
+    <string name="biometric_prompt_subtitle">Подтвердите отпечатком пальца</string>
+    <string name="biometric_prompt_cancel">Использовать PIN</string>
+    <string name="lock_or">или</string>
+    <string name="lock_use_fingerprint">Войти по отпечатку</string>
+    <string name="biometric_how_title">Как работает вход по отпечатку</string>
+    <string name="biometric_how_body">Отпечаток проверяет сама система телефона — Atrum его не видит и не хранит. Действует на один вход: при каждом открытии приложение спрашивает заново.</string>
+    <string name="lock_use_pin">Войти по PIN</string>
+    <string name="settings_item_credits">Благодарности</string>
+
+    <!-- Change PIN screen -->
+    <string name="dialog_old_pin_title">Текущий PIN-код</string>
+    <string name="error_old_pin_wrong">Неверный текущий PIN-код</string>
+    <string name="dialog_new_pin_title">Новый PIN-код</string>
+    <string name="settings_pin_changed">PIN-код успешно изменен</string>
 
     <!-- Sticker settings -->
     <string name="sticker_settings_title">Стикеры</string>
@@ -122,6 +649,19 @@
     <string name="sticker_rename_save">Сохранить</string>
     <string name="sticker_rename_cd">Переименовать пак</string>
     <string name="msg_preview_sticker">Стикер</string>
+    <string name="msg_preview_voice">Голосовое сообщение</string>
+    <string name="voice_record_cd">Записать голосовое</string>
+    <string name="cd_voice_play">Воспроизвести голосовое</string>
+    <string name="voice_slide_to_cancel">смахните влево для отмены</string>
+    <string name="voice_release_to_cancel">отпустите для отмены</string>
+    <string name="voice_need_mic">Нужен доступ к микрофону</string>
+    <string name="voice_record_failed">Не удалось начать запись</string>
+    <string name="voice_too_short">Слишком коротко</string>
+    <string name="voice_delete_cd">Удалить запись</string>
+    <string name="voice_pause_cd">Пауза</string>
+    <string name="voice_resume_cd">Продолжить</string>
+    <string name="voice_lock_hint">вверх — зафиксировать · влево — отмена</string>
+    <string name="voice_paused">на паузе</string>
     <string name="msg_preview_photo">Фото</string>
     <string name="sticker_pack_label_default">Стикеры</string>
     <string name="sticker_add_pack_cd">Добавить пак</string>
@@ -131,6 +671,8 @@
     <string name="sticker_error_invalid_link">Некорректная ссылка на стикер-пак</string>
     <string name="sticker_error_not_found">Пак не найден</string>
     <string name="sticker_error_network">Ошибка сети при загрузке стикеров</string>
+    <string name="sticker_network_error_title">Проблема с загрузкой</string>
+    <string name="sticker_network_error_message">Не удалось связаться с серверами Telegram. Для приватности мы используем Tor (порт 9050), но в некоторых сетях он может работать нестабильно. Если стикеры не грузятся — попробуйте включить VPN. Telegram видит только ID стикеров и не имеет доступа к вашим ключам или перепискам.</string>
 
     <!-- Sticker onboarding -->
     <string name="sticker_onboarding_title">Как добавить стикеры</string>
@@ -139,6 +681,21 @@
     <string name="sticker_onboarding_step_3">Вставьте ссылку или имя пака выше</string>
     <string name="sticker_onboarding_step_4">Нажмите «Добавить»</string>
     <string name="sticker_onboarding_btn">Понятно</string>
+
+    <!-- Update screen -->
+    <string name="update_screen_checking">Проверка обновлений…</string>
+    <string name="update_screen_btn_close">Закрыть</string>
+    <string name="update_screen_title_new">Доступно обновление %1$s</string>
+    <string name="update_screen_subtitle_new">Текущая версия: %1$s</string>
+    <string name="update_screen_title_ok">У вас актуальная версия</string>
+    <string name="update_screen_subtitle_ok">Версия %1$s</string>
+    <string name="update_screen_changelog_label">Что нового</string>
+    <string name="update_screen_source_releases">Все релизы</string>
+    <string name="update_screen_source_code">Исходный код</string>
+    <string name="reply_photo_label">Фото</string>
+    <string name="search_hint">Поиск</string>
+    <string name="search_empty">Чаты не найдены</string>
+    <string name="cd_search">Поиск чатов</string>
     <string name="sticker_settings_help">Помощь</string>
     <string name="sticker_guide_close">Закрыть</string>
     <string name="sticker_guide_step">ШАГ</string>
@@ -164,4 +721,131 @@
     <string name="sticker_guide_s5_d">Зажми стикер → View Sticker Set → ⋯ → Copy Link.</string>
     <string name="sticker_guide_s6_t">Добавь пак по ссылке</string>
     <string name="sticker_guide_s6_d">«Добавить пак» → вставь t.me/addstickers/… → загрузка → готово.</string>
+    <string name="tor_connecting">Подключение к Tor…</string>
+    <string name="tor_connected">Tor подключён</string>
+    <string name="tor_failed">Tor недоступен. Повтор…</string>
+    <string name="cc_path_label">Путь сообщений</string>
+    <string name="cc_path_desc_tor">Через Tor — приватно: соединение идёт через сеть Tor, реле не видят ваш IP.</string>
+    <string name="cc_tor_experimental_title">Экспериментальный режим</string>
+    <string name="cc_tor_experimental_text">Этот транспорт пока работает нестабильно. Автор не рекомендует использовать его для важных переписок до завершения тестов.</string>
+    <string name="cc_path_desc_nostr">Nostr — быстро: соединение с реле напрямую. Реле видят ваш IP-адрес.</string>
+    <string name="cd_path_nostr">Nostr напрямую</string>
+    <string name="cd_path_tor">Через Tor</string>
+    <string name="warn_tor_title">Tor не подключён</string>
+    <string name="warn_tor_message">Сообщения не отправляются, пока Tor не поднимется. Проверьте интернет; если Tor заблокирован — включите VPN.</string>
+    <string name="btn_tor_retry">Повторить</string>
+    <!-- Bluetooth (BLE) локальный путь -->
+    <string name="cd_path_bt">Путь: Bluetooth</string>
+    <string name="cc_path_desc_bt">Bluetooth · без интернета, оба телефона рядом. Только текст.</string>
+    <string name="bt_searching">Поиск устройств рядом…</string>
+    <string name="bt_search_hint">Покажи QR собеседнику или выбери его в списке</string>
+    <string name="bt_show_my_qr">Показать мой QR</string>
+    <string name="bt_no_devices">Устройств рядом пока нет</string>
+    <string name="bt_signal_strong">сигнал сильный</string>
+    <string name="bt_signal_medium">сигнал средний</string>
+    <string name="bt_signal_weak">сигнал слабый</string>
+    <string name="bt_wait_title">Подключение по Bluetooth</string>
+    <string name="bt_wait_hint">Ожидаем, пока собеседник создаст чат…</string>
+    <string name="bt_connected">Подключено: %1$s</string>
+    <string name="bt_peer_connecting">%1$s подключается…</string>
+    <string name="bt_peer_ready">%1$s готов — можно создавать чат</string>
+    <string name="bt_failed">Не удалось подключиться по Bluetooth</string>
+    <string name="bt_perm_needed">Нужны разрешения Bluetooth</string>
+    <string name="voice_load_failed_fmt">Голосовое не загрузилось: %1$s</string>
+    <string name="voice_limit_warning">Минута до лимита записи (15 мин)</string>
+    <string name="voice_limit_title">Скоро лимит записи</string>
+    <string name="voice_limit_msg">Осталась 1 минута (макс. 15:00)</string>
+    <string name="bt_wait_connecting">Соединение…</string>
+    <string name="bt_wait_exchanging">Обмен профилями…</string>
+    <string name="bt_wait_for_create_fmt">Ждём, пока %1$s создаст чат…</string>
+    <string name="bt_wait_hint_exchange">Профилями обменялись. Попросите собеседника нажать «Создать чат».</string>
+    <string name="join_err_bt">Это приглашение от Bluetooth-чата. Такой чат локальный — подключайтесь рядом через QR/Bluetooth.</string>
+    <!-- Список медиа (фото/ссылки/голосовые) -->
+    <string name="btn_back_desc">Назад</string>
+    <string name="media_action_jump">Перейти к сообщению</string>
+    <string name="media_action_copy">Копировать</string>
+    <string name="media_action_delete">Удалить</string>
+    <string name="media_selected_one">Выбран 1</string>
+    <string name="media_delete_only_own">Можно удалить только свои сообщения</string>
+    <plurals name="media_count">
+        <item quantity="one">%1$d элемент</item>
+        <item quantity="few">%1$d элемента</item>
+        <item quantity="many">%1$d элементов</item>
+        <item quantity="other">%1$d элементов</item>
+    </plurals>
+    <!-- Сеть / реле / издатель -->
+    <string name="settings_section_network">Сеть</string>
+    <string name="settings_item_relays">Реле сообщений</string>
+    <string name="settings_item_publisher">Издатель списка реле</string>
+    <string name="relays_sub_builtin">%1$d встроенных</string>
+    <string name="relays_sub_full">%1$d встроенных + %2$d добавленных · v%3$d</string>
+    <string name="pub_title">Издатель списка реле</string>
+    <string name="pub_no_key_info">Введи приватный ключ издателя. Он хранится только на этом телефоне (Keystore) и в сеть не уходит. Список реле подписывается им; пользователи принимают только список с подписью вшитого ключа.</string>
+    <string name="pub_key_hint">Приватный ключ (hex, 64 символа)</string>
+    <string name="pub_save_key">Сохранить ключ</string>
+    <string name="pub_gen_pair">Сгенерировать новую пару</string>
+    <string name="pub_warn_lose_key">Потеряешь ключ — не сможешь публиковать обновления. Сохрани копию офлайн.</string>
+    <string name="pub_pubkey_label">Публичный ключ (вшей его в сборку):</string>
+    <string name="pub_copy">Скопировать</string>
+    <string name="pub_added_relays">Добавляемые реле</string>
+    <string name="pub_add_relay_hint">wss://новое-реле…</string>
+    <string name="pub_publish">Опубликовать</string>
+    <string name="pub_delete_key">Удалить ключ с этого телефона</string>
+    <string name="pub_key_saved">Ключ сохранён</string>
+    <string name="pub_invalid_key">Неверный ключ (нужно 64 hex-символа)</string>
+    <string name="pub_published_ok">Опубликовано на %1$d реле</string>
+    <string name="pub_publish_fail">Не удалось опубликовать ни на одно реле</string>
+    <string name="pub_relay_bad">Адрес должен начинаться с wss://</string>
+    <string name="pub_current_ver">Текущая версия: v%1$d</string>
+    <string name="pub_no_pubkey_baked">⚠ Публичный ключ не вшит в эту сборку — пользователи список пока не примут. Дай мне публичный ключ ниже.</string>
+    <string name="pub_verify_checking">Проверяю доставку…</string>
+    <string name="pub_verify_ok">Читается на %1$d из %2$d реле</string>
+    <string name="pub_verify_none">Пока не читается ни на одном реле — подожди и опубликуй ещё раз</string>
+    <string name="pub_gate_title">Доступ издателя</string>
+    <string name="pub_gate_hint">Пароль</string>
+    <string name="pub_gate_wrong">Неверный пароль</string>
+    <string name="pub_gate_dev_title">Окно для разработчика</string>
+    <string name="pub_gate_dev_body">Нужно только разработчику — чтобы проверять реле и пути, по которым идут сообщения. Обычному пользователю это окно не нужно: всё работает само.</string>
+    <string name="pub_gate_pwd_label">Пароль</string>
+    <string name="pub_gate_enter">Войти</string>
+    <string name="pub_gate_delete">Удалить это окно</string>
+    <string name="pub_gate_delete_hint">Скроет раздел «Сеть» и этот вход на твоём телефоне. На работу приложения не влияет. Вернуть — очистка данных приложения.</string>
+    <string name="pub_gate_delete_confirm">Скрыть раздел «Сеть» на этом телефоне? Вернуть можно только очисткой данных приложения.</string>
+    <string name="pub_gate_deleted">Раздел скрыт</string>
+    <string name="pub_pubkey_label_baked">Публичный ключ — вшит в сборку ✓</string>
+    <string name="action_done">Готово</string>
+    <string name="bcrop_safe_show">Что перекроется</string>
+    <string name="bcrop_safe_hide">Скрыть</string>
+    <string name="bcrop_reset">Сброс</string>
+    <string name="bcrop_sample_name">Имя</string>
+    <!-- Экран QR-приглашения -->
+    <string name="invite_qr_title">Приглашение</string>
+    <string name="invite_qr_pin_label">Код-пароль</string>
+    <string name="invite_qr_default_name">Чат</string>
+    <string name="invite_qr_share_image">Поделиться</string>
+    <string name="invite_qr_share_text">Отправить текстом</string>
+    <string name="invite_qr_save_image">Сохранить в галерею</string>
+    <string name="invite_qr_copy_send">Копировать для отправки</string>
+    <string name="invite_qr_saved">Сохранено в альбом «Atrum QR»</string>
+    <string name="invite_qr_image_copied">QR скопирован в буфер</string>
+    <string name="cd_qr_save_gallery">Сохранить QR в галерею</string>
+    <string name="cd_qr_copy_image">Скопировать картинку QR</string>
+    <string name="cd_qr_copy_text">Копировать текст приглашения</string>
+    <string name="invite_qr_save_failed">Не удалось сохранить QR</string>
+    <string name="invite_qr_share_caption">Приглашение в зашифрованный чат Atrum. Отсканируйте QR в приложении или камерой телефона. Код-пароль отправлю отдельно.</string>
+    <string name="invite_qr_scan">Сканировать QR-код</string>
+    <string name="invite_qr_or">или</string>
+    <string name="invite_qr_copied">Код приглашения скопирован — вставьте в чат вручную</string>
+    <string name="settings_item_mods">Моды</string>
+    <string name="mods_source">Только проверенные моды · source.atrum.chat/mods</string>
+    <string name="mods_loading">Загрузка каталога…</string>
+    <string name="mods_error_fmt">Не удалось загрузить каталог: %1$s</string>
+    <string name="mods_empty">Модов пока нет</string>
+    <string name="mods_signed">подписано</string>
+    <string name="mods_unverified">не проверено</string>
+    <string name="mods_dev_banner">Издатель не настроен — подпись каталога не проверяется</string>
+    <string name="mods_install">Установить</string>
+    <string name="mods_install_soon">Загрузка модов появится в следующей версии</string>
+    <string name="mods_loaded_fmt">Мод загружен: %1$s</string>
+    <string name="mods_load_failed_fmt">Не удалось: %1$s</string>
 </resources>

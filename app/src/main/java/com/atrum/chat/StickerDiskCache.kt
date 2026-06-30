@@ -50,8 +50,12 @@ object StickerDiskCache {
         } catch (_: Exception) {}
     }
 
-    private fun fileFor(cacheDir: File, key: String): File =
+    fun fileFor(cacheDir: File, key: String): File =
         File(dir(cacheDir), md5(key) + ".sfc")
+
+    fun remove(cacheDir: File, key: String) {
+        runCatching { fileFor(cacheDir, key).delete() }
+    }
 
     /** Быстрая проверка: кадры этого стикера уже лежат на диске. */
     fun has(cacheDir: File, key: String): Boolean {

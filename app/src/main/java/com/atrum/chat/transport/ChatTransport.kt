@@ -11,10 +11,10 @@ data class ChatAndReactions(
 /**
  * Результат единого poll-запроса: chat.txt + reactions.txt + profiles.txt за один GET.
  *
- * Единый polling loop читает весь gist JSON один раз и извлекает все три файла —
+ * Единый polling loop читает весь канал один раз и извлекает все три файла —
  * вместо двух отдельных запросов (сообщения + профили). Экономит один полный GET/тик.
  */
-data class AllGistData(
+data class AllChannelData(
     val chatContent: String,
     val reactionsContent: String,
     val profilesContent: String,
@@ -23,23 +23,42 @@ data class AllGistData(
     val profileSlots: List<String> = emptyList()
 )
 
+typealias AllGistData = AllChannelData
+
 /**
  * Абстракция над транспортным слоем чата.
  *
  * Реализации:
- *   - GistTransport  — основной, GitHub Gist (HTTPS)
- *   - NostrTransport — P2P-фолбэк через Nostr-реле (WebSocket)
+ *   - NostrTransport — основной, P2P через Nostr-реле (WebSocket)
+ *   - LocalTransport — оффлайн-путь (чат «Избранное»)
  *
- * Интерфейс зеркалит методы GistApi, поэтому существующий код
+ * Интерфейс зеркалит методы Legacy API, поэтому существующий код
  * (ProfileSync, ImageLoader, ChatActivity) переключается без логических правок.
  */
+/**
+ * Обезвреживает имя файла, пришедшее в т.ч. из сообщения собеседника (untrusted),
+ * перед построением пути File(filesDir, prefix + name). Срезает компоненты каталога и
+ * нейтрализует обход ("..", абсолютные пути) — защита от path traversal (особенно BLE,
+ * где пир недоверенный). Легальные плоские имена ("chat.txt", "img_…") не меняются.
+ */
+internal fun safeChatFileName(name: String): String {
+    val base = name.substringAfterLast('/').substringAfterLast('\\')
+    return if (base.isEmpty() || base == "." || base == "..") "_" else base
+}
+
 interface ChatTransport {
 
-    /** Человекочитаемое имя для UI: "GitHub Gist" / "Nostr P2P" */
+    /** Человекочитаемое имя для UI: "Relay Source" / "Nostr P2P" */
     val displayName: String
 
     /** Иконка-символ для статусной строки (☁ / ⚡) */
     val displayIcon: String
+
+    /**
+     * Использует ли транспорт Tor для сетевых запросов.
+     * Если true, внешние ресурсы (например, HTTP-картинки) тоже должны грузиться через Tor.
+     */
+    val useTor: Boolean get() = false
 
     /**
      * Стабильный идентификатор чата, уникальный для каждого канала.
@@ -47,13 +66,22 @@ interface ChatTransport {
      * Используется как входной параметр для деривации соли Argon2id в CryptoHelper:
      *   salt = SHA-256("atrum_argon2_v1:" + chatId)[0:16]
      *
-     * GistTransport  → gistId (GUID gist'а на GitHub)
-     * NostrTransport → channelId (hex(SHA256("atrum_channel_v1_" + gistId)).take(16))
+     * LegacyTransport → sourceId (GUID канала в метаданных)
+     * NostrTransport  → channelId (hex(SHA256("atrum_channel_v1_" + sourceId)).take(16))
      *
      * Обе стороны чата получают одинаковый chatId → одинаковую соль → одинаковый ключ
      * без явного обмена солью через канал связи.
      */
     val chatId: String
+
+    /**
+     * Крипто-домен для шифрования КОНТЕНТА медиа (фото/голос/стикеры/манифест).
+     * Должен совпадать с доменом, под которым ставится forward-secrecy сессия
+     * (chat.chatId), чтобы медиа шифровалось тем же сессионным ключом, что и текст,
+     * и не зависело от пароля. По умолчанию = chatId (для транспортов без отдельного
+     * сетевого хеша). NostrTransport переопределяет его на исходный sourceId.
+     */
+    val cryptoChatId: String get() = chatId
 
     /** Загружает полное содержимое chat.txt (все зашифрованные строки). */
     suspend fun loadContent(): String
@@ -74,7 +102,7 @@ interface ChatTransport {
      * Возвращает null если контент не изменился (HTTP 304 Not Modified) — UI не нужно обновлять.
      *
      * Дефолтная реализация для транспортов без поддержки ETag — всегда возвращает свежие данные.
-     * GistTransport переопределяет через api.loadContentIfChanged().
+     * LegacyTransport переопределяет через api.loadContentIfChanged().
      */
     suspend fun loadContentIfChanged(): String? = loadContent()
 
@@ -83,17 +111,17 @@ interface ChatTransport {
      * Позволяет сократить вдвое число GET-запросов при каждом тике polling-а.
      *
      * Дефолтная реализация: два отдельных вызова (Nostr и другие транспорты без поддержки объединённой загрузки).
-     * GistTransport переопределяет и делает один fetchGistJson, извлекая оба файла из общего JSON.
+     * LegacyTransport переопределяет и делает один fetchJson, извлекая оба файла из общего JSON.
      */
     suspend fun loadChatAndReactions(): ChatAndReactions =
         ChatAndReactions(loadContent(), loadFileOrNull("reactions.txt") ?: "")
 
     /**
      * ETag-оптимизированная версия [loadChatAndReactions].
-     * Возвращает null если gist не изменился (304) — ни chat.txt, ни reactions.txt обновлять не нужно.
+     * Возвращает null если контент не изменился (304) — ни chat.txt, ни reactions.txt обновлять не нужно.
      *
      * Дефолтная реализация: вызывает loadContentIfChanged + loadFileOrNull.
-     * GistTransport переопределяет на один fetchGistJson с ETag.
+     * LegacyTransport переопределяет на один fetchJson с ETag.
      */
     suspend fun loadChatAndReactionsIfChanged(): ChatAndReactions? {
         val chatContent = loadContentIfChanged() ?: return null
@@ -103,22 +131,18 @@ interface ChatTransport {
     /**
      * Единый ETag-оптимизированный запрос: chat.txt + reactions.txt + profiles.txt.
      * Возвращает null при 304 Not Modified — ничего не изменилось, UI не трогаем.
-     *
-     * GistTransport переопределяет — один fetchGistJson извлекает все три файла.
-     * Дефолтная реализация для прочих транспортов (Nostr, Local) — два запроса.
      */
-    suspend fun loadAllIfChanged(): AllGistData? {
+    suspend fun loadAllIfChanged(): AllChannelData? {
         val cr = loadChatAndReactionsIfChanged() ?: return null
-        return AllGistData(cr.chatContent, cr.reactionsContent, "")
+        return AllChannelData(cr.chatContent, cr.reactionsContent, "")
     }
 
     /**
      * Полный (без ETag) единый запрос: chat.txt + reactions.txt + profiles.txt.
-     * GistTransport переопределяет — один fetchGistJson.
      */
-    suspend fun loadAll(): AllGistData {
+    suspend fun loadAll(): AllChannelData {
         val cr = loadChatAndReactions()
-        return AllGistData(cr.chatContent, cr.reactionsContent, "")
+        return AllChannelData(cr.chatContent, cr.reactionsContent, "")
     }
 
     /**
@@ -140,7 +164,7 @@ interface ChatTransport {
      *
      * @param encryptedLine Новая зашифрованная строка
      * @param extraFiles Дополнительные файлы для сохранения в том же PATCH-запросе
-     *                   (только для GistTransport, атомарно с appendLine)
+     *                   (только для LegacyTransport, атомарно с appendLine)
      */
     suspend fun appendLine(encryptedLine: String, extraFiles: Map<String, String> = emptyMap())
 
@@ -150,7 +174,7 @@ interface ChatTransport {
     /**
      * Атомарно перезаписывает несколько файлов за один PATCH-запрос.
      * Дефолтная реализация — последовательные saveFile (для LocalTransport/NostrTransport).
-     * GistTransport переопределяет через api.saveFiles() — один запрос вместо N.
+     * LegacyTransport переопределяет через api.saveFiles() — один запрос вместо N.
      */
     suspend fun saveFiles(files: Map<String, String>) {
         files.forEach { (name, content) -> saveFile(name, content) }
@@ -179,11 +203,11 @@ interface ChatTransport {
 
     /**
      * Сохраняет файл с автоматическим разбиением на чанки для обхода
-     * GitHub API rate limit при отправке больших изображений.
+     * лимитов провайдера при отправке больших изображений.
      *
      * Дефолтная реализация — просто вызывает [saveFile] (подходит для
      * Nostr и других транспортов без ограничений размера).
-     * GistTransport переопределяет этот метод с реальной чанковой логикой.
+     * LegacyTransport переопределяет этот метод с реальной чанковой логикой.
      *
      * @param name             имя файла (manifest), например img_123.txt
      * @param encryptedContent уже зашифрованный контент для сохранения
@@ -211,7 +235,7 @@ interface ChatTransport {
      * Атомарно переключает реакцию (add / remove toggle).
      * Возвращает true = реакция добавлена, false = удалена.
      *
-     * GistTransport переопределяет для атомарной операции через writeMutex.
+     * LegacyTransport переопределяет для атомарной операции через writeMutex.
      * Дефолтная реализация — read-modify-write через saveFile (non-atomic).
      */
     suspend fun toggleReaction(msgId: String, emoji: String, userId: String): Boolean {
@@ -234,27 +258,27 @@ interface ChatTransport {
      * Загружает зашифрованный контент изображения по ссылке.
      *
      * Поддерживаемые форматы [ref]:
-     *   "gist:GIST_ID"  → загрузить из отдельного image gist (новый формат)
-     *   "img_xxx.txt"   → загрузить файл из основного чат-gist (старый формат)
+     *   "source:ID"     → загрузить из отдельного хранилища (Content Room)
+     *   "img_xxx.txt"   → загрузить файл из основного канала (Legacy)
      *
      * Возвращает сырую зашифрованную строку. Расшифровка — в ImageLoader.
-     * GistTransport переопределяет для обработки "gist:" ссылок.
+     * LegacyTransport переопределяет для обработки "source:" ссылок.
      */
     suspend fun loadImageByRef(ref: String): String = loadFile(ref)
 
     /**
      * Загружает изображение в оптимальное хранилище и возвращает ссылку.
      *
-     * GistTransport: создаёт НОВЫЙ приватный gist одним POST-запросом
-     * → не трогает основной чат-gist, не конкурирует с heartbeat/typing
-     * → полный обход rate limit без задержек.
+     * LegacyTransport: создаёт НОВЫЙ приватный контейнер одним POST-запросом
+     * → не трогает основной канал, не конкурирует с heartbeat/typing
+     * → полный обход лимитов без задержек.
      *
      * Остальные транспорты: fallback — saveFileChunked в основном транспорте.
      *
      * @param encryptedContent уже зашифрованный base64 изображения
      * @param password         пароль чата (для fallback saveFileChunked)
      * @param onProgress       прогресс загрузки (только для fallback)
-     * @return "gist:GIST_ID" (новый формат) или "img_xxx.txt" (fallback)
+     * @return "source:ID" (Content Room) или "img_xxx.txt" (Legacy)
      */
     suspend fun uploadImage(
         encryptedContent: String,

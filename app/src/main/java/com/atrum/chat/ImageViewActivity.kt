@@ -1,9 +1,7 @@
 package com.atrum.chat
 
 import android.animation.ValueAnimator
-import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.PointF
 import android.os.Bundle
@@ -128,23 +126,69 @@ class ImageViewActivity : SecureActivity() {
     // ── Zoomable single ImageView setup ──────────────────────────────────────
 
     fun setupZoomableImage(imageView: ImageView, bitmap: Bitmap) {
+        // FIT_CENTER центрирует и масштабирует картинку силами фреймворка СРАЗУ при показе —
+        // без ручной матрицы, поэтому нет кадра, где картинка прижата к углу нативным размером.
+        // На MATRIX переключаемся только в момент применения фит-матрицы; визуально она
+        // идентична FIT_CENTER, поэтому переход бесшовный, а зум/пан дальше работают как прежде.
+        imageView.scaleType = ImageView.ScaleType.FIT_CENTER
+        imageView.imageMatrix = Matrix()
         imageView.setImageBitmap(bitmap)
-        imageView.scaleType = ImageView.ScaleType.MATRIX
 
         val state = ZoomState(bitmap.width, bitmap.height)
-
-        imageView.viewTreeObserver.addOnGlobalLayoutListener(
-            object : ViewTreeObserver.OnGlobalLayoutListener {
-                override fun onGlobalLayout() {
-                    imageView.viewTreeObserver.removeOnGlobalLayoutListener(this)
-                    state.viewW = imageView.width
-                    state.viewH = imageView.height
-                    state.fitMatrix(imageView)
-                }
-            }
-        )
-
         attachZoomTouchListener(imageView, state)
+
+        val applyFit = {
+            state.viewW = imageView.width
+            state.viewH = imageView.height
+            imageView.scaleType = ImageView.ScaleType.MATRIX
+            state.fitMatrix(imageView)
+        }
+
+        if (imageView.width > 0 && imageView.height > 0) {
+            applyFit()
+        } else {
+            imageView.viewTreeObserver.addOnGlobalLayoutListener(
+                object : ViewTreeObserver.OnGlobalLayoutListener {
+                    override fun onGlobalLayout() {
+                        if (imageView.width > 0 && imageView.height > 0) {
+                            imageView.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                            applyFit()
+                        }
+                    }
+                }
+            )
+        }
+    }
+
+    /**
+     * Заполняет фон страницы тем же фото (centerCrop) с размытием по Гауссу — чтобы
+     * чёрные letterbox-полосы у непропорциональных фото сменились мягким размытым фоном.
+     * API 31+ — аппаратный RenderEffect; ниже — фолбэк: сильно уменьшенная копия,
+     * которую centerCrop-ImageView растягивает с фильтрацией (мягкое размытие).
+     */
+    private fun applyBlurBackground(iv: BlurFillView, bmp: Bitmap) {
+        // ВСЕГДА кормим фон уменьшенной копией: шейдер растянет её с фильтрацией → фон
+        // мягкий сам по себе, без внутреннего clamp-шва, даже если RenderEffect на кадр
+        // не применился (бывает при свайпе ViewPager). RenderEffect на 31+ добавляет
+        // дополнительное гауссово сглаживание поверх. Масштаб/позиция fit сохраняются.
+        iv.setBitmap(downscaleBlur(bmp))
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            try {
+                iv.setRenderEffect(
+                    android.graphics.RenderEffect.createBlurEffect(
+                        40f, 40f, android.graphics.Shader.TileMode.CLAMP
+                    )
+                )
+            } catch (_: Throwable) {
+                iv.setRenderEffect(null)
+            }
+        }
+    }
+
+    private fun downscaleBlur(bmp: Bitmap): Bitmap {
+        val w = maxOf(1, bmp.width / 10)
+        val h = maxOf(1, bmp.height / 10)
+        return Bitmap.createScaledBitmap(bmp, w, h, true)
     }
 
     // ── Touch / zoom logic ────────────────────────────────────────────────────
@@ -297,6 +341,7 @@ class ImageViewActivity : SecureActivity() {
 
         inner class PageVH(view: View) : RecyclerView.ViewHolder(view) {
             val iv: ImageView = view.findViewById(R.id.iv_page)
+            val ivBlur: BlurFillView = view.findViewById(R.id.iv_page_blur)
             val pb: ProgressBar = view.findViewById(R.id.pb_page)
             var state: ZoomState? = null
 
@@ -306,6 +351,7 @@ class ImageViewActivity : SecureActivity() {
                 state = null
                 pb.visibility = View.VISIBLE
                 iv.setImageDrawable(null)
+                ivBlur.setBitmap(null)
 
                 // 1. Bitmap в LruCache — показываем мгновенно
                 val cached = ImageCache.getBitmap(ref)
@@ -344,6 +390,7 @@ class ImageViewActivity : SecureActivity() {
             private fun onBitmap(bitmap: Bitmap) {
                 val s = ZoomState(bitmap.width, bitmap.height)
                 state = s
+                applyBlurBackground(ivBlur, bitmap)
                 setupZoomableImage(iv, bitmap)
             }
         }

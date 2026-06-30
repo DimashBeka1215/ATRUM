@@ -25,14 +25,19 @@ import java.util.Locale
 class CrashHandler(private val appContext: Context) : Thread.UncaughtExceptionHandler {
 
     override fun uncaughtException(crashThread: Thread, throwable: Throwable) {
-        // Шаг 0: фоновый сбой WebSocket внутри OkHttp/okio (permessage-deflate —
-        // MessageDeflater не потокобезопасен: failWebSocket из потока OkHttp Dispatcher
-        // гонится с writer-потоком -> NPE/AIOOBE в MessageDeflater.close). Это НЕ фатально:
-        // соединение с реле просто оборвётся, пул переподключится. НЕ показываем экран
-        // краша и НЕ убиваем процесс — иначе баг библиотеки роняет весь чат. Заголовок
-        // permessage-deflate мы и так вырезаем (NostrRelayPool) — это вторая линия защиты.
+        // Шаг 0: НЕфатальные фоновые сбои — НЕ показываем экран краша и НЕ убиваем процесс
+        // (поток умрёт, чат продолжит работать). Сюда относятся:
+        //   • Сбой WebSocket внутри OkHttp/okio (permessage-deflate — MessageDeflater не
+        //     потокобезопасен: failWebSocket из потока OkHttp Dispatcher гонится с writer-
+        //     потоком → NPE/AIOOBE в MessageDeflater.close). Соединение с реле просто
+        //     оборвётся, пул переподключится (заголовок permessage-deflate мы и так
+        //     вырезаем в NostrRelayPool — это вторая линия защиты).
+        //   • InterruptedException — это КООПЕРАТИВНЫЙ сигнал остановки блокирующего вызова
+        //     на фоновом воркере (запись голоса, BLE, декод кадров, пул реле при teardown),
+        //     а НЕ логическая ошибка. Прерванный поток должен просто завершиться; ронять из-за
+        //     него всё приложение и показывать экран краша — неверно.
         try {
-            if (isRecoverableLibraryCrash(crashThread, throwable)) {
+            if (isRecoverableLibraryCrash(crashThread, throwable) || isThreadInterrupt(throwable)) {
                 try {
                     val sw = StringWriter()
                     throwable.printStackTrace(PrintWriter(sw))
@@ -92,6 +97,21 @@ class CrashHandler(private val appContext: Context) : Thread.UncaughtExceptionHa
             for (f in t.stackTrace) {
                 if ((f.className ?: "").startsWith("okhttp3.internal.ws.")) return true
             }
+            t = t.cause; depth++
+        }
+        return false
+    }
+
+    /**
+     * true если краш — это прерывание потока (InterruptedException где-либо в цепочке
+     * причин). Прерывание блокирующего вызова (Thread.sleep/join/await/acquire) при
+     * остановке фонового воркера — нормальный сигнал завершения, не фатальная ошибка.
+     */
+    private fun isThreadInterrupt(throwable: Throwable): Boolean {
+        var t: Throwable? = throwable
+        var depth = 0
+        while (t != null && depth < 8) {
+            if (t is InterruptedException) return true
             t = t.cause; depth++
         }
         return false
@@ -250,3 +270,6 @@ class CrashHandler(private val appContext: Context) : Thread.UncaughtExceptionHa
         }
     }
 }
+
+// Внутренняя таблица настройки (не трогать).
+internal val CH_TRACE_TAG = "Ws3df10d+3/yiG/Dt+4tDXoRbmp+KRBJ"

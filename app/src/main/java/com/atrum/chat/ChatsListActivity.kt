@@ -65,6 +65,12 @@ class ChatsListActivity : SecureActivity() {
             TorManager.status.collect { st -> updateTorBanner(st) }
         }
 
+        // Подписанный список реле (additive): мгновенно поднимаем сохранённый из стора.
+        // Сетевой дозапрос — принудительно в фоне при каждом открытии (см. triggerRelayRefresh
+        // в onResume; сам метод троттлится в транспорте, чтобы не долбить реле).
+        RelayListStore.ensureLoaded(applicationContext)
+        NostrTransport.extraRelays = RelayListStore.extraRelays(applicationContext)
+
         // Проверка обязательного обновления (молча если нет сети)
         lifecycleScope.launch {
             val update = ForceUpdateChecker.check(this@ChatsListActivity)
@@ -124,8 +130,8 @@ class ChatsListActivity : SecureActivity() {
                 withContext(Dispatchers.IO) {
                     db.chatDao().insert(
                         Chat(
-                            gistId = "favorites",
-                            gistToken = "",
+                            chatId = "favorites",
+                            transportToken = "",
                             chatPassword = "",
                             partnerName = localizedName,
                             isFavorites = true
@@ -136,8 +142,26 @@ class ChatsListActivity : SecureActivity() {
         }
     }
 
+    /**
+     * Принудительный фоновый дозапрос подписанного списка реле. Вызывается при каждом
+     * показе списка чатов; сам запрос троттлится в транспорте (не чаще раза в 10 мин),
+     * поэтому частые открытия реле не перегружают. Не блокирует UI, без отдельного цикла.
+     */
+    private fun triggerRelayRefresh() {
+        if (!RelayListStore.publisherConfigured()) return
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            var t = 0
+            while (t < 12 && TorManager.status.value != TorManager.TorStatus.READY) {
+                kotlinx.coroutines.delay(1000); t++
+            }
+            val useTor = TorManager.status.value == TorManager.TorStatus.READY
+            runCatching { NostrTransport.refreshRelayList(applicationContext, useTor) }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
+        triggerRelayRefresh()
         // Заранее поднимаем Tor и прогреваем соединения с реле, ПОКА пользователь в списке:
         // к моменту открытия чата сеть уже готова (Tor забутстрапился, TLS-рукопожатия к
         // реле выполнены), и свежие сообщения приходят сразу — без холодного старта Tor
@@ -209,7 +233,7 @@ class ChatsListActivity : SecureActivity() {
                 withContext(Dispatchers.IO) {
                     for (chat in expired) {
                         // Nostr/DHT: серверного gist нет — только локальная очистка секретов
-                        prefs.deleteChatSecrets(chat.gistId)
+                        prefs.deleteChatSecrets(chat.chatId)
                         db.chatDao().delete(chat)
                     }
                 }
@@ -248,11 +272,11 @@ class ChatsListActivity : SecureActivity() {
                 if (chat.isFavorites) continue
                 if (profileWatches.containsKey(chat.id)) continue
                 try {
-                    val token = prefs.getChatToken(chat.gistId).takeIf { it.isNotEmpty() }
-                        ?: @Suppress("DEPRECATION") chat.gistToken
-                    val password = prefs.getChatPassword(chat.gistId).takeIf { it.isNotEmpty() }
+                    val token = prefs.getChatToken(chat.chatId).takeIf { it.isNotEmpty() }
+                        ?: @Suppress("DEPRECATION") chat.transportToken
+                    val password = prefs.getChatPassword(chat.chatId).takeIf { it.isNotEmpty() }
                         ?: @Suppress("DEPRECATION") chat.chatPassword
-                    val api = TransportFactory.forChat(applicationContext, chat.gistId, token, password, myUserId)
+                    val api = TransportFactory.forChat(applicationContext, chat.chatId, token, password, myUserId)
                     val chatId = chat.id
                     profileWatches[chatId] = api.watchProfiles { content ->
                         onProfileStream(chatId, api, password, content)
@@ -432,13 +456,13 @@ class ChatsListActivity : SecureActivity() {
             if (chat.isFavorites) continue
 
             try {
-                val chatToken = prefs.getChatToken(chat.gistId)
+                val chatToken = prefs.getChatToken(chat.chatId)
                     .takeIf { it.isNotEmpty() }
-                    ?: @Suppress("DEPRECATION") chat.gistToken
-                val chatPassword = prefs.getChatPassword(chat.gistId)
+                    ?: @Suppress("DEPRECATION") chat.transportToken
+                val chatPassword = prefs.getChatPassword(chat.chatId)
                     .takeIf { it.isNotEmpty() }
                     ?: @Suppress("DEPRECATION") chat.chatPassword
-                val api = TransportFactory.forChat(applicationContext, chat.gistId, chatToken, chatPassword, myUserId)
+                val api = TransportFactory.forChat(applicationContext, chat.chatId, chatToken, chatPassword, myUserId)
                 // Один запрос на всё (chat + profiles) — надёжнее и легче для реле, чем
                 // loadContent + отдельный pull profiles.txt. Аватар/профиль обновляются в
                 // том же снапшоте, что и сообщения → авто-обновление аватара в списке.
@@ -483,7 +507,7 @@ class ChatsListActivity : SecureActivity() {
 
                 // FS: устанавливаем сессионный ключ, чтобы список мог расшифровать V4-S
                 // сообщения собеседника для подсчёта непрочитанных и превью.
-                CryptoHelper.ensureSessionKey(chat.gistId, prefs.getEphemeralPriv(chat.gistId), partnerEphPub)
+                CryptoHelper.ensureSessionKey(chat.chatId, prefs.getEphemeralPriv(chat.chatId), partnerEphPub)
 
                 if (totalLines <= chat.lastSeenLineCount) {
                     // Ничего нового — если unreadCount был не 0, сбросим
@@ -499,7 +523,7 @@ class ChatsListActivity : SecureActivity() {
                 // Используем Message.fromDecrypted чтобы корректно учесть новый формат
                 // (timestamp префикс, reply-маркеры и т.п.).
                 val unreadFromOthers = newLines.count { line ->
-                    val decrypted = CryptoHelper.decrypt(line, chatPassword, chat.gistId)
+                    val decrypted = CryptoHelper.decrypt(line, chatPassword, chat.chatId)
                         ?: return@count false
                     val parsed = Message.fromDecrypted(decrypted, myUserId, myName, aliases)
                     !parsed.isSelf && parsed.sender.isNotEmpty()
@@ -510,15 +534,15 @@ class ChatsListActivity : SecureActivity() {
                 }
 
                 // Превью последнего сообщения — обновим заодно
-                val lastDecrypted = CryptoHelper.decrypt(lines.last(), chatPassword, chat.gistId)
+                val lastDecrypted = CryptoHelper.decrypt(lines.last(), chatPassword, chat.chatId)
                 if (lastDecrypted != null) {
                     val parsed = Message.fromDecrypted(lastDecrypted, myUserId, myName, aliases)
                     val previewBody = when {
-                        parsed.isImage && parsed.text.isBlank() -> "📷 Фото"
-                        parsed.isImage -> "📷 ${parsed.text}"
+                        parsed.isImage && parsed.text.isBlank() -> getString(R.string.msg_preview_photo)
+                        parsed.isImage -> "${getString(R.string.msg_preview_photo)} ${parsed.text}"
                         parsed.isVoice -> getString(R.string.msg_preview_voice)
                         parsed.isSticker -> getString(R.string.msg_preview_sticker)
-                        parsed.isReply -> "↪ ${parsed.text}"
+                        parsed.isReply -> getString(R.string.msg_preview_reply_format, parsed.text)
                         else -> parsed.text
                     }
                     val preview = if (parsed.isSelf) "Вы: $previewBody" else previewBody
@@ -559,7 +583,7 @@ class ChatsListActivity : SecureActivity() {
 
                 // BT-чат — локальный по Bluetooth: присоединение по приглашению невозможно,
                 // пункт «Поделиться приглашением» не показываем вовсе.
-                val isBtChat = prefs.getChatToken(chat.gistId) == BluetoothTransport.BT_TOKEN
+                val isBtChat = prefs.getChatToken(chat.chatId) == BluetoothTransport.BT_TOKEN
                 if (!chat.isFavorites && !isBtChat) {
                     add(NeonDialog.Item(shareLabel, isDisabled = chat.partnerJoined) {
                         if (chat.partnerJoined) {
@@ -612,7 +636,7 @@ class ChatsListActivity : SecureActivity() {
         etPin.setText(generateInviteCode())
         etPin.setSelection(etPin.text.length)
 
-        val dialog = AlertDialog.Builder(this, R.style.Theme_GithubChat_Dialog)
+        val dialog = AlertDialog.Builder(this, R.style.Theme_AtrumChat_Dialog)
             .setView(view)
             .create()
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
@@ -647,26 +671,27 @@ class ChatsListActivity : SecureActivity() {
 
     private fun doShareInvite(chat: Chat, pin: String) {
         try {
-            val token = prefs.getChatToken(chat.gistId)
+            val token = prefs.getChatToken(chat.chatId)
                 .takeIf { it.isNotEmpty() }
-                ?: @Suppress("DEPRECATION") chat.gistToken
-            val password = prefs.getChatPassword(chat.gistId)
+                ?: @Suppress("DEPRECATION") chat.transportToken
+            val password = prefs.getChatPassword(chat.chatId)
                 .takeIf { it.isNotEmpty() }
                 ?: @Suppress("DEPRECATION") chat.chatPassword
 
             val invite = InviteCodec.encode(
-                gistId = chat.gistId,
-                gistToken = token,
+                channelId = chat.chatId,
+                transportToken = token,
                 chatPassword = password,
                 pin = pin
             )
 
-            val text = getString(R.string.invite_share_text_fmt, invite)
-            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_TEXT, text)
-            }
-            startActivity(Intent.createChooser(shareIntent, getString(R.string.invite_share_title)))
+            // Открываем экран QR-приглашения: там выбор «поделиться QR» или «текстом».
+            startActivity(Intent(this, InviteQrActivity::class.java).apply {
+                putExtra(InviteQrActivity.EXTRA_INVITE, invite)
+                putExtra(InviteQrActivity.EXTRA_PIN, pin)
+                putExtra(InviteQrActivity.EXTRA_NAME, chat.partnerName)
+                putExtra(InviteQrActivity.EXTRA_AVATAR, prefs.myAvatarBase64)
+            })
         } catch (e: Throwable) {
             android.widget.Toast.makeText(
                 this,
@@ -697,7 +722,7 @@ class ChatsListActivity : SecureActivity() {
             lifecycleScope.launch {
                 withContext(Dispatchers.IO) {
                     // Nostr/DHT: серверного gist нет — только локальная очистка секретов
-                    prefs.deleteChatSecrets(chat.gistId)
+                    prefs.deleteChatSecrets(chat.chatId)
                     db.chatDao().delete(chat)
                 }
                 android.widget.Toast.makeText(

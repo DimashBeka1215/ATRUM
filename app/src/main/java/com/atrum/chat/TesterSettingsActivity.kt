@@ -41,7 +41,7 @@ class TesterSettingsActivity : SecureActivity() {
     }
 
     private fun showCrashConfirmDialog() {
-        val dialog = android.app.Dialog(this, R.style.Theme_GithubChat_Dialog)
+        val dialog = android.app.Dialog(this, R.style.Theme_AtrumChat_Dialog)
         val dialogBinding = com.atrum.chat.databinding.DialogGenericConfirmBinding.inflate(layoutInflater)
         dialog.setContentView(dialogBinding.root)
 

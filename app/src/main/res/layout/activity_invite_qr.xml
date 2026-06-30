@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg">
+
+    <com.atrum.chat.QrPatternView
+        android:id="@+id/bg_pattern"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <!-- Верхняя панель -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="10dp">
+
+            <ImageButton
+                android:id="@+id/btn_back"
+                android:layout_width="42dp"
+                android:layout_height="42dp"
+                android:padding="9dp"
+                android:src="@drawable/ic_arrow_back"
+                app:tint="@color/text_primary"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/cd_back" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="6dp"
+                android:text="@string/invite_qr_title"
+                android:textColor="@color/text_primary"
+                android:textSize="18sp"
+                android:fontFamily="sans-serif-medium" />
+        </LinearLayout>
+
+        <!-- Карточка с QR + аватар поверх -->
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fillViewport="true"
+            android:scrollbars="none">
+
+            <FrameLayout
+                android:id="@+id/share_card_area"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="30dp"
+                android:paddingTop="44dp"
+                android:paddingBottom="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="38dp"
+                    android:orientation="vertical"
+                    android:gravity="center_horizontal"
+                    android:background="@drawable/bg_invite_card"
+                    android:paddingHorizontal="22dp"
+                    android:paddingTop="50dp"
+                    android:paddingBottom="24dp">
+
+                    <ImageView
+                        android:id="@+id/iv_qr"
+                        android:layout_width="226dp"
+                        android:layout_height="226dp"
+                        android:padding="12dp"
+                        android:background="@drawable/bg_qr_tile"
+                        android:contentDescription="@string/invite_qr_title" />
+
+                    <TextView
+                        android:id="@+id/tv_tag"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp"
+                        android:gravity="center"
+                        android:textColor="@color/accent"
+                        android:textSize="19sp"
+                        android:letterSpacing="0.04"
+                        android:fontFamily="sans-serif-medium" />
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:background="@drawable/bg_invite_pin_chip"
+                        android:paddingHorizontal="14dp"
+                        android:paddingVertical="9dp">
+
+                        <ImageView
+                            android:layout_width="16dp"
+                            android:layout_height="16dp"
+                            android:layout_marginEnd="8dp"
+                            android:src="@drawable/ic_lock"
+                            app:tint="@color/accent"
+                            android:contentDescription="@null" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="8dp"
+                            android:text="@string/invite_qr_pin_label"
+                            android:textColor="@color/accent_light"
+                            android:textSize="12sp" />
+
+                        <TextView
+                            android:id="@+id/tv_pin"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="monospace"
+                            android:letterSpacing="0.12"
+                            android:textColor="@color/accent"
+                            android:textSize="15sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Аватар поверх верхнего края карточки -->
+                <FrameLayout
+                    android:id="@+id/avatar_wrap"
+                    android:layout_width="74dp"
+                    android:layout_height="74dp"
+                    android:layout_gravity="top|center_horizontal"
+                    android:background="@drawable/bg_avatar_placeholder">
+
+                    <TextView
+                        android:id="@+id/tv_avatar_letter"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:textColor="@color/white"
+                        android:textSize="30sp"
+                        android:fontFamily="sans-serif-medium" />
+
+                    <com.google.android.material.imageview.ShapeableImageView
+                        android:id="@+id/iv_avatar"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:scaleType="centerCrop"
+                        android:visibility="gone"
+                        app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.Circle" />
+                </FrameLayout>
+            </FrameLayout>
+        </ScrollView>
+
+        <!-- Нижний блок действий: круглые иконки (без шторки «Поделиться») -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:paddingHorizontal="20dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="26dp">
+
+            <ImageButton
+                android:id="@+id/btn_save_gallery"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:layout_marginHorizontal="9dp"
+                android:padding="14dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_download"
+                app:tint="@color/accent"
+                android:background="@drawable/bg_qr_action"
+                android:contentDescription="@string/cd_qr_save_gallery" />
+
+            <ImageButton
+                android:id="@+id/btn_copy_qr"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:layout_marginHorizontal="9dp"
+                android:padding="14dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_image_outline"
+                app:tint="@color/accent"
+                android:background="@drawable/bg_qr_action"
+                android:contentDescription="@string/cd_qr_copy_image" />
+
+            <ImageButton
+                android:id="@+id/btn_copy_text"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:layout_marginHorizontal="9dp"
+                android:padding="14dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_copy"
+                app:tint="@color/accent"
+                android:background="@drawable/bg_qr_action"
+                android:contentDescription="@string/cd_qr_copy_text" />
+
+            <ImageButton
+                android:id="@+id/btn_scan"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
+                android:layout_marginHorizontal="9dp"
+                android:padding="14dp"
+                android:scaleType="centerInside"
+                android:src="@drawable/ic_qr"
+                app:tint="@color/white"
+                android:background="@drawable/bg_qr_action_primary"
+                android:contentDescription="@string/invite_qr_scan" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

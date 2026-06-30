@@ -14,8 +14,9 @@ class AboutActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityAboutBinding
 
-    private val urlGithub        = "https://github.com/DimashBeka1215/ATRUM"
+    private val urlSource        = "https://github.com/DimashBeka1215/ATRUM"
     private val urlTelegram      = "https://t.me/Atrum_Chat"
+    private val urlTelegramChat  = "https://t.me/+4hhc8PwwNf03ZmMy"
     private val urlDonationAlerts = "https://www.donationalerts.com/r/dimash_beka1215"
     private val urlBoosty        = "https://boosty.to/sky_pill"
     private val urlBuyMeCoffee   = "https://buymeacoffee.com/atrum"
@@ -37,10 +38,12 @@ class AboutActivity : AppCompatActivity() {
 
         binding.itemDonate.setOnClickListener { showDonateDialog() }
 
-        binding.itemGithub.alpha = 1f
-        binding.itemGithub.setOnClickListener { openUrl(urlGithub) }
+        binding.itemSource.alpha = 1f
+        binding.itemSource.setOnClickListener { openUrl(urlSource) }
 
         binding.itemTelegram.setOnClickListener { openUrl(urlTelegram) }
+
+        binding.itemTelegramChat.setOnClickListener { openUrl(urlTelegramChat) }
     }
 
     // ── Тайный жест возврата скрытого входа по отпечатку ───────────────────────
@@ -67,7 +70,7 @@ class AboutActivity : AppCompatActivity() {
     }
 
     private fun showDonateDialog() {
-        val dialog = BottomSheetDialog(this, R.style.Theme_GithubChat_BottomSheet)
+        val dialog = BottomSheetDialog(this, R.style.Theme_AtrumChat_BottomSheet)
         val view = LayoutInflater.from(this).inflate(R.layout.dialog_donate, null)
 
         view.findViewById<View>(R.id.optionDonationAlerts).setOnClickListener {
@@ -89,6 +92,7 @@ class AboutActivity : AppCompatActivity() {
 
     private fun openUrl(url: String) {
         try {
+            AppLock.beginShareGrace()
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         } catch (_: Exception) {}
     }
