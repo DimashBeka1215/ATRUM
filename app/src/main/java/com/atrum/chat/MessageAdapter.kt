@@ -171,6 +171,9 @@ class MessageAdapter(
         private const val TYPE_SELF = 1
         private const val TYPE_OTHER = 2
 
+        /** payload для точечного апдейта кольца прогресса заливки (без ребайнда фото). */
+        val PAYLOAD_PROGRESS = Any()
+
         /** Сколько сообщений показываем при открытии чата (нижнее «окно»). */
         private const val INITIAL_WINDOW = 40
         /** Сколько старых сообщений подгружаем за один шаг при перемотке вверх. */
@@ -213,12 +216,45 @@ class MessageAdapter(
      */
     private var windowSize = INITIAL_WINDOW
 
+
+    /** true — списки отличаются ТОЛЬКО полями прогресса заливки фото (те же сообщения). */
+    private fun isProgressOnlyDelta(a: List<Message>, b: List<Message>): Boolean {
+        if (a.size != b.size || a.isEmpty()) return false
+        var anyProgress = false
+        for (i in a.indices) {
+            val x = a[i]; val y = b[i]
+            if (x.imageUploadIndex != y.imageUploadIndex || x.imageUploadPct != y.imageUploadPct) {
+                anyProgress = true
+                if (x.copy(imageUploadIndex = y.imageUploadIndex, imageUploadPct = y.imageUploadPct) != y) return false
+            } else if (x != y) {
+                return false
+            }
+        }
+        return anyProgress
+    }
+
     fun submit(list: List<Message>) {
         // submit() зовётся каждый poll (~1с). Message — data class, поэтому структурное
         // сравнение списков ловит «ничего не изменилось» и пропускает полный ребинд всего
         // экрана. Это убирает периодический микрофриз в покое и рывки при печати/скролле,
         // когда новых сообщений нет. O(n) сравнение много дешевле перерисовки+layout.
         if (list == messages) return
+        // Быстрый путь: изменился ТОЛЬКО прогресс заливки фото у тех же сообщений →
+        // точечно обновляем кольцо (notifyItemChanged+payload), без полного ребайнда.
+        // Иначе фото не из кэша перезагружались бы и мигали по всему чату на каждый тик.
+        if (isProgressOnlyDelta(messages, list)) {
+            val oldEff = effectiveList()
+            messages = list
+            val newEff = effectiveList()
+            val n = minOf(oldEff.size, newEff.size)
+            for (i in 0 until n) {
+                if (oldEff[i].imageUploadIndex != newEff[i].imageUploadIndex ||
+                    oldEff[i].imageUploadPct != newEff[i].imageUploadPct) {
+                    notifyItemChanged(i, PAYLOAD_PROGRESS)
+                }
+            }
+            return
+        }
         val delta = list.size - messages.size
         // Новые сообщения приходят В КОНЕЦ (внизу). Окно считается от конца, поэтому при
         // appended-росте расширяем окно на это же число — иначе раскрытая сверху история
@@ -270,6 +306,16 @@ class MessageAdapter(
         val layoutId = if (viewType == TYPE_SELF) R.layout.item_message_self else R.layout.item_message_other
         val view = LayoutInflater.from(parent.context).inflate(layoutId, parent, false)
         return VH(view, { imageLoader }, loadScope, onCollageImageClick)
+    }
+
+    override fun onBindViewHolder(holder: VH, position: Int, payloads: MutableList<Any>) {
+        // Частичный апдейт: пришёл только прогресс заливки → обновляем ТОЛЬКО кольцо,
+        // фото не перезагружаем (иначе мелькание по чату).
+        if (payloads.isNotEmpty() && payloads.all { it === PAYLOAD_PROGRESS }) {
+            holder.bindProgressOnly(effectiveList()[position])
+            return
+        }
+        super.onBindViewHolder(holder, position, payloads)
     }
 
     override fun onBindViewHolder(holder: VH, position: Int) {
@@ -372,6 +418,9 @@ class MessageAdapter(
         private val quoteText: TextView? = itemView.findViewById(R.id.tv_quote_text)
         private val imageView: ShapeableImageView? = itemView.findViewById(R.id.iv_image)
         private val collageView: CollageLayout? = itemView.findViewById(R.id.collage_layout)
+        private val imgUploadOverlay: View? = itemView.findViewById(R.id.img_upload_overlay)
+        private val imgUploadRing: android.widget.ProgressBar? = itemView.findViewById(R.id.img_upload_ring)
+        private val imgUploadText: TextView? = itemView.findViewById(R.id.img_upload_text)
         private val lottieView: LottieAnimationView? = itemView.findViewById(R.id.lottie_sticker)
         private val webmView: WebmStickerView? = itemView.findViewById(R.id.webm_sticker)
         private val voiceContainer: View? = itemView.findViewById(R.id.voice_container)
@@ -385,7 +434,7 @@ class MessageAdapter(
         private val bubbleContainer: View? = itemView.findViewById(R.id.bubble_container)
 
         fun resumeSticker() {
-            lottieView?.takeIf { it.visibility == View.VISIBLE }?.resumeAnimation()
+            lottieView?.takeIf { it.visibility == View.VISIBLE && !BatteryUtils.freezeStickers(itemView.context) }?.resumeAnimation()
             webmView?.takeIf { it.visibility == View.VISIBLE }?.resume()
         }
         fun pauseSticker()  {
@@ -627,8 +676,38 @@ class MessageAdapter(
          *  - inline base64 → парсим и ставим сразу
          *  - filename/gist ref → берём из кеша, иначе ставим placeholder и грузим в фоне
          */
+        /** Точечно обновляет только кольцо прогресса заливки (фото не трогаем). */
+        fun bindProgressOnly(msg: Message) {
+            when {
+                msg.isMultiImage && collageView != null -> {
+                    for (i in 0 until collageView.childCount) {
+                        (collageView.getChildAt(i) as? CollageCell)?.setUploadProgress(
+                            if (msg.isSelf && msg.isPending && msg.imageUploadIndex == i) msg.imageUploadPct else -1
+                        )
+                    }
+                }
+                msg.isImage -> {
+                    if (msg.isSelf && msg.isPending && msg.imageUploadIndex == 0 && msg.imageUploadPct in 0..99) {
+                        imgUploadOverlay?.visibility = View.VISIBLE
+                        imgUploadRing?.progress = msg.imageUploadPct
+                        imgUploadText?.text = "${msg.imageUploadPct}%"
+                    } else {
+                        imgUploadOverlay?.visibility = View.GONE
+                    }
+                }
+            }
+        }
+
         private fun bindImage(msg: Message, image: ShapeableImageView) {
             image.visibility = View.VISIBLE
+            // Оверлей прогресса заливки одиночного фото (у отправителя, пока pending).
+            if (msg.isSelf && msg.isPending && msg.imageUploadIndex == 0 && msg.imageUploadPct in 0..99) {
+                imgUploadOverlay?.visibility = View.VISIBLE
+                imgUploadRing?.progress = msg.imageUploadPct
+                imgUploadText?.text = "${msg.imageUploadPct}%"
+            } else {
+                imgUploadOverlay?.visibility = View.GONE
+            }
 
             // 1. Inline base64 (старый формат + оптимистичное только что отправленное фото)
             if (msg.imageBase64 != null) {
@@ -979,7 +1058,8 @@ class MessageAdapter(
             // Иначе notifyDataSetChanged (например при отправке стикера) перебиндивает всё
             // и анимированные стикеры мигают/перезагружаются.
             if (lottie.tag == fileName && lottie.composition != null) {
-                if (!lottie.isAnimating) lottie.resumeAnimation()
+                if (BatteryUtils.freezeStickers(itemView.context)) lottie.pauseAnimation()
+                else if (!lottie.isAnimating) lottie.resumeAnimation()
                 return
             }
             lottie.visibility = View.VISIBLE
@@ -1009,7 +1089,7 @@ class MessageAdapter(
                             lottie.repeatCount = com.airbnb.lottie.LottieDrawable.INFINITE
                             lottie.setRenderMode(RenderMode.HARDWARE)
                             lottie.setSafeMode(false)
-                            lottie.playAnimation()
+                            if (BatteryUtils.freezeStickers(itemView.context)) lottie.progress = 0f else lottie.playAnimation()
                         }
                         return@launch
                     }
@@ -1039,7 +1119,7 @@ class MessageAdapter(
                         lottie.repeatCount = com.airbnb.lottie.LottieDrawable.INFINITE
                         lottie.setRenderMode(RenderMode.HARDWARE)
                         lottie.setSafeMode(false)
-                        lottie.playAnimation()
+                        if (BatteryUtils.freezeStickers(itemView.context)) lottie.progress = 0f else lottie.playAnimation()
                     } else if (lottie.tag == fileName && cachedBmp == null) {
                         lottie.visibility = View.GONE
                     }
@@ -1106,6 +1186,7 @@ class MessageAdapter(
          * в кеш и запускает циклическое воспроизведение. Первый кадр — заглушка/фоллбэк.
          */
         private fun bindWebmSticker(msg: Message, webm: WebmStickerView) {
+            webm.animate = !BatteryUtils.freezeStickers(itemView.context)
             val fileName = msg.imageFileName ?: return
             // Контент/кадры — по общей ссылке (новый формат: после '|'; старый: имя файла),
             // поэтому кеш и декод переиспользуются между всеми сообщениями с тем же стикером.
@@ -1191,6 +1272,13 @@ class MessageAdapter(
 
             cells.forEach { collage.addView(it) }
             collage.aspectRatios = ratios
+
+            // Круг заливки только на ТЕКУЩЕЙ загружаемой ячейке (не возвращается назад).
+            cells.forEachIndexed { i, c ->
+                c.setUploadProgress(
+                    if (msg.isSelf && msg.isPending && msg.imageUploadIndex == i) msg.imageUploadPct else -1
+                )
+            }
 
             val loader = getImageLoader()
             val scope  = loadScope

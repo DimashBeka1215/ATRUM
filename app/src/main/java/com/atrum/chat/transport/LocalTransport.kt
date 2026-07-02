@@ -48,7 +48,11 @@ class LocalTransport(
     override fun touchChatContentHint() {}
     override fun updateChatContentHint(content: String) {}
 
-    override suspend fun appendLine(encryptedLine: String, extraFiles: Map<String, String>) {
+    override suspend fun appendLine(
+        encryptedLine: String,
+        extraFiles: Map<String, String>,
+        onFileProgress: ((fileName: String, current: Int, total: Int) -> Unit)?
+    ) {
         localContent = if (localContent.isEmpty()) encryptedLine
                        else "$localContent\n$encryptedLine"
         saveToDisk()

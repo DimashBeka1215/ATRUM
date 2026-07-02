@@ -158,6 +158,21 @@ class Prefs(private val context: Context) {
         get() = prefs.getInt(KEY_PUSH_TOTAL, 0)
         set(v) = prefs.edit().putInt(KEY_PUSH_TOTAL, v).apply()
 
+    /** Показывали ли уже экран-предупреждение про экономию батареи (только 1 раз). */
+    var batteryHintShown: Boolean
+        get() = prefs.getBoolean(KEY_BATTERY_HINT, false)
+        set(v) = prefs.edit().putBoolean(KEY_BATTERY_HINT, v).apply()
+
+    /** Показывали ли уже окно-предупреждение о root-правах (только 1 раз). */
+    var rootWarningShown: Boolean
+        get() = prefs.getBoolean(KEY_ROOT_WARN, false)
+        set(v) = prefs.edit().putBoolean(KEY_ROOT_WARN, v).apply()
+
+    /** «Запомнить»: анимировать стикеры при низком заряде всегда. */
+    var lowBattAnimate: Boolean
+        get() = prefs.getBoolean(KEY_LOWBATT_ANIM, false)
+        set(v) = prefs.edit().putBoolean(KEY_LOWBATT_ANIM, v).apply()
+
     /**
      * Пользователь при первом включении отказался от входа по отпечатку → функция удалена
      * НАВСЕГДА: раздел в настройках скрыт, разблокировка по отпечатку отключена. Вернуть
@@ -685,6 +700,9 @@ class Prefs(private val context: Context) {
         private const val KEY_BIOMETRIC = "biometric_enabled"
         private const val KEY_PUSH_ENABLED = "push_enabled"
         private const val KEY_PUSH_TOTAL = "push_notified_total"
+        private const val KEY_BATTERY_HINT = "battery_hint_shown"
+        private const val KEY_ROOT_WARN = "root_warning_shown"
+        private const val KEY_LOWBATT_ANIM = "low_batt_animate"
         private const val KEY_BIOMETRIC_REMOVED = "biometric_removed"
         private const val KEY_BIOMETRIC_CHOICE = "biometric_choice_made"
         private const val KEY_BIOMETRIC_HIDDEN = "biometric_hidden"

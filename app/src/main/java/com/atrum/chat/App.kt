@@ -55,10 +55,14 @@ class App : Application() {
         }
 
         val prefs = Prefs(this)
+        BatteryUtils.animatePersistOverride = prefs.lowBattAnimate
         // Migrate chat secrets from plaintext Room DB to EncryptedSharedPreferences
         // before the DB migration zeroes them out (MIGRATION_9_10).
         migrateChatSecretsToPrefs(prefs)
-        if (prefs.pushEnabled) MessageWatchService.start(this)
+        if (prefs.pushEnabled) {
+            MessageWatchService.start(this)
+            PushCatchupWorker.schedule(this)
+        }
         AppCompatDelegate.setDefaultNightMode(modeFromTheme(prefs.appTheme))
         val lang = prefs.appLanguage
         AppCompatDelegate.setApplicationLocales(

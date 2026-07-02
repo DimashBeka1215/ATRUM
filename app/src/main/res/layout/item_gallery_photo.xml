@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ячейка сетки галереи. Квадрат обеспечивает SquareFrameLayout (высота = ширине),
+     ширину задаёт GridLayoutManager по колонке — ровное замощение без серых зазоров. -->
+<com.atrum.chat.SquareFrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:padding="1dp">
+
+    <ImageView
+        android:id="@+id/gp_img"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
+        android:background="@color/surface_elevated"
+        android:contentDescription="@null" />
+
+    <!-- Акцентная рамка выбранной ячейки -->
+    <View
+        android:id="@+id/gp_ring"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/bg_gallery_sel_ring"
+        android:visibility="gone" />
+
+    <!-- Кружок номера выбора -->
+    <TextView
+        android:id="@+id/gp_badge"
+        android:layout_width="22dp"
+        android:layout_height="22dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="6dp"
+        android:gravity="center"
+        android:textColor="@color/white"
+        android:textSize="12sp"
+        android:fontFamily="sans-serif-medium"
+        android:background="@drawable/bg_gallery_badge_off" />
+</com.atrum.chat.SquareFrameLayout>

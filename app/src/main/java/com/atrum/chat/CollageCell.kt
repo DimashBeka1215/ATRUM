@@ -9,9 +9,11 @@ import android.graphics.drawable.GradientDrawable
 import android.util.AttributeSet
 import android.view.Gravity
 import android.view.animation.OvershootInterpolator
+import android.graphics.Typeface
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.ProgressBar
+import android.widget.TextView
 import androidx.core.content.ContextCompat
 import com.google.android.material.imageview.ShapeableImageView
 import com.google.android.material.shape.ShapeAppearanceModel
@@ -41,6 +43,11 @@ class CollageCell @JvmOverloads constructor(
 
     /** Зелёный круг с галочкой — анимация подтверждения загрузки. */
     private val doneCircle: FrameLayout
+
+    /** Слой прогресса заливки ПОВЕРХ фото ячейки (тёмная плёнка + кольцо + проценты). */
+    private val uploadOverlay: FrameLayout
+    private val uploadRing: ProgressBar
+    private val uploadText: TextView
 
     init {
         val dp = context.resources.displayMetrics.density
@@ -94,8 +101,48 @@ class CollageCell @JvmOverloads constructor(
         )
         addView(doneCircle)
 
+        // ── Оверлей прогресса заливки (своё фото при отправке) ──────────────────
+        val ringSize = (48 * dp).toInt()
+        uploadRing = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
+            layoutParams = LayoutParams(ringSize, ringSize).also { it.gravity = Gravity.CENTER }
+            isIndeterminate = false
+            max = 100
+            progress = 0
+            progressDrawable = ContextCompat.getDrawable(context, R.drawable.bg_voice_ring)
+            background = null
+        }
+        uploadText = TextView(context).apply {
+            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
+                .also { it.gravity = Gravity.CENTER }
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            setTypeface(typeface, Typeface.BOLD)
+        }
+        uploadOverlay = FrameLayout(context).apply {
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+            setBackgroundColor(0x66000000)
+            visibility = GONE
+            addView(uploadRing)
+            addView(uploadText)
+        }
+        addView(uploadOverlay)
+
         // Начальный фон — «поверхность»
         setBackgroundColor(ContextCompat.getColor(context, R.color.surface_elevated))
+    }
+
+    /**
+     * Прогресс заливки именно ЭТОЙ ячейки (0..99 → кольцо с процентами поверх фото;
+     * иначе оверлей скрыт). Фото под оверлеем видно сразу (своё, из кэша).
+     */
+    fun setUploadProgress(pct: Int) {
+        if (pct in 0..99) {
+            uploadOverlay.visibility = VISIBLE
+            uploadRing.progress = pct
+            uploadText.text = "$pct%"
+        } else {
+            uploadOverlay.visibility = GONE
+        }
     }
 
     // ── Внешний API ────────────────────────────────────────────────────────────

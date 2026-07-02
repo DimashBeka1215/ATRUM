@@ -95,7 +95,11 @@ class BluetoothTransport(
     override fun updateChatContentHint(content: String) {}
     override fun touchChatContentHint() {}
 
-    override suspend fun appendLine(encryptedLine: String, extraFiles: Map<String, String>) {
+    override suspend fun appendLine(
+        encryptedLine: String,
+        extraFiles: Map<String, String>,
+        onFileProgress: ((fileName: String, current: Int, total: Int) -> Unit)?
+    ) {
         appendLocal(encryptedLine)
         extraFiles.forEach { (name, content) -> saveFile(name, content) }
         // Отправляем строку собеседнику по живому каналу (если есть).

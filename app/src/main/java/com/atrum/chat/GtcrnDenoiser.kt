@@ -46,6 +46,25 @@ class GtcrnDenoiser private constructor(private val impl: OfflineSpeechDenoiser)
             return instance
         }
 
+        /**
+         * Как [shared], но ЖДЁТ окончания фоновой загрузки до [timeoutMs] (модель ~10 МБ,
+         * грузится секунды). Вызывать ТОЛЬКО из фонового потока (например при финализации
+         * записи голоса) — там блокировка допустима. Возвращает инстанс или null, если
+         * загрузка не удалась (failed) либо не успела за таймаут.
+         */
+        fun awaitShared(context: Context, timeoutMs: Long = 6000L): GtcrnDenoiser? {
+            instance?.let { return it }
+            if (failed) return null
+            preload(context)
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (System.currentTimeMillis() < deadline) {
+                instance?.let { return it }
+                if (failed) return null
+                try { Thread.sleep(50) } catch (_: InterruptedException) { return instance }
+            }
+            return instance
+        }
+
         /** Запускает фоновую загрузку модели один раз (вызывать из App.onCreate). */
         fun preload(context: Context) {
             if (instance != null || failed) return

@@ -230,7 +230,11 @@ class NostrTransport(
     // ─── запись ──────────────────────────────────────────────────────────────────
 
     /** Публикует одну зашифрованную строку как kind:1 + дополнительные файлы (паритет с Legacy). */
-    override suspend fun appendLine(encryptedLine: String, extraFiles: Map<String, String>) {
+    override suspend fun appendLine(
+        encryptedLine: String,
+        extraFiles: Map<String, String>,
+        onFileProgress: ((fileName: String, current: Int, total: Int) -> Unit)?
+    ) {
         // ⚠️ ПОРЯДОК ВАЖЕН: сначала заливаем КОНТЕНТ (фото/голос — чанки+манифест),
         // и только ПОТОМ публикуем строку-анонс (kind:1). Иначе получатель, опросив
         // реле раз в ~3с, видит сообщение РАНЬШЕ, чем его медиа долито (каждый чанк —
@@ -238,7 +242,14 @@ class NostrTransport(
         // пустой пузырёк, а негативный кэш (битые загрузки) закрепляет пустоту.
         // Контент-события (kind FILE_KIND) подтянутся тем же опросом, что и строка,
         // и сразу осядут в mediaCache. Касается и фото, и голосовых (один и тот же путь).
-        for ((name, content) in extraFiles) saveFile(name, content)
+        for ((name, content) in extraFiles) {
+            if (content.length > NOSTR_CHUNK_CHARS) {
+                saveFileChunked(name, content, chatPassword) { cur, tot -> onFileProgress?.invoke(name, cur, tot) }
+            } else {
+                saveFile(name, content)
+                onFileProgress?.invoke(name, 1, 1)
+            }
+        }
 
         val ev = NostrEvent.create(
             privkeyBytes = privkey,
@@ -427,6 +438,14 @@ class NostrTransport(
 
     /** Набор реле, для которых сейчас ВЫПОЛНЯЕТСЯ попытка подписки (защита от шторма). */
     private val connectingRelays = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    /** Стрим сообщений жив, если ВСЕ активные реле подписаны на наш message-sub. */
+    override fun isWatchHealthy(): Boolean {
+        val subId = "atrumw_$channelId"
+        val relays = activeRelays()
+        if (relays.isEmpty()) return false
+        return relays.all { runCatching { NostrRelayPool.hasSub(it, subId, useTor) }.getOrDefault(false) }
+    }
 
     override fun watchMessages(onNew: () -> Unit): AutoCloseable {
         val subId = "atrumw_$channelId"

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Фон шторки-галереи: непрозрачная поверхность из токена (корректна в светлой/тёмной),
+     скруглены только верхние углы. Это НЕ чат-экран — glass здесь не применяется. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/surface" />
+    <corners
+        android:topLeftRadius="22dp"
+        android:topRightRadius="22dp" />
+</shape>

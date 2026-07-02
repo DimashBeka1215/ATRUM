@@ -64,6 +64,15 @@ class ChatStore {
         }
     }
 
+    /** Прогресс заливки фото у pending-сообщения: индекс текущей картинки + процент. */
+    fun updateImageProgress(encryptedLine: String, index: Int, pct: Int) {
+        val m = pendingByRaw[encryptedLine] ?: return
+        if (m.imageUploadIndex != index || m.imageUploadPct != pct) {
+            pendingByRaw[encryptedLine] = m.copy(imageUploadIndex = index, imageUploadPct = pct)
+            emit()
+        }
+    }
+
     /** Убирает оптимистичное сообщение (например, запись оказалась слишком короткой). */
     fun dropPending(encryptedLine: String) {
         if (pendingByRaw.remove(encryptedLine) != null) emit()

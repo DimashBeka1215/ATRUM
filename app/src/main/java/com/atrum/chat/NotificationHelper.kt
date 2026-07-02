@@ -21,7 +21,7 @@ import androidx.core.app.NotificationManagerCompat
  */
 object NotificationHelper {
 
-    const val CH_MESSAGES = "atrum_messages"
+    const val CH_MESSAGES = "atrum_messages_v2"
     const val CH_SERVICE  = "atrum_service"
 
     /** Постоянное уведомление foreground-сервиса. */
@@ -33,12 +33,16 @@ object NotificationHelper {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
+        // Старый DEFAULT-канал (без heads-up) удаляем: важность существующего канала
+        // изменить нельзя, поэтому уведомления живут в новом канале с IMPORTANCE_HIGH.
+        runCatching { nm.deleteNotificationChannel("atrum_messages") }
+
         if (nm.getNotificationChannel(CH_MESSAGES) == null) {
             nm.createNotificationChannel(
                 NotificationChannel(
                     CH_MESSAGES,
                     ctx.getString(R.string.push_channel_messages),
-                    NotificationManager.IMPORTANCE_DEFAULT
+                    NotificationManager.IMPORTANCE_HIGH
                 ).apply {
                     description = ctx.getString(R.string.push_channel_messages_desc)
                     setShowBadge(true)
@@ -101,7 +105,7 @@ object NotificationHelper {
             .setAutoCancel(true)
             .setOnlyAlertOnce(!alert)
             .setSilent(!alert)
-            .setPriority(if (alert) NotificationCompat.PRIORITY_DEFAULT else NotificationCompat.PRIORITY_LOW)
+            .setPriority(if (alert) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_LOW)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             // Намеренно НЕ задаём setContentIntent → нажатие не открывает чат.
             .build()

@@ -199,19 +199,64 @@
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp" />
 
-                <TextView
-                    android:id="@+id/tv_warning_action"
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:id="@+id/warning_action_row"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="5dp"
-                    android:text="@string/btn_update_token"
-                    android:textColor="@color/accent"
-                    android:textSize="12sp"
-                    android:fontFamily="sans-serif-medium"
-                    android:background="@drawable/bg_button_outline_neon"
-                    android:visibility="gone" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="8dp">
+
+                    <LinearLayout
+                        android:id="@+id/warning_remember"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:paddingHorizontal="12dp"
+                        android:paddingVertical="5dp"
+                        android:background="@drawable/bg_remember_chip_off"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:visibility="gone">
+
+                        <ImageView
+                            android:id="@+id/warning_remember_check"
+                            android:layout_width="14dp"
+                            android:layout_height="14dp"
+                            android:layout_marginEnd="6dp"
+                            android:src="@drawable/ic_check"
+                            android:contentDescription="@null"
+                            app:tint="@color/warning"
+                            android:visibility="gone" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/remember_choice"
+                            android:textColor="@color/warning"
+                            android:textSize="12sp"
+                            android:fontFamily="sans-serif-medium" />
+                    </LinearLayout>
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
+
+                    <TextView
+                        android:id="@+id/tv_warning_action"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:paddingHorizontal="10dp"
+                        android:paddingVertical="5dp"
+                        android:text="@string/btn_update_token"
+                        android:textColor="@color/accent"
+                        android:textSize="12sp"
+                        android:fontFamily="sans-serif-medium"
+                        android:background="@drawable/bg_button_outline_neon"
+                        android:visibility="gone" />
+                </LinearLayout>
             </LinearLayout>
         </LinearLayout>
 
@@ -484,6 +529,16 @@
                     android:textSize="12sp" />
             </LinearLayout>
         </LinearLayout>
+
+        <!-- Панель выбранных фото перед отправкой -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/staged_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="16dp"
+            android:paddingTop="6dp"
+            android:clipToPadding="false"
+            android:visibility="gone" />
 
         <!-- ═══ Input area — pill container ═══ -->
         <LinearLayout

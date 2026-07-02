@@ -140,7 +140,8 @@ object CryptoHelper {
             .withIterations(ARGON2_ITER)
             .withParallelism(parallelism)
             .build()
-        return runArgon2(params, password.toByteArray(Charsets.UTF_8))
+        val pwBytes = password.toByteArray(Charsets.UTF_8)
+        try { return runArgon2(params, pwBytes) } finally { pwBytes.fill(0) } // стираем байтовую копию пароля
     }
 
     // ─── Запуск Argon2id с ограничением параллелизма по памяти ───────────────
@@ -775,7 +776,8 @@ object CryptoHelper {
             .withParallelism(parallelism)
             .build()
 
-        return runArgon2(params, password.toByteArray(Charsets.UTF_8))
+        val pwBytes = password.toByteArray(Charsets.UTF_8)
+        try { return runArgon2(params, pwBytes) } finally { pwBytes.fill(0) } // стираем байтовую копию пароля
     }
 
     /**
@@ -790,7 +792,8 @@ object CryptoHelper {
 
             val salt = raw.copyOfRange(V1_MAGIC.length, V1_MAGIC.length + V1_SALT_LEN)
             val ct   = raw.copyOfRange(V1_MAGIC.length + V1_SALT_LEN, raw.size)
-            val (key, iv) = evpBytesToKey(password.toByteArray(Charsets.UTF_8), salt)
+            val pwBytes = password.toByteArray(Charsets.UTF_8)
+            val (key, iv) = try { evpBytesToKey(pwBytes, salt) } finally { pwBytes.fill(0) } // стираем копию пароля
             val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
             String(cipher.doFinal(ct), Charsets.UTF_8)
@@ -825,7 +828,7 @@ object CryptoHelper {
      */
     private fun buildCacheKey(chatId: String, password: String): String {
         val data = "$chatId:$password".toByteArray(Charsets.UTF_8)
-        val hash = MessageDigest.getInstance("SHA-256").digest(data)
+        val hash = try { MessageDigest.getInstance("SHA-256").digest(data) } finally { data.fill(0) } // стираем копию пароля
         return hash.joinToString("") { "%02x".format(it) }
     }
 }

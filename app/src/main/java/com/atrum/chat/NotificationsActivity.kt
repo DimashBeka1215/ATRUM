@@ -44,6 +44,7 @@ class NotificationsActivity : SecureActivity() {
             prefs.pushEnabled = false
             binding.switchPush.isChecked = false
             MessageWatchService.stop(this)
+            PushCatchupWorker.cancel(this)
             return
         }
         // Android 13+ требует runtime-разрешение на показ уведомлений.
@@ -61,5 +62,11 @@ class NotificationsActivity : SecureActivity() {
         prefs.pushEnabled = true
         binding.switchPush.isChecked = true
         MessageWatchService.start(this)
+        PushCatchupWorker.schedule(this)
+        // Первый раз — показываем полноэкранное предупреждение про батарею; дальше
+        // (если экран уже видели) — сразу системный запрос.
+        if (!BatteryOptimizationActivity.showIfNeeded(this)) {
+            BatteryOptimizationActivity.requestIgnoreBatteryOptimizations(this)
+        }
     }
 }

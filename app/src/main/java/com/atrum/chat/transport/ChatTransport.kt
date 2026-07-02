@@ -98,6 +98,14 @@ interface ChatTransport {
     fun watchProfiles(onProfile: (String) -> Unit): AutoCloseable = AutoCloseable { }
 
     /**
+     * true — потоковая подписка на новые сообщения сейчас жива (все активные реле
+     * подписаны). Фоновый сервис пушей использует это, чтобы НЕ делать дорогую сетевую
+     * сверку, пока стрим гарантированно доставляет — экономия батареи. По умолчанию true
+     * (транспорты без стрима не нуждаются в этом механизме).
+     */
+    fun isWatchHealthy(): Boolean = true
+
+    /**
      * Загружает содержимое chat.txt только если оно изменилось с последнего запроса.
      * Возвращает null если контент не изменился (HTTP 304 Not Modified) — UI не нужно обновлять.
      *
@@ -166,7 +174,11 @@ interface ChatTransport {
      * @param extraFiles Дополнительные файлы для сохранения в том же PATCH-запросе
      *                   (только для LegacyTransport, атомарно с appendLine)
      */
-    suspend fun appendLine(encryptedLine: String, extraFiles: Map<String, String> = emptyMap())
+    suspend fun appendLine(
+        encryptedLine: String,
+        extraFiles: Map<String, String> = emptyMap(),
+        onFileProgress: ((fileName: String, current: Int, total: Int) -> Unit)? = null
+    )
 
     /** Перезаписывает именованный файл (profiles.txt, img_*.txt и т.д.). */
     suspend fun saveFile(name: String, content: String)

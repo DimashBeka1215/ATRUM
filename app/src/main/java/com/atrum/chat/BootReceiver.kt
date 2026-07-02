@@ -8,7 +8,10 @@ import android.content.Intent
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
-            if (Prefs(context).pushEnabled) MessageWatchService.start(context)
+            if (Prefs(context).pushEnabled) {
+                MessageWatchService.start(context)
+                PushCatchupWorker.schedule(context)
+            }
         }
     }
 }

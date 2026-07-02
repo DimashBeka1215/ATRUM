@@ -35,6 +35,14 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- Сохранение QR в галерею на Android 9 и ниже (на 10+ — через MediaStore без разрешения) -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+
+    <!-- Своя галерея выбора фото (читает MediaStore). Приватность: на Android 14+
+         поддерживаем ЧАСТИЧНЫЙ доступ (пользователь сам отмечает видимые фото);
+         при отказе — откат на системный выбор без каких-либо разрешений. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <application
@@ -99,6 +107,10 @@
             android:name=".NotificationsActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".BatteryOptimizationActivity"
+            android:exported="false" />
 
         <activity
             android:name=".CreditsActivity"

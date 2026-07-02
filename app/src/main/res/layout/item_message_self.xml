@@ -96,17 +96,51 @@
             android:layout_marginBottom="4dp"/>
 
                 <!-- Одиночная картинка -->
-        <com.google.android.material.imageview.ShapeableImageView
-            android:id="@+id/iv_image"
-            android:layout_width="260dp"
+        <FrameLayout
+            android:id="@+id/image_container"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:adjustViewBounds="true"
-            android:scaleType="centerCrop"
-            android:maxHeight="320dp"
-            android:contentDescription="@null"
-            android:visibility="gone"
-            android:layout_marginBottom="4dp"
-            app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.RoundedImage"/>
+            android:layout_marginBottom="4dp">
+
+            <com.google.android.material.imageview.ShapeableImageView
+                android:id="@+id/iv_image"
+                android:layout_width="260dp"
+                android:layout_height="wrap_content"
+                android:adjustViewBounds="true"
+                android:scaleType="centerCrop"
+                android:maxHeight="320dp"
+                android:contentDescription="@null"
+                android:visibility="gone"
+                app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.RoundedImage"/>
+
+            <FrameLayout
+                android:id="@+id/img_upload_overlay"
+                android:layout_width="260dp"
+                android:layout_height="match_parent"
+                android:background="#73000000"
+                android:visibility="gone">
+
+                <ProgressBar
+                    android:id="@+id/img_upload_ring"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="52dp"
+                    android:layout_height="52dp"
+                    android:layout_gravity="center"
+                    android:max="100"
+                    android:progress="0"
+                    android:indeterminateOnly="false"
+                    android:progressDrawable="@drawable/bg_voice_ring"/>
+
+                <TextView
+                    android:id="@+id/img_upload_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:textColor="@color/white"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif-medium"/>
+            </FrameLayout>
+        </FrameLayout>
 
         <!-- Коллаж из нескольких изображений -->
         <com.atrum.chat.CollageLayout

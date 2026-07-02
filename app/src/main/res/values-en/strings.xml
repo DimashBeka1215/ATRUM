@@ -851,4 +851,30 @@
     <string name="tester_pwd_wrong">Access denied</string>
     <string name="sticker_show_all_format">Show all (%1$d)</string>
     <string name="media_diag_copied_fmt">Reason copied: %1$s</string>
+    <!-- Battery optimization warning screen (first time notifications are enabled) -->
+    <string name="battery_hint_title">Allow background activity</string>
+    <string name="battery_hint_body">For notifications to arrive reliably and on time, turn off battery optimization for Atrum. Otherwise the system puts the app to sleep — and messages arrive late or not at all.</string>
+    <string name="battery_hint_reassure">This barely affects your battery — Atrum runs lean and doesn\'t waste charge.</string>
+    <string name="battery_hint_btn_disable">Turn off optimization</string>
+    <string name="battery_hint_btn_later">Later</string>
+    <!-- Photo picker gallery -->
+    <string name="gallery_title">Recent</string>
+    <string name="gallery_empty">No photos</string>
+    <string name="gallery_pick_more">Select more</string>
+    <string name="gallery_close_cd">Close</string>
+    <string name="gallery_send_n">Send (%1$d)</string>
+    <string name="gallery_remove_cd">Remove photo</string>
+    <string name="gallery_add_cd">Add more</string>
+    <string name="gallery_perm_needed">Allow photo access to pick images</string>
+    <!-- Root warning dialog -->
+    <string name="root_warn_title">Root access detected</string>
+    <string name="root_warn_xda">XDA Developers</string>
+    <string name="root_warn_4pda">4PDA</string>
+    <string name="root_warn_ok">Got it</string>
+    <string name="root_warn_body">Root access (superuser) was detected on this device.\n\nWhy this can be risky:\n• Apps with root get full system access, bypassing the Android sandbox — malware could read your data, keys and messages straight from memory, even with encryption.\n• Root weakens the protection of stored chat passwords.\n• Infected root managers and modules can intercept input.\n\nPrecautions:\n• Use only trusted firmware and software — for example from %1$s and %2$s.\n• Do not grant root to questionable apps.\n• Keep Magisk updated and revoke unneeded permissions.\n\nThis is just a reminder — it does not affect how Atrum works, all features are available as usual.</string>
+    <!-- Banner: sticker animation off on low battery -->
+    <string name="warn_sticker_title">Sticker animation off</string>
+    <string name="warn_sticker_message">Saving battery (≤15%). Stickers show the first frame.</string>
+    <string name="btn_enable_anim">Enable</string>
+    <string name="remember_choice">Remember</string>
 </resources>

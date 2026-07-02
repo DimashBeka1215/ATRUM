@@ -115,10 +115,11 @@ class ChatActivity : SecureActivity() {
     // ── Warning banner ────────────────────────────────────────────────────────
 
     /** Типы мягких предупреждений. Каждый имеет свой текст, но одинаковый визуал. */
-    private enum class WarningType { TOKEN, RATE_LIMIT, NETWORK, FORWARD_SECRECY, TOR }
+    private enum class WarningType { TOKEN, RATE_LIMIT, NETWORK, FORWARD_SECRECY, TOR, STICKER_ANIM }
 
     /** Текущий активный тип предупреждения, null если баннер скрыт. */
     private var activeWarning: WarningType? = null
+    private var rememberChecked = false
 
     // ── Loading state ─────────────────────────────────────────────────────────
 
@@ -293,7 +294,142 @@ class ChatActivity : SecureActivity() {
                 Toast.LENGTH_SHORT).show()
             uris.take(MAX_COLLAGE_IMAGES)
         } else uris
-        if (limited.size == 1) sendImage(limited[0]) else sendImages(limited)
+        addStaged(limited)
+    }
+
+    // ── Панель выбранных фото (staged bar над вводом) ───────────────────────────
+    private val stagedUris = ArrayList<Uri>()
+    private var stagedAdapter: StagedAdapter? = null
+
+    private val mediaPerms: Array<String>
+        get() = when {
+            android.os.Build.VERSION.SDK_INT >= 34 -> arrayOf(
+                android.Manifest.permission.READ_MEDIA_IMAGES,
+                android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+            android.os.Build.VERSION.SDK_INT >= 33 -> arrayOf(android.Manifest.permission.READ_MEDIA_IMAGES)
+            else -> arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+
+    private fun hasMediaAccess(): Boolean =
+        mediaPerms.any {
+            ContextCompat.checkSelfPermission(this, it) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+
+    private val mediaPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        if (result.values.any { it }) openGalleryForStaging()
+        else Toast.makeText(this, R.string.gallery_perm_needed, Toast.LENGTH_SHORT).show()
+    }
+
+    /** Скрепка / плитка «+»: проверяем доступ к фото, потом открываем галерею. */
+    private fun openGalleryChecked() {
+        AppLock.beginShareGrace()
+        if (hasMediaAccess()) openGalleryForStaging()
+        else mediaPermLauncher.launch(mediaPerms)
+    }
+
+    private fun openGalleryForStaging() {
+        if (stagedUris.size >= MAX_COLLAGE_IMAGES) {
+            Toast.makeText(this, getString(R.string.error_too_many_images, MAX_COLLAGE_IMAGES),
+                Toast.LENGTH_SHORT).show()
+            return
+        }
+        GalleryPicker(
+            activity = this,
+            scope = lifecycleScope,
+            maxSelection = (MAX_COLLAGE_IMAGES - stagedUris.size).coerceAtLeast(1),
+            onDone = { uris -> addStaged(uris) },
+            onPickMore = { pickImages.launch("image/*") }
+        ).show(showPickMore = false)
+    }
+
+    private fun setupStagedBar() {
+        val a = StagedAdapter()
+        stagedAdapter = a
+        binding.stagedBar.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(
+            this, androidx.recyclerview.widget.LinearLayoutManager.HORIZONTAL, false)
+        binding.stagedBar.adapter = a
+        binding.stagedBar.itemAnimator = null
+    }
+
+    private fun addStaged(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        val before = stagedUris.size
+        for (uri in uris) {
+            if (stagedUris.size >= MAX_COLLAGE_IMAGES) break   // жёсткий лимит
+            if (uri in stagedUris) continue                     // без дублей
+            stagedUris.add(uri)
+        }
+        // Что-то не влезло (достигнут лимит) → короткий тост.
+        if (stagedUris.size - before < uris.size) {
+            Toast.makeText(this, getString(R.string.error_too_many_images, MAX_COLLAGE_IMAGES),
+                Toast.LENGTH_SHORT).show()
+        }
+        stagedAdapter?.notifyDataSetChanged()
+        refreshStagedBar()
+    }
+
+    private fun removeStaged(pos: Int) {
+        if (pos in stagedUris.indices) {
+            stagedUris.removeAt(pos)
+            stagedAdapter?.notifyDataSetChanged()
+            refreshStagedBar()
+        }
+    }
+
+    private fun clearStaged() {
+        if (stagedUris.isEmpty()) return
+        stagedUris.clear()
+        stagedAdapter?.notifyDataSetChanged()
+        refreshStagedBar()
+    }
+
+    private fun refreshStagedBar() {
+        binding.stagedBar.visibility = if (stagedUris.isEmpty()) View.GONE else View.VISIBLE
+        updateSendVoiceButtons(binding.etMessage.text.toString())
+    }
+
+    private inner class StagedAdapter :
+        androidx.recyclerview.widget.RecyclerView.Adapter<androidx.recyclerview.widget.RecyclerView.ViewHolder>() {
+        private val typePhoto = 0
+        private val typeAdd = 1
+        override fun getItemCount(): Int = stagedUris.size + 1
+        override fun getItemViewType(position: Int): Int =
+            if (position < stagedUris.size) typePhoto else typeAdd
+        override fun onCreateViewHolder(
+            parent: android.view.ViewGroup, viewType: Int
+        ): androidx.recyclerview.widget.RecyclerView.ViewHolder {
+            val inf = android.view.LayoutInflater.from(parent.context)
+            return if (viewType == typePhoto)
+                PhotoVH(inf.inflate(R.layout.item_staged, parent, false))
+            else AddVH(inf.inflate(R.layout.item_staged_add, parent, false))
+        }
+        override fun onBindViewHolder(
+            holder: androidx.recyclerview.widget.RecyclerView.ViewHolder, position: Int
+        ) {
+            if (holder is PhotoVH) holder.bind(stagedUris[position])
+        }
+        inner class PhotoVH(v: View) : androidx.recyclerview.widget.RecyclerView.ViewHolder(v) {
+            private val img: com.google.android.material.imageview.ShapeableImageView =
+                v.findViewById(R.id.staged_img)
+            private val remove: View = v.findViewById(R.id.staged_remove)
+            fun bind(uri: Uri) {
+                img.setImageDrawable(null)
+                img.tag = uri
+                lifecycleScope.launch {
+                    val bmp = withContext(Dispatchers.IO) {
+                        ImageUtils.loadAndCompress(this@ChatActivity, uri)?.let { ImageUtils.fromBase64(it) }
+                    }
+                    if (img.tag == uri) img.setImageBitmap(bmp)
+                }
+                remove.setOnClickListener { removeStaged(bindingAdapterPosition) }
+            }
+        }
+        inner class AddVH(v: View) : androidx.recyclerview.widget.RecyclerView.ViewHolder(v) {
+            init { v.setOnClickListener { openGalleryChecked() } }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -898,10 +1034,8 @@ class ChatActivity : SecureActivity() {
             binding.btnSend.visibility = View.VISIBLE
         } else {
             setupVoiceInput()
-            binding.btnAttach.setOnClickListener {
-                AppLock.beginShareGrace()
-                pickImages.launch("image/*")
-            }
+            binding.btnAttach.setOnClickListener { openGalleryChecked() }
+            setupStagedBar()
         }
         binding.btnCancelReply.setOnClickListener { clearReply() }
 
@@ -1107,6 +1241,7 @@ class ChatActivity : SecureActivity() {
     override fun onResume() {
         super.onResume()
         isInForeground = true
+        updateStickerWarning()
         // Чат снова открыт — отменяем отложенную (на 30 мин) очистку Argon2-кеша.
         if (::transport.isInitialized) CryptoHelper.cancelScheduledClear(transport.chatId)
         resumeVisibleStickers()
@@ -1893,6 +2028,14 @@ class ChatActivity : SecureActivity() {
     }
 
     private fun sendMessage() {
+        // Есть выбранные фото в баре → шлём их (с подписью из поля) и очищаем бар.
+        if (stagedUris.isNotEmpty()) {
+            if (sendManager.isPunished()) return
+            val toSend = stagedUris.toList()
+            clearStaged()
+            if (toSend.size == 1) sendImage(toSend[0]) else sendImages(toSend)
+            return
+        }
         val text = binding.etMessage.text.toString().trim()
         if (text.isEmpty()) return
 
@@ -2007,8 +2150,9 @@ class ChatActivity : SecureActivity() {
             return
         }
         val hasText = text.trim().isNotEmpty()
-        binding.btnSend.visibility = if (hasText) View.VISIBLE else View.GONE
-        binding.btnVoice.visibility = if (hasText) View.GONE else View.VISIBLE
+        val showSend = hasText || stagedUris.isNotEmpty()
+        binding.btnSend.visibility = if (showSend) View.VISIBLE else View.GONE
+        binding.btnVoice.visibility = if (showSend) View.GONE else View.VISIBLE
     }
 
     private fun hasAudioPermission(): Boolean =
@@ -2841,6 +2985,8 @@ class ChatActivity : SecureActivity() {
                     timestampMs = now,
                     imageFileName = imageFileName,
                     senderUserId = prefs.myUserId,
+                    imageUploadIndex = 0,
+                    imageUploadPct = 0,
                     isPending = true
                 )
                 chatStore.addOptimistic(pendingMsg)
@@ -2859,7 +3005,11 @@ class ChatActivity : SecureActivity() {
                             withContext(Dispatchers.IO) {
                                 transport.appendLine(
                                     encryptedLine = encryptedMessage,
-                                    extraFiles = mapOf(imageFileName to encryptedImage)
+                                    extraFiles = mapOf(imageFileName to encryptedImage),
+                                    onFileProgress = { _, cur, tot ->
+                                        val pct = if (tot > 0) (cur * 100 / tot).coerceIn(0, 99) else 0
+                                        chatStore.updateImageProgress(encryptedMessage, 0, pct)
+                                    }
                                 )
                             }
                         }
@@ -2960,6 +3110,8 @@ class ChatActivity : SecureActivity() {
                     imageFileNames = imageFileNames,
                     aspectRatios   = finalRatios,
                     senderUserId   = prefs.myUserId,
+                    imageUploadIndex = 0,
+                    imageUploadPct = 0,
                     isPending      = true
                 )
                 chatStore.addOptimistic(pendingMsg)
@@ -2987,7 +3139,14 @@ class ChatActivity : SecureActivity() {
                     withContext(Dispatchers.IO) {
                         transport.appendLine(
                             encryptedLine = encryptedMessage,
-                            extraFiles = extraFiles
+                            extraFiles = extraFiles,
+                            onFileProgress = { name, cur, tot ->
+                                val idx = imageFileNames.indexOf(name)
+                                if (idx >= 0) {
+                                    val pct = if (tot > 0) (cur * 100 / tot).coerceIn(0, 99) else 0
+                                    chatStore.updateImageProgress(encryptedMessage, idx, pct)
+                                }
+                            }
                         )
                     }
                 }
@@ -3468,6 +3627,16 @@ class ChatActivity : SecureActivity() {
         } catch (_: Exception) {}
     }
 
+    /** Плашка «анимация стикеров выключена при низком заряде» — показ/скрытие по состоянию. */
+    private fun updateStickerWarning() {
+        if (BatteryUtils.isLow(this) && !BatteryUtils.animateSessionOverride && !BatteryUtils.animatePersistOverride) {
+            if (activeWarning == null || activeWarning == WarningType.STICKER_ANIM)
+                showChatWarning(WarningType.STICKER_ANIM)
+        } else if (activeWarning == WarningType.STICKER_ANIM) {
+            hideChatWarning()
+        }
+    }
+
     private fun showChatWarning(type: WarningType) {
         if (activeWarning == type) return   // уже показан — не мелькаем
         activeWarning = type
@@ -3478,13 +3647,17 @@ class ChatActivity : SecureActivity() {
             WarningType.NETWORK         -> getString(R.string.warn_network_title)    to getString(R.string.warn_network_message)
             WarningType.FORWARD_SECRECY -> getString(R.string.warn_fs_title)        to getString(R.string.warn_fs_message)
             WarningType.TOR             -> getString(R.string.warn_tor_title)       to getString(R.string.warn_tor_message)
+            WarningType.STICKER_ANIM    -> getString(R.string.warn_sticker_title)   to getString(R.string.warn_sticker_message)
         }
         binding.tvWarningTitle.text = title
         binding.tvWarningMessage.text = message
         // Любую ошибку (кроме информационного FS) сразу кладём в буфер обмена — чтобы прислать.
-        if (type != WarningType.FORWARD_SECRECY) copyErrorToClipboard("$title — $message")
+        if (type != WarningType.FORWARD_SECRECY && type != WarningType.STICKER_ANIM) copyErrorToClipboard("$title — $message")
 
         // Для TOKEN — показываем кнопку «Обновить токен»; для остальных — скрываем.
+        binding.warningRemember.visibility = View.GONE
+        binding.tvWarningAction.setTextColor(ContextCompat.getColor(this, R.color.accent))
+        binding.tvWarningAction.setBackgroundResource(R.drawable.bg_button_outline_neon)
         when (type) {
             WarningType.TOKEN -> {
                 binding.tvWarningAction.text = getString(R.string.btn_update_token)
@@ -3496,6 +3669,32 @@ class ChatActivity : SecureActivity() {
                 binding.tvWarningAction.visibility = View.VISIBLE
                 binding.tvWarningAction.setOnClickListener {
                     TorManager.start(this)
+                    forceHideChatWarning()
+                }
+            }
+            WarningType.STICKER_ANIM -> {
+                binding.tvWarningAction.text = getString(R.string.btn_enable_anim)
+                binding.tvWarningAction.visibility = View.VISIBLE
+                binding.tvWarningAction.setTextColor(ContextCompat.getColor(this, R.color.warning))
+                binding.tvWarningAction.setBackgroundResource(R.drawable.bg_button_warning_outline)
+                // Чип «Запомнить» — тап переключает контур ↔ жёлтая заливка с галкой.
+                rememberChecked = false
+                binding.warningRemember.visibility = View.VISIBLE
+                binding.warningRemember.setBackgroundResource(R.drawable.bg_remember_chip_off)
+                binding.warningRememberCheck.visibility = View.GONE
+                binding.warningRemember.setOnClickListener {
+                    rememberChecked = !rememberChecked
+                    binding.warningRemember.setBackgroundResource(
+                        if (rememberChecked) R.drawable.bg_remember_chip_on else R.drawable.bg_remember_chip_off)
+                    binding.warningRememberCheck.visibility = if (rememberChecked) View.VISIBLE else View.GONE
+                }
+                binding.tvWarningAction.setOnClickListener {
+                    BatteryUtils.animateSessionOverride = true
+                    if (rememberChecked) {
+                        prefs.lowBattAnimate = true
+                        BatteryUtils.animatePersistOverride = true
+                    }
+                    adapter.notifyDataSetChanged()   // стикеры снова анимируются
                     forceHideChatWarning()
                 }
             }

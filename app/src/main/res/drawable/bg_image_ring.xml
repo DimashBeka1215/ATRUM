@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Кольцо прогресса загрузки фото. Трек — @color/border, заполнение — @color/accent
+     (видно и на светлой, и на тёмной теме, в отличие от белого bg_voice_ring). -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/background">
+        <shape android:shape="ring"
+            android:innerRadiusRatio="2.4"
+            android:thicknessRatio="13"
+            android:useLevel="false">
+            <solid android:color="@color/border" />
+        </shape>
+    </item>
+    <item android:id="@android:id/progress">
+        <rotate android:fromDegrees="270" android:toDegrees="270"
+            android:pivotX="50%" android:pivotY="50%">
+            <shape android:shape="ring"
+                android:innerRadiusRatio="2.4"
+                android:thicknessRatio="13"
+                android:useLevel="true">
+                <solid android:color="@color/accent" />
+            </shape>
+        </rotate>
+    </item>
+</layer-list>

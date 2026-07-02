@@ -395,12 +395,22 @@ object BleManager {
 
     // ── Приём кадров ──────────────────────────────────────────────────────────────
 
+    /** Обнуляет символы буфера приёма перед сбросом длины: setLength(0) оставляет их
+     *  в памяти StringBuilder, а через rxBuffer проходит invite-кадр с паролем чата. */
+    private fun wipeRxBuffer() {
+        for (i in 0 until rxBuffer.length) rxBuffer.setCharAt(i, '\u0000')
+        rxBuffer.setLength(0)
+    }
+
     private fun handleIncoming(bytes: ByteArray) {
         synchronized(rxBuffer) {
             rxBuffer.append(String(bytes, Charsets.UTF_8))
             var idx = rxBuffer.indexOf(EOL.toString())
             while (idx >= 0) {
                 val frame = rxBuffer.substring(0, idx)
+                // Затираем потреблённый кадр нулями: через rxBuffer проходит invite
+                // с паролем чата, а delete() символы в памяти StringBuilder не стирает.
+                for (i in 0..idx) if (i < rxBuffer.length) rxBuffer.setCharAt(i, '\u0000')
                 rxBuffer.delete(0, idx + 1)
                 if (frame.isNotEmpty()) dispatchFrame(frame)
                 idx = rxBuffer.indexOf(EOL.toString())
@@ -529,7 +539,7 @@ object BleManager {
         txChar = null
         serverDevice = null
         connected = false
-        synchronized(rxBuffer) { rxBuffer.setLength(0) }
+        synchronized(rxBuffer) { wipeRxBuffer() }
         sendLatch?.countDown()
         sendLatch = null
         listener = null

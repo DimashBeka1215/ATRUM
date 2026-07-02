@@ -47,6 +47,8 @@ class WebmStickerView @JvmOverloads constructor(
     private var currentKey: String? = null
     private var frames: List<Bitmap>? = null
     private var frameIndex = 0
+    /** false — низкий заряд: показываем только первый кадр, без покадровой анимации. */
+    var animate = true
     private var ticking = false
     private var frameDelay = DEFAULT_FRAME_DELAY_MS
 
@@ -150,6 +152,13 @@ class WebmStickerView @JvmOverloads constructor(
     }
 
     private fun startTicker() {
+        if (!animate) {
+            // Низкий заряд: только первый кадр, без тика (экономия батареи).
+            ticking = false
+            removeCallbacks(ticker)
+            frames?.firstOrNull()?.let { imageView.setImageBitmap(it) }
+            return
+        }
         if (ticking) return
         ticking = true
         post(ticker)

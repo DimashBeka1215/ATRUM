@@ -39,8 +39,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 257
-        versionName = "3.20.53-beta220-patch31"
+        versionCode = 298
+        versionName = "3.20.75-beta220-patch72"
 
         // Включаем multidex чтобы не упереться в лимит 65k методов
         // когда много AndroidX/Material/Room/uCrop/browser библиотек
@@ -164,6 +164,9 @@ dependencies {
 
     // EncryptedSharedPreferences для безопасного хранения данных
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // WorkManager — резервное периодическое пробуждение доставки пушей (переживает Doze/kill).
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 
     // Room — локальная база данных для списка чатов
     val roomVersion = "2.7.0"

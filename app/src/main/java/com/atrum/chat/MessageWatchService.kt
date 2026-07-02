@@ -37,6 +37,7 @@ class MessageWatchService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var loopJob: Job? = null
     @Volatile private var recomputeJob: Job? = null
+    @Volatile private var lastFullSyncMs = 0L
 
     private val transports = ConcurrentHashMap<Long, ChatTransport>()
     private val watches = ConcurrentHashMap<Long, AutoCloseable>()
@@ -62,7 +63,16 @@ class MessageWatchService : Service() {
             try {
                 if (prefs.pushEnabled) {
                     ensureWatches()          // открыть стрим-подписки на новые чаты
-                    networkSync()            // редкая фоновая сверка (catch-up)
+                    // Экономия батареи: полную сетевую сверку делаем ТОЛЬКО когда стрим
+                    // оборвался (иначе он уже всё принёс) или изредка для страховки. Пока
+                    // приложение открыто — не сверяем (там свой цикл в ChatActivity).
+                    if (!App.inForeground) {
+                        val now = System.currentTimeMillis()
+                        if (!watchesHealthy() || now - lastFullSyncMs >= SAFETY_SYNC_MS) {
+                            networkSync()
+                            lastFullSyncMs = now
+                        }
+                    }
                     recomputeAndNotify()     // пересчёт из локального стора
                 }
             } catch (_: Throwable) {
@@ -117,6 +127,12 @@ class MessageWatchService : Service() {
             delay(400) // склеиваем всплеск событий в один пересчёт
             runCatching { recomputeAndNotify() }
         }
+    }
+
+    /** Все стрим-подписки живы? Если да — сетевую сверку можно пропустить (экономия). */
+    private fun watchesHealthy(): Boolean {
+        if (transports.isEmpty()) return false
+        return transports.values.all { runCatching { it.isWatchHealthy() }.getOrDefault(false) }
     }
 
     /** Редкая сетевая сверка: подтягивает историю в стор (через ChatTransport). */
@@ -197,6 +213,13 @@ class MessageWatchService : Service() {
         }
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Приложение смахнули из «недавних» — сервис не должен молча умирать,
+        // иначе уведомления перестанут приходить. Перезапускаем, если пуши включены.
+        if (prefs.pushEnabled) runCatching { start(applicationContext) }
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         watches.values.forEach { runCatching { it.close() } }
@@ -209,6 +232,8 @@ class MessageWatchService : Service() {
     companion object {
         /** Редкая фоновая сверка: стрим даёт реалтайм, сеть трогаем нечасто. */
         private const val FALLBACK_MS = 90_000L
+        /** Страховочная полная сверка, даже если стрим считается живым (silent-fail реле). */
+        private const val SAFETY_SYNC_MS = 5 * 60_000L
 
         fun start(ctx: Context) {
             if (!Prefs(ctx).pushEnabled) return

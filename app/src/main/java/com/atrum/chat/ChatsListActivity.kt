@@ -161,6 +161,7 @@ class ChatsListActivity : SecureActivity() {
 
     override fun onResume() {
         super.onResume()
+        RootWarning.maybeShow(this)
         triggerRelayRefresh()
         // Заранее поднимаем Tor и прогреваем соединения с реле, ПОКА пользователь в списке:
         // к моменту открытия чата сеть уже готова (Tor забутстрапился, TLS-рукопожатия к

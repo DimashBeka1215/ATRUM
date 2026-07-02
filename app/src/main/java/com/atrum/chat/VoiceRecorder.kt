@@ -74,8 +74,12 @@ class VoiceRecorder(context: Context) {
         outFile = f
         paused = false; pauseStartedAt = 0L; pausedAccumMs = 0L
 
+        // Пишем в PCM-буфер ВСЕГДА (даже если модель ещё грузится в фоне) — нейрочистку
+        // применим в finalizeGtcrn, дождавшись модели (она догружается за время записи).
+        // Раньше путь выбирался только при gtcrn != null, поэтому первые записи после
+        // старта шли мимо нейрошумодава (обычный спектральный музыку/ТВ не давит).
         gtcrn = GtcrnDenoiser.shared(appCtx)
-        if (gtcrn != null && startGtcrn(f)) {
+        if (startGtcrn(f)) {
             startedAt = System.currentTimeMillis(); return true
         }
         gtcrn = null // shared — не закрываем
@@ -229,6 +233,10 @@ class VoiceRecorder(context: Context) {
         releaseCapture()
         var raw: ShortArray? = flattenPcm()
         synchronized(pcmLock) { pcmChunks.clear(); pcmTotal = 0 }
+        // Модель могла ещё грузиться в момент start() — дожидаемся её здесь (мы уже в
+        // фоновом потоке обработки). Так нейрошумодав применяется даже к самой первой
+        // записи сразу после запуска приложения.
+        if (gtcrn == null) gtcrn = GtcrnDenoiser.awaitShared(appCtx)
         var ok = false
         try {
             if (f != null && raw != null && raw!!.isNotEmpty()) {
@@ -238,8 +246,15 @@ class VoiceRecorder(context: Context) {
                 val minW = w.minOrNull() ?: 0f
                 val tooLong = (raw?.size ?: 0) > neuralMaxSamples
                 val samples: ShortArray = when {
-                    // Тихо везде → только обычный (спектральный) шумодав; голос не трогаем нейросетью.
-                    tooLong || gtcrn == null || maxW < 0.02f -> {
+                    // ТИШИНА (фон по всему клипу ниже quietFloorDb → maxW≈0): НЕ применяем
+                    // шумодав ВООБЩЕ — голос остаётся «сухим»/естественным. Ниже пройдёт
+                    // только полировка громкости (без спектрального и без дереверберации).
+                    maxW < 0.02f -> {
+                        val out = raw!!; raw = null; out
+                    }
+                    // Длинное (нейро по RAM нельзя) или модель недоступна, НО фон есть →
+                    // лёгкий спектральный шумодав (нейро тут невозможен).
+                    tooLong || gtcrn == null -> {
                         val out = runSpectral(raw!!); raw = null; out
                     }
                     // Шумно везде → полностью нейросеть (+воздух).
@@ -271,7 +286,8 @@ class VoiceRecorder(context: Context) {
                 val cleaned = if (usedNeural) runAggressiveResidual(samples) else samples
                 // Дереверберация (хвост эха комнаты) → мастер-полировка
                 // (HPF + нормализация громкости + де-эссер + лимитер).
-                val dry = Dereverb.process(cleaned, 48_000)
+                // В тишине дереверберацию тоже пропускаем — «ничего, кроме полировки».
+                val dry = if (maxW < 0.02f) cleaned else Dereverb.process(cleaned, 48_000)
                 ok = encodeM4a(AudioPolish.polish(dry, 48_000), 48_000, f)
             }
         } catch (_: Throwable) {

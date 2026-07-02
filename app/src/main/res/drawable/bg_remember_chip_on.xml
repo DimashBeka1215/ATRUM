@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Чип «Запомнить» — выбран: жёлтая заливка 16% + контур. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#29FFB454" />
+    <stroke android:width="1dp" android:color="@color/warning" />
+    <corners android:radius="20dp" />
+</shape>

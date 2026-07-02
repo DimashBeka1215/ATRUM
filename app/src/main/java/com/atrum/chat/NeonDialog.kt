@@ -582,6 +582,94 @@ object NeonDialog {
         return dialog
     }
 
+    /**
+     * Инфо-диалог с крупной иконкой сверху по центру. Сообщение — CharSequence, поэтому
+     * поддерживает кликабельные ссылки (ClickableSpan + LinkMovementMethod).
+     */
+    fun showInfoIcon(
+        ctx: Context,
+        iconRes: Int,
+        title: String,
+        message: CharSequence,
+        buttonText: String = "OK",
+        onDismiss: (() -> Unit)? = null
+    ): Dialog {
+        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar)
+        dialog.setCancelable(true)
+        dialog.setCanceledOnTouchOutside(true)
+
+        val root = LinearLayout(ctx).apply {
+            orientation   = LinearLayout.VERTICAL
+            background    = ctx.neonBg()
+            clipToOutline = true
+        }
+
+        // Иконка сверху по центру
+        root.addView(android.widget.ImageView(ctx).apply {
+            setImageResource(iconRes)
+            layoutParams = LinearLayout.LayoutParams(ctx.dp(66f), ctx.dp(66f)).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = ctx.dp(24f)
+            }
+        })
+
+        // Заголовок (по центру)
+        root.addView(TextView(ctx).apply {
+            text = title
+            setTextColor(ctx.textPrimary())
+            textSize = 17f
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            val h = ctx.dp(20f)
+            setPadding(h, ctx.dp(12f), h, ctx.dp(8f))
+        })
+
+        // Текст (прокручиваемый, с кликабельными ссылками)
+        val scroll = android.widget.ScrollView(ctx).apply { isVerticalScrollBarEnabled = false }
+        scroll.addView(TextView(ctx).apply {
+            text = message
+            setTextColor(ctx.textSecondary())
+            textSize = 13.5f
+            val h = ctx.dp(20f)
+            setPadding(h, ctx.dp(4f), h, ctx.dp(20f))
+            setLineSpacing(0f, 1.45f)
+            movementMethod = android.text.method.LinkMovementMethod.getInstance()
+            highlightColor = android.graphics.Color.TRANSPARENT
+        })
+        root.addView(scroll, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        // Ограничиваем высоту прокрутки, чтобы кнопка всегда была видна.
+        val maxH = (ctx.resources.displayMetrics.heightPixels * 0.55f).toInt()
+        scroll.post {
+            if (scroll.height > maxH) {
+                scroll.layoutParams = scroll.layoutParams.apply { height = maxH }
+                scroll.requestLayout()
+            }
+        }
+
+        root.addView(ctx.hDivider())
+
+        // Кнопка
+        root.addView(TextView(ctx).apply {
+            text = buttonText
+            setTextColor(ctx.textPrimary())
+            textSize = 15f
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, ctx.dp(52f))
+            setBackgroundResource(ctx.rippleBg())
+            setOnClickListener { dialog.dismiss() }
+        })
+
+        if (onDismiss != null) dialog.setOnDismissListener { onDismiss() }
+
+        dialog.setContentView(root)
+        dialog.setupWindow(ctx)
+        dialog.show()
+        return dialog
+    }
+
     // ── Data ──────────────────────────────────────────────────────────────────
 
     /**
