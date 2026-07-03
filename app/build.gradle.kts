@@ -39,8 +39,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 313
-        versionName = "3.20.90-beta228-uploadring-fix"
+        versionCode = 314
+        versionName = "3.20.91-beta229-libtor-conflict-fix"
 
         // Включаем multidex чтобы не упереться в лимит 65k методов
         // когда много AndroidX/Material/Room/uCrop/browser библиотек
@@ -71,6 +71,29 @@ android {
             // чуть больше места на устройстве и чуть медленнее первый старт. Для
             // прямой раздачи APK (не через Play) важен размер скачивания — берём true.
             useLegacyPackaging = true
+
+            // ⚠️ КОНФЛИКТ ДВУХ TOR-ДВИЖКОВ (см. TorManager.USE_TOR_ANDROID_ENGINE /
+            // TOR_BRIDGES_CONTINUE.md). И kmp-tor (resource-exec-tor), и tor-android
+            // (Guardian Project) несут СВОЙ lib/arm64-v8a/libtor.so по ОДНОМУ И ТОМУ ЖЕ
+            // пути в APK — Gradle не может упаковать оба и падает с "2 files found with
+            // path 'lib/arm64-v8a/libtor.so'". Это НЕ два одинаковых файла — это два РАЗНЫХ
+            // несовместимых бинаря (kmp-tor — exec-бинарь; tor-android — JNI-библиотека
+            // под TorService, свои Java_org_torproject_jni_* символы). Смешивать нельзя:
+            // если в APK попадёт "не тот" .so, соответствующий движок не запустится
+            // (UnsatisfiedLinkError / неверный протокол запуска).
+            //
+            // pickFirst ниже — официальный способ AGP разрешить дубликат и НЕ падать со
+            // сборкой. Он берёт файл от ПЕРВОЙ по порядку резолвинга зависимости — у нас
+            // это kmp-tor (объявлен в dependencies{} раньше tor-android), что совпадает с
+            // текущим активным движком (USE_TOR_ANDROID_ENGINE = false).
+            //
+            // ⚠️ КОГДА БУДЕШЬ ПЕРЕКЛЮЧАТЬ USE_TOR_ANDROID_ENGINE = true ДЛЯ ТЕСТА НА
+            // УСТРОЙСТВЕ — одного этого pickFirst НЕДОСТАТОЧНО для гарантии, что победит
+            // именно tor-android. Самый надёжный способ — временно закомментировать две
+            // строки "io.matthewnelson.kmp-tor:..." в dependencies{} ниже (движок всё равно
+            // не используется, пока флаг true), пересобрать, протестировать. Вернуть строки
+            // обратно перед возвратом на kmp-tor.
+            pickFirsts += "lib/*/libtor.so"
         }
         resources {
             excludes += setOf(
@@ -163,46 +186,5 @@ dependencies {
     // мосты (Snowflake/obfs4) — публичного API для Bridge/ClientTransportPlugin/UseBridges
     // нет ни в одной версии (проверено). Оставлен как fallback, пока новый TorManager
     // (на tor-android, см. ниже) не обкатан на реальных устройствах.
-    implementation("io.matthewnelson.kmp-tor:runtime:2.6.0")
-    implementation("io.matthewnelson.kmp-tor:resource-exec-tor:409.5.0")
-
-    // Tor Android (Guardian Project, стек Orbot) — путь B из TOR_BRIDGES_CONTINUE.md.
-    // Даёт мосты (Snowflake/obfs4) "из коробки" через обычный torrc + control-port.
-    // Версии отслеживаются Dependabot'ом (.github/dependabot.yml) — при новом релизе
-    // Guardian Project сюда прилетает Pull Request на GitHub, а не тихое авто-обновление
-    // сборки (supply-chain risk недопустим для крипто-мессенджера).
-    implementation("info.guardianproject:tor-android:0.4.9.11")
-    implementation("info.guardianproject:jtorctl:0.4.5.7")
-
-    // EncryptedSharedPreferences для безопасного хранения данных
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
-
-    // WorkManager — резервное периодическое пробуждение доставки пушей (переживает Doze/kill).
-    implementation("androidx.work:work-runtime-ktx:2.9.1")
-
-    // Room — локальная база данных для списка чатов
-    val roomVersion = "2.7.0"
-    implementation("androidx.room:room-runtime:$roomVersion")
-    implementation("androidx.room:room-ktx:$roomVersion")
-    ksp("androidx.room:room-compiler:$roomVersion")
-
-    // uCrop — кроп фото с круглой маской (как в Telegram)
-    implementation("com.github.yalantis:ucrop:2.2.8")
-
-    // Chrome Custom Tabs — для встроенного браузера в OAuth flow
-    implementation("androidx.browser:browser:1.7.0")
-
-    // ViewPager2 — для intro/onboarding с свайпом
-    implementation("androidx.viewpager2:viewpager2:1.0.0")
-
-    // Bouncy Castle — Argon2id KDF для защищённой деривации ключа шифрования
-    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
-
-    // Lottie — анимации и стикеры
-    implementation("com.airbnb.android:lottie:6.3.0")
-
-    // ZXing — генерация QR-кода сверки (SAS) для защиты от MITM.
-    implementation("com.google.zxing:core:3.5.3")
-
-    // Biometric — системный отпечаток (BiometricPrompt). Биометрия НЕ хранится
-    // в приложении: запрос идёт 
+    // ⚠️ Конфликтует по lib/arm64-v8a/libtor.so с tor-android ниже — см. подробный
+    // комме
