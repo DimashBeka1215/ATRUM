@@ -39,8 +39,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 312
-        versionName = "3.20.89-beta227-torandroid-phase1"
+        versionCode = 313
+        versionName = "3.20.90-beta228-uploadring-fix"
 
         // Включаем multidex чтобы не упереться в лимит 65k методов
         // когда много AndroidX/Material/Room/uCrop/browser библиотек
@@ -205,4 +205,4 @@ dependencies {
     implementation("com.google.zxing:core:3.5.3")
 
     // Biometric — системный отпечаток (BiometricPrompt). Биометрия НЕ хранится
-    // в приложении: запрос идё
+    // в приложении: запрос идёт 

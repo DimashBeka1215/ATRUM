@@ -102,7 +102,11 @@ class CollageCell @JvmOverloads constructor(
         addView(doneCircle)
 
         // ── Оверлей прогресса заливки (своё фото при отправке) ──────────────────
-        val ringSize = (48 * dp).toInt()
+        // ⚠️ Кольцо ВСЕГДА строго по центру ячейки — без логики позиционирования по
+        // углам (см. CLAUDE.md §13). Затемняется только маленький круг ПОД кольцом,
+        // а не вся ячейка целиком — фото видно сразу, индикатор лёгкий и ненавязчивый.
+        val ringSize = (36 * dp).toInt()
+        val backdropSize = (52 * dp).toInt()
         uploadRing = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
             layoutParams = LayoutParams(ringSize, ringSize).also { it.gravity = Gravity.CENTER }
             isIndeterminate = false
@@ -115,15 +119,20 @@ class CollageCell @JvmOverloads constructor(
             layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
                 .also { it.gravity = Gravity.CENTER }
             setTextColor(Color.WHITE)
-            textSize = 12f
+            textSize = 10f
             setTypeface(typeface, Typeface.BOLD)
+        }
+        val uploadRingBackdrop = FrameLayout(context).apply {
+            layoutParams = LayoutParams(backdropSize, backdropSize).also { it.gravity = Gravity.CENTER }
+            background = ContextCompat.getDrawable(context, R.drawable.bg_upload_ring_backdrop)
+            addView(uploadRing)
+            addView(uploadText)
         }
         uploadOverlay = FrameLayout(context).apply {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
-            setBackgroundColor(0x66000000)
+            background = null
             visibility = GONE
-            addView(uploadRing)
-            addView(uploadText)
+            addView(uploadRingBackdrop)
         }
         addView(uploadOverlay)
 
@@ -207,30 +216,4 @@ class CollageCell @JvmOverloads constructor(
         doneCircle.scaleX = 0f
         doneCircle.scaleY = 0f
 
-        val popIn = AnimatorSet().apply {
-            playTogether(
-                ObjectAnimator.ofFloat(doneCircle, "scaleX", 0f, 1.18f, 1f),
-                ObjectAnimator.ofFloat(doneCircle, "scaleY", 0f, 1.18f, 1f)
-            )
-            duration     = 300
-            interpolator = OvershootInterpolator(2.5f)
-        }
-
-        val fadeOut = ObjectAnimator.ofFloat(doneCircle, "alpha", 1f, 0f).apply {
-            duration   = 350
-            startDelay = 600
-        }
-
-        AnimatorSet().apply {
-            playSequentially(popIn, fadeOut)
-            start()
-        }
-    }
-
-    /**
-     * Показывает ошибку загрузки — прячет спиннер, ячейка остаётся серой.
-     */
-    fun showError() {
-        progressBar.visibility = GONE
-    }
-}
+        val popIn = AnimatorSet()

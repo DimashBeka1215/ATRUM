@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Лёгкая тёмная подложка ТОЛЬКО под кольцом прогресса загрузки/заливки фото —
+    НЕ экран на всё изображение. См. CLAUDE.md §13: индикатор должен быть лёгким
+    слоем поверх контента и почти незаметен, фото должно быть видно сразу.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#66000000"/>
+</shape>

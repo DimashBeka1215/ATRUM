@@ -113,32 +113,41 @@
                 android:visibility="gone"
                 app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.RoundedImage"/>
 
+            <!-- ⚠️ Кольцо прогресса ВСЕГДА строго по центру фото — позиционирования по
+                 углам в разметке нет и не должно появляться (см. CLAUDE.md §13). Затемняется
+                 только маленький круг ПОД кольцом (bg_upload_ring_backdrop), а не всё фото. -->
             <FrameLayout
                 android:id="@+id/img_upload_overlay"
                 android:layout_width="260dp"
                 android:layout_height="match_parent"
-                android:background="#73000000"
                 android:visibility="gone">
 
-                <ProgressBar
-                    android:id="@+id/img_upload_ring"
-                    style="?android:attr/progressBarStyleHorizontal"
-                    android:layout_width="52dp"
-                    android:layout_height="52dp"
+                <FrameLayout
+                    android:layout_width="64dp"
+                    android:layout_height="64dp"
                     android:layout_gravity="center"
-                    android:max="100"
-                    android:progress="0"
-                    android:indeterminateOnly="false"
-                    android:progressDrawable="@drawable/bg_voice_ring"/>
+                    android:background="@drawable/bg_upload_ring_backdrop">
 
-                <TextView
-                    android:id="@+id/img_upload_text"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:textColor="@color/white"
-                    android:textSize="13sp"
-                    android:fontFamily="sans-serif-medium"/>
+                    <ProgressBar
+                        android:id="@+id/img_upload_ring"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
+                        android:layout_gravity="center"
+                        android:max="100"
+                        android:progress="0"
+                        android:indeterminateOnly="false"
+                        android:progressDrawable="@drawable/bg_voice_ring"/>
+
+                    <TextView
+                        android:id="@+id/img_upload_text"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center"
+                        android:textColor="@color/white"
+                        android:textSize="11sp"
+                        android:fontFamily="sans-serif-medium"/>
+                </FrameLayout>
             </FrameLayout>
         </FrameLayout>
 
@@ -342,24 +351,4 @@
             android:orientation="horizontal"
             android:gravity="center_vertical"
             android:layout_marginTop="2dp"
-            android:paddingHorizontal="2dp">
-
-            <TextView
-                android:id="@+id/tv_time"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textColor="@color/accent_light"
-                android:textSize="10sp"
-                android:fontFamily="sans-serif"/>
-
-            <ImageView
-                android:id="@+id/iv_tick"
-                android:layout_width="14dp"
-                android:layout_height="14dp"
-                android:layout_marginStart="4dp"
-                android:contentDescription="@null"
-                android:src="@drawable/ic_check"
-                app:tint="@color/accent_light"/>
-        </LinearLayout>
-    </LinearLayout>
-</LinearLayout>
+            android:paddingHoriz
