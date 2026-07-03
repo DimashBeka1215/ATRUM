@@ -18,7 +18,11 @@ val hasKeystore = keystorePropertiesFile.exists()
 
 android {
     namespace = "com.atrum.chat"
-    compileSdk = 35
+    // ⚠️ 35→36: понадобилось для info.guardianproject:tor-android (AAR metadata требует
+    // компилироваться минимум против той версии API, что заявлена в его манифесте — иначе
+    // "AAR metadata check" валит сборку). 36 — максимум, официально поддерживаемый текущим
+    // AGP 8.13.2 (что и требуется). targetSdk/minSdk НЕ трогаем — рантайм-поведение то же.
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.atrum.chat"
@@ -39,8 +43,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 314
-        versionName = "3.20.91-beta229-libtor-conflict-fix"
+        versionCode = 315
+        versionName = "3.20.92-beta230-compilesdk36-toroldver"
 
         // Включаем multidex чтобы не упереться в лимит 65k методов
         // когда много AndroidX/Material/Room/uCrop/browser библиотек
@@ -182,9 +186,4 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
     // Tor (встроенный) — Nostr через Tor. runtime + бинарники tor (exec).
-    // ⚠️ ПУТЬ ОТКАТА (см. TorManager.kt / TOR_BRIDGES_CONTINUE.md): kmp-tor не умеет
-    // мосты (Snowflake/obfs4) — публичного API для Bridge/ClientTransportPlugin/UseBridges
-    // нет ни в одной версии (проверено). Оставлен как fallback, пока новый TorManager
-    // (на tor-android, см. ниже) не обкатан на реальных устройствах.
-    // ⚠️ Конфликтует по lib/arm64-v8a/libtor.so с tor-android ниже — см. подробный
-    // комме
+    // ⚠️ ПУТЬ ОТКАТА (с
