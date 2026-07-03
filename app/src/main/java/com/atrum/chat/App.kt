@@ -56,6 +56,7 @@ class App : Application() {
 
         val prefs = Prefs(this)
         BatteryUtils.animatePersistOverride = prefs.lowBattAnimate
+        ConnectionPrefs.loadFrom(prefs)
         // Migrate chat secrets from plaintext Room DB to EncryptedSharedPreferences
         // before the DB migration zeroes them out (MIGRATION_9_10).
         migrateChatSecretsToPrefs(prefs)
@@ -171,7 +172,4 @@ class App : Application() {
                 }
             }
         } catch (_: Exception) {
-            // Non-fatal — DB may not exist yet or may already be at v10
-        }
-    }
-}
+            // Non-fatal — DB may not exist yet or 

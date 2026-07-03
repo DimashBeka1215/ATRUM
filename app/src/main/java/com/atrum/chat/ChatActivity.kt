@@ -83,6 +83,12 @@ class ChatActivity : SecureActivity() {
      */
     private val imageUploadQueue = ImageUploadQueue()
 
+    // ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА (не для релиза, см. TODO_REMOVE_EMPTY_MEDIA_CRASH): если
+    // заливка фото не завершится (ни успехом, ни ошибкой) за это время — роняем приложение
+    // с диагностикой, чтобы понять, где именно "зависает" колесо процента. УДАЛИТЬ после
+    // диагностики вместе с диагностикой пустых фото.
+    private val UPLOAD_HANG_CRASH_MS = 30_000L
+
     /**
      * Счётчик активных загрузок изображений. При count > 0 поле ввода и кнопки
      * блокируются (UI state). Текстовая очередь (MessageSendManager) не затрагивается.
@@ -2997,6 +3003,20 @@ class ChatActivity : SecureActivity() {
                 //    уже показано; часики снимутся при reconcile, как только опубликуется
                 //    чат-строка (это происходит в начале appendLine, до заливки чанков).
                 lifecycleScope.launch {
+                    // ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА: сторож — ОТДЕЛЬНАЯ корутина в том же
+                    // lifecycleScope (НЕ внутри try/catch ниже — иначе её краш тихо
+                    // превратился бы в обычный failSend). Если заливка не завершится
+                    // (ни успех, ни ошибка) за UPLOAD_HANG_CRASH_MS — роняем с диагностикой:
+                    // какой % успел долиться, useTor, сколько реле.
+                    var lastPctSeen = 0
+                    val uploadWatchdog = lifecycleScope.launch {
+                        delay(UPLOAD_HANG_CRASH_MS)
+                        throw RuntimeException(
+                            "ATRUM_UPLOAD_HANG_DEBUG file=$imageFileName lastPct=$lastPctSeen " +
+                            "useTor=${transport.useTor} relays=${com.atrum.chat.transport.NostrTransport.relayCount()} " +
+                            "elapsedMs=$UPLOAD_HANG_CRASH_MS — заливка одиночного фото зависла"
+                        )
+                    }
                     try {
                         val encryptedImage = withContext(Dispatchers.Default) {
                             CryptoHelper.encrypt(base64, chat.chatPassword, chat.chatId)
@@ -3008,15 +3028,18 @@ class ChatActivity : SecureActivity() {
                                     extraFiles = mapOf(imageFileName to encryptedImage),
                                     onFileProgress = { _, cur, tot ->
                                         val pct = if (tot > 0) (cur * 100 / tot).coerceIn(0, 99) else 0
+                                        lastPctSeen = pct
                                         chatStore.updateImageProgress(encryptedMessage, 0, pct)
                                     }
                                 )
                             }
                         }
+                        uploadWatchdog.cancel()   // заливка завершилась — сторож больше не нужен
                         // Cache-bust и форс-синк для быстрого скрытия часиков
                         lastContent = ""
                         syncEngine.forceSync(delayMs = 0L)
                     } catch (e: Exception) {
+                        uploadWatchdog.cancel()   // и при ошибке тоже гасим сторож
                         // Заливка контента не удалась — помечаем сообщение как несработавшее
                         // (часики → ошибка), а не оставляем его «в обработке» навсегда.
                         chatStore.failSend(encryptedMessage)
@@ -3057,6 +3080,11 @@ class ChatActivity : SecureActivity() {
 
         lifecycleScope.launch {
             var tempEncrypted: String? = null
+            // ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА (см. TODO_REMOVE_EMPTY_MEDIA_CRASH): сторож заливки
+            // коллажа — та же идея, что и в sendImage(). Хостится ВНЕ try ниже, поэтому её
+            // краш не проглатывается общим catch(Exception).
+            var uploadWatchdog: kotlinx.coroutines.Job? = null
+            var lastPctSeen = 0
             try {
                 val imageFileNames = List(total) { Message.newImageFileName() }
                 val ratios   = arrayOfNulls<Float>(total)
@@ -3134,27 +3162,52 @@ class ChatActivity : SecureActivity() {
 
                 if (extraFiles.size != total) throw RuntimeException(getString(R.string.error_image_load))
 
+                // ⚠️ ФИКС (баг: фото в коллаже грузились в случайном порядке): extraFiles
+                // заполнялся ПАРАЛЛЕЛЬНЫМИ корутинами (шифрование каждого фото — гонка),
+                // поэтому порядок вставки в map получался случайным — каким успело
+                // зашифроваться первым. transport.appendLine() публикует/грузит extraFiles
+                // строго В ПОРЯДКЕ ИТЕРАЦИИ мапы, поэтому и реальная заливка на реле, и
+                // прыжки кольца прогресса по ячейкам шли вразнобой с видимым порядком фото.
+                // Пересобираем map строго в порядке imageFileNames (= порядок коллажа).
+                val orderedExtraFiles = LinkedHashMap<String, String>()
+                imageFileNames.forEach { name -> extraFiles[name]?.let { orderedExtraFiles[name] = it } }
+
+                // ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА: сторож на UPLOAD_HANG_CRASH_MS — отдельная
+                // корутина в lifecycleScope, не дочерняя для текущего try, чтобы её краш
+                // не был проглочен catch(Exception) ниже.
+                uploadWatchdog = lifecycleScope.launch {
+                    delay(UPLOAD_HANG_CRASH_MS)
+                    throw RuntimeException(
+                        "ATRUM_UPLOAD_HANG_DEBUG collage=${imageFileNames.size} lastPct=$lastPctSeen " +
+                        "useTor=${transport.useTor} relays=${com.atrum.chat.transport.NostrTransport.relayCount()} " +
+                        "elapsedMs=$UPLOAD_HANG_CRASH_MS — заливка коллажа зависла"
+                    )
+                }
+
                 // 4. Отправляем сообщение и все изображения ОДНИМ запросом (Batch PATCH)
                 imageUploadQueue.execute {
                     withContext(Dispatchers.IO) {
                         transport.appendLine(
                             encryptedLine = encryptedMessage,
-                            extraFiles = extraFiles,
+                            extraFiles = orderedExtraFiles,
                             onFileProgress = { name, cur, tot ->
                                 val idx = imageFileNames.indexOf(name)
                                 if (idx >= 0) {
                                     val pct = if (tot > 0) (cur * 100 / tot).coerceIn(0, 99) else 0
+                                    lastPctSeen = pct
                                     chatStore.updateImageProgress(encryptedMessage, idx, pct)
                                 }
                             }
                         )
                     }
                 }
+                uploadWatchdog?.cancel()   // заливка завершилась — сторож больше не нужен
 
                 lastContent = ""
                 syncEngine.forceSync(delayMs = 0L)
 
             } catch (e: Exception) {
+                uploadWatchdog?.cancel()   // и при ошибке тоже гасим сторож
                 tempEncrypted?.let { chatStore.failSend(it) }
                 val reason = e.message?.take(120) ?: "unknown"
                 Toast.makeText(this@ChatActivity,
@@ -3860,67 +3913,4 @@ class ChatActivity : SecureActivity() {
             .setDuration(350)
             .setStartDelay(80)
             .setInterpolator(android.view.animation.DecelerateInterpolator())
-            .withStartAction { rv.visibility = View.VISIBLE }
-            .start()
-
-        // Оверлей ушёл — теперь корректно показываем/прячем заглушку "чат пуст".
-        binding.tvEmptyPlaceholder.visibility =
-            if (currentMessages.isEmpty()) View.VISIBLE else View.GONE
-    }
-
-    companion object {
-        /** За сколько позиций до верха начинать подгрузку старых сообщений (ленивый рендер). */
-        private const val REVEAL_THRESHOLD = 6
-        /** Макс. картинок в одном коллаже. */
-        const val MAX_COLLAGE_IMAGES = 10
-        /** Подряд неудачных загрузок до показа предупреждения. */
-        const val FAILURES_BEFORE_WARNING = 5
-        /** Максимальная длительность голосового. */
-        private const val MAX_VOICE_MS = 15 * 60 * 1000L
-        /** Максимум одновременных загрузок изображений. */
-        const val MAX_CONCURRENT = 3
-        /** Ключ intent-экстра: идентификатор чата (Long, из Room). */
-        const val EXTRA_CHAT_ID = "extra_chat_id"
-
-        /** Перейти к сообщению по msgId (из списка медиа) и подсветить. */
-        const val EXTRA_SCROLL_TO_MSGID = "extra_scroll_to_msgid"
-        /** Удалить сообщение по msgId (из списка медиа). */
-        const val EXTRA_DELETE_MSGID = "extra_delete_msgid"
-
-        // ── Polling ───────────────────────────────────────────────────────────
-        // Интервал поллинга управляется SyncEngine.ACTIVE_INTERVAL_MS (5 сек).
-        /** Базовый интервал адаптивного поллинга (зарезервирован, не используется). */
-        const val BASE_MS = 4_000L
-        /** Максимальный интервал адаптивного поллинга (зарезервирован, не используется). */
-        const val MAX_MS = 30_000L
-
-        // ── Presence ──────────────────────────────────────────────────────────
-        /**
-         * Период presence-цикла (heartbeat): один write-only PATCH каждые N мс.
-         * Поднято с 2с до 5с: частый presence+poll заставлял публичные Nostr-реле
-         * резать запросы. 5с — баланс «онлайн» без миганий и нагрузки на реле.
-         */
-        const val PRESENCE_INTERVAL_MS = 5_000L
-        // Фаза 1 синхронизации: union-чтение слотов profiles.txt (убирает lost-update —
-        // мерцание аватара/presence). ВЫКЛ по умолчанию: включить на ОБОИХ телефонах для
-        // теста; после подтверждения сделать дефолтом. (см. SYNC_AUDIT.md)
-        const val SLOT_UNION_PROFILES = true
-        /** Через сколько мс без обновления партнёр считается офлайн. */
-        const val ONLINE_EXPIRY_MS = 12_000L
-        /** Через сколько мс без обновления статус «записывает голосовое» считается устаревшим. */
-        const val RECORDING_EXPIRY_MS = 8_000L
-        /** Период локального тикера пере-вычисления presence по таймауту. */
-        const val PRESENCE_TICK_MS = 1_000L
-        /** Через сколько мс без обновления typing-сигнал считается устаревшим. */
-        const val TYPING_EXPIRY_MS = 14_000L
-        /** Задержка после последнего нажатия клавиши до отправки «перестал печатать». */
-        const val TYPING_STOP_DELAY_MS = 3_000L
-
-        // ── Profile sync ──────────────────────────────────────────────────────
-        /** Количество попыток sync профилей при запуске. */
-        const val SYNC_PROFILES_MAX_ATTEMPTS = 3
-        /** Базовая задержка между retry sync-профилей (умножается на номер попытки). */
-        const val SYNC_PROFILES_RETRY_BASE_MS = 3_000L
-
-    }
-}
+ 

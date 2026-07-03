@@ -27,6 +27,9 @@
     <string name="intro_5_title">Security isn\'t absolute</string>
     <string name="intro_5_subtitle">Perfect protection doesn\'t exist, and the author can\'t guarantee it. A lot depends on you: use strong invite passwords and share invite codes only through trusted channels. If a code leaks or ends up in an insecure messenger, your chat could in theory be read.</string>
 
+    <string name="intro_vpn_title">Photos and voice messages not sending?</string>
+    <string name="intro_vpn_subtitle">In some countries, providers block part of the network. Try turning on a VPN or proxy — it doesn\'t affect your privacy: messages are still encrypted on your device before sending. This is a temporary measure while we work on more reliable delivery.</string>
+
     <string name="badge_beta">EXPERIMENTAL BETA</string>
 
     <!-- Onboarding -->
@@ -761,7 +764,36 @@
     <string name="settings_section_network">Network</string>
     <string name="settings_item_relays">Message relays</string>
     <string name="settings_item_publisher">Relay list publisher</string>
+    <string name="settings_item_connection">Connection</string>
     <string name="relays_sub_builtin">%1$d built-in</string>
+
+    <!-- "Connection" screen: relay status + custom SOCKS5 proxy -->
+    <string name="connection_section_relays">Relay status</string>
+    <string name="connection_relays_privacy_hint">Relay addresses are never shown — only status and response time. Data updates while at least one chat is open.</string>
+    <string name="connection_relay_label">Relay %1$d</string>
+    <string name="connection_no_data">no data</string>
+    <string name="connection_ms_value">%1$d ms</string>
+    <string name="connection_section_proxy">Proxy</string>
+    <string name="connection_proxy_off">No proxy</string>
+    <string name="connection_proxy_socks5">Custom SOCKS5</string>
+    <string name="connection_proxy_host_label">Server</string>
+    <string name="connection_proxy_host_hint">address or domain</string>
+    <string name="connection_proxy_port_label">Port</string>
+    <string name="connection_proxy_port_hint">1080</string>
+    <string name="connection_proxy_login_label">Login (optional)</string>
+    <string name="connection_proxy_login_hint">login</string>
+    <string name="connection_proxy_password_label">Password (optional)</string>
+    <string name="connection_proxy_password_hint">password</string>
+    <string name="connection_proxy_save">Save</string>
+    <string name="connection_proxy_scope_hint">Only applies to a direct connection (without Tor). If a chat uses Tor, this setting has no effect on it.</string>
+    <string name="connection_proxy_not_configured">Set and save a proxy address first</string>
+    <string name="connection_proxy_disabled_toast">Proxy disabled</string>
+    <string name="connection_proxy_invalid_toast">Check the server address and port</string>
+    <string name="connection_proxy_saved_toast">Saved</string>
+    <string name="connection_master_toggle">Connection</string>
+    <string name="connection_mode_socks5">SOCKS5</string>
+    <string name="connection_mode_direct">Direct connection</string>
+    <string name="connection_relays_count">%1$d of %2$d relays</string>
     <string name="relays_sub_full">%1$d built-in + %2$d added · v%3$d</string>
     <string name="pub_title">Relay list publisher</string>
     <string name="pub_no_key_info">Enter the publisher private key. It is stored only on this phone (Keystore) and never leaves it. The relay list is signed with it; users accept only a list signed by the key baked into the app.</string>
@@ -850,31 +882,4 @@
     <string name="tester_pwd_hint">Password</string>
     <string name="tester_pwd_wrong">Access denied</string>
     <string name="sticker_show_all_format">Show all (%1$d)</string>
-    <string name="media_diag_copied_fmt">Reason copied: %1$s</string>
-    <!-- Battery optimization warning screen (first time notifications are enabled) -->
-    <string name="battery_hint_title">Allow background activity</string>
-    <string name="battery_hint_body">For notifications to arrive reliably and on time, turn off battery optimization for Atrum. Otherwise the system puts the app to sleep — and messages arrive late or not at all.</string>
-    <string name="battery_hint_reassure">This barely affects your battery — Atrum runs lean and doesn\'t waste charge.</string>
-    <string name="battery_hint_btn_disable">Turn off optimization</string>
-    <string name="battery_hint_btn_later">Later</string>
-    <!-- Photo picker gallery -->
-    <string name="gallery_title">Recent</string>
-    <string name="gallery_empty">No photos</string>
-    <string name="gallery_pick_more">Select more</string>
-    <string name="gallery_close_cd">Close</string>
-    <string name="gallery_send_n">Send (%1$d)</string>
-    <string name="gallery_remove_cd">Remove photo</string>
-    <string name="gallery_add_cd">Add more</string>
-    <string name="gallery_perm_needed">Allow photo access to pick images</string>
-    <!-- Root warning dialog -->
-    <string name="root_warn_title">Root access detected</string>
-    <string name="root_warn_xda">XDA Developers</string>
-    <string name="root_warn_4pda">4PDA</string>
-    <string name="root_warn_ok">Got it</string>
-    <string name="root_warn_body">Root access (superuser) was detected on this device.\n\nWhy this can be risky:\n• Apps with root get full system access, bypassing the Android sandbox — malware could read your data, keys and messages straight from memory, even with encryption.\n• Root weakens the protection of stored chat passwords.\n• Infected root managers and modules can intercept input.\n\nPrecautions:\n• Use only trusted firmware and software — for example from %1$s and %2$s.\n• Do not grant root to questionable apps.\n• Keep Magisk updated and revoke unneeded permissions.\n\nThis is just a reminder — it does not affect how Atrum works, all features are available as usual.</string>
-    <!-- Banner: sticker animation off on low battery -->
-    <string name="warn_sticker_title">Sticker animation off</string>
-    <string name="warn_sticker_message">Saving battery (≤15%). Stickers show the first frame.</string>
-    <string name="btn_enable_anim">Enable</string>
-    <string name="remember_choice">Remember</string>
-</resources>
+    <string name="media_diag_copied_fmt">Reason copied: %1$s</stri

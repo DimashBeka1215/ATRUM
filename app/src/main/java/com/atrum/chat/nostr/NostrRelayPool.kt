@@ -16,8 +16,11 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import java.net.Authenticator
 import java.net.InetSocketAddress
+import java.net.PasswordAuthentication
 import java.net.Proxy
+import java.net.ProxySelector
 import org.json.JSONArray
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -41,10 +44,35 @@ import java.util.concurrent.atomic.AtomicLong
  */
 object NostrRelayPool {
 
+    // ⚠️ ОБХОД DPI-БЛОКИРОВКИ ПО SNI (см. nostr/SniFragment.kt). Выключено по умолчанию —
+    // включается NostrTransport'ом, когда прямой (не-Tor) путь уже похоже заблокирован
+    // (queryAllRelays/publishToAnyRelay получили 0 ответов). Флаг на весь процесс: как только
+    // один раз помогло — остаёмся в этом режиме, не перепроверяем на каждом соединении.
+    @Volatile private var directFragmentationEnabled = false
+
+    fun enableDirectFragmentation() {
+        if (!directFragmentationEnabled) {
+            directFragmentationEnabled = true
+            android.util.Log.i("AtrumNostr", "SNI-фрагментация включена для прямого пути (похоже на DPI-блокировку)")
+        }
+    }
+
     private fun buildClient(useTor: Boolean): OkHttpClient {
         val b = OkHttpClient.Builder()
             .connectTimeout(if (useTor) 45L else 15L, TimeUnit.SECONDS) // Tor дольше; direct — быстрый фейл
-            .readTimeout(0, TimeUnit.MILLISECONDS) // долгоживущее соединение — без read-таймаута
+            // ⚠️ ИСПРАВЛЕНО (по просьбе пользователя, "таймаут в любом случае надо поправить"):
+            // было readTimeout=0 (без таймаута вообще) — расчёт на то, что наши СВОИ таймауты
+            // (withTimeout(45с) на хендшейк в socket(), withTimeout(timeoutMs) на query/publish)
+            // достаточно всё бы ограничивали. Но это coroutine-level таймауты — они отменяют
+            // ОЖИДАНИЕ на нашей стороне, а не обязательно прерывают уже блокирующий read() у
+            // OkHttp на его внутреннем потоке (диспетчер OkHttp — не корутина, не отменяется
+            // так же). При DPI-блокировке (пакеты после handshake молча дропаются) это давало
+            // зависание на 30+ секунд БЕЗ исключения (см. ATRUM_UPLOAD_HANG_DEBUG). Конечный
+            // read-таймаут — это доп. защита НИЖНЕГО уровня (сокет), независимая от того, не
+            // застряли ли наши корутины/диспетчер. pingInterval (20с) ниже гарантированно
+            // держит ЗДОРОВОЕ долгоживущее соединение живым — pong засчитывается как чтение и
+            // сбрасывает таймер, так что раннее закрытие идле-соединений не грозит.
+            .readTimeout(if (useTor) 45L else 30L, TimeUnit.SECONDS)
             .pingInterval(20, TimeUnit.SECONDS)    // keep-alive сквозь NAT
             // Отключаем сжатие WebSocket (permessage-deflate). Это лечит краш
             // ArrayIndexOutOfBoundsException в MessageDeflater.close при обрыве соединения
@@ -75,19 +103,100 @@ object NostrRelayPool {
             // не резолвила адрес прокси заранее.
             b.proxy(Proxy(Proxy.Type.SOCKS,
                 InetSocketAddress.createUnresolved("127.0.0.1", com.atrum.chat.TorManager.SOCKS_PORT)))
+        } else {
+            // SNI-фрагментация — см. SniFragment.kt. Сама фабрика ничего не меняет, пока
+            // directFragmentationEnabled == false (проверяется на каждой записи, не на
+            // билде клиента, так что переключение флага в рантайме сразу подхватывается
+            // без пересоздания OkHttpClient).
+            b.socketFactory(SniFragmentingSocketFactory { directFragmentationEnabled })
         }
         return b.build()
     }
 
+    /**
+     * Клиент для пользовательского SOCKS5-прокси (экран «Соединение», см. ConnectionPrefs).
+     * Отдельный от [directClient]: НЕ применяет SNI-фрагментацию — первая запись в сокет
+     * тут является SOCKS5-хендшейком (адрес прокси), а не TLS ClientHello, так что «разрезать
+     * первую запись» было бы бессмысленно и могло сломать сам SOCKS5-хендшейк.
+     *
+     * Прокси-адрес читается ДИНАМИЧЕСКИ на каждое подключение через ProxySelector (а не
+     * зафиксирован в Proxy(...) один раз при билде клиента) — это даёт мгновенный подхват
+     * изменений хоста/порта из ConnectionActivity без пересоздания OkHttpClient.
+     */
+    private fun buildCustomProxyClient(): OkHttpClient {
+        val b = OkHttpClient.Builder()
+            .connectTimeout(15L, TimeUnit.SECONDS)
+            .readTimeout(30L, TimeUnit.SECONDS)
+            .pingInterval(20, TimeUnit.SECONDS)
+            .addNetworkInterceptor { chain ->
+                val resp = chain.proceed(
+                    chain.request().newBuilder()
+                        .removeHeader("Sec-WebSocket-Extensions")
+                        .build()
+                )
+                if (resp.header("Sec-WebSocket-Extensions") != null) {
+                    resp.newBuilder().removeHeader("Sec-WebSocket-Extensions").build()
+                } else {
+                    resp
+                }
+            }
+            .proxySelector(object : ProxySelector() {
+                override fun select(uri: java.net.URI): List<Proxy> {
+                    val host = com.atrum.chat.ConnectionPrefs.proxyHost
+                    val port = com.atrum.chat.ConnectionPrefs.proxyPort
+                    if (host.isBlank() || port !in 1..65535) return listOf(Proxy.NO_PROXY)
+                    return listOf(Proxy(Proxy.Type.SOCKS, InetSocketAddress.createUnresolved(host, port)))
+                }
+                override fun connectFailed(uri: java.net.URI, sa: java.net.SocketAddress, ioe: java.io.IOException) {}
+            })
+        return b.build()
+    }
+
+    // Логин/пароль SOCKS5 (опционально) — JDK спрашивает через Authenticator.setDefault,
+    // единой точкой на процесс. Отдаём креды ТОЛЬКО когда запрос реально адресован нашему
+    // настроенному прокси-хосту/порту; иначе null (обычное поведение "без авторизации"),
+    // чтобы не задеть другие возможные Proxy-Authenticator'ы в процессе.
+    init {
+        Authenticator.setDefault(object : Authenticator() {
+            override fun getPasswordAuthentication(): PasswordAuthentication? {
+                val host = com.atrum.chat.ConnectionPrefs.proxyHost
+                val login = com.atrum.chat.ConnectionPrefs.proxyLogin
+                val password = com.atrum.chat.ConnectionPrefs.proxyPassword
+                if (login.isBlank()) return null
+                if (!requestingHost.equals(host, ignoreCase = true) || requestingPort != com.atrum.chat.ConnectionPrefs.proxyPort) {
+                    return null
+                }
+                return PasswordAuthentication(login, password.toCharArray())
+            }
+        })
+    }
+
     private val torClient = buildClient(useTor = true)
     private val directClient = buildClient(useTor = false)
+    private val customProxyClient by lazy { buildCustomProxyClient() }
 
-    // Соединения раздельные для Tor и прямого режима (один URL может иметь оба).
+    /** true, если для прямого (не-Tor) пути сейчас нужно использовать кастомный SOCKS5. */
+    private fun useCustomProxy(): Boolean =
+        com.atrum.chat.ConnectionPrefs.customProxyEnabled && com.atrum.chat.ConnectionPrefs.isConfigValid()
+
+    // Соединения раздельные для Tor / кастомного прокси / прямого режима (один URL может
+    // иметь несколько одновременно, если режим переключался в рантайме — старые просто
+    // не переиспользуются и в итоге простаивают, это безопасно).
     private val conns = ConcurrentHashMap<String, RelayConn>()
-    private fun conn(url: String, useTor: Boolean) =
-        conns.getOrPut((if (useTor) "tor|" else "dir|") + url) {
-            RelayConn(url, if (useTor) torClient else directClient)
+    private fun conn(url: String, useTor: Boolean): RelayConn {
+        val viaProxy = !useTor && useCustomProxy()
+        val key = when {
+            useTor -> "tor|$url"
+            viaProxy -> "proxy|$url"
+            else -> "dir|$url"
         }
+        val client = when {
+            useTor -> torClient
+            viaProxy -> customProxyClient
+            else -> directClient
+        }
+        return conns.getOrPut(key) { RelayConn(url, client) }
+    }
 
     /** Фоновый scope для прогрева соединений (не привязан к Activity). */
     private val poolScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -156,149 +265,4 @@ private class RelayConn(private val url: String, private val client: OkHttpClien
                         opened.complete(webSocket)
                     }
                     override fun onMessage(webSocket: WebSocket, text: String) {
-                        // ⚠️ НЕ логировать здесь сырьё: onMessage срабатывает на КАЖДОЕ
-                        // событие реле (до 1000 за запрос × ~10 реле), и синхронный лог в
-                        // этом потоке-читателе okhttp растёт вместе с историей чата →
-                        // доставка «тормозит со временем». Плюс это утечка шифртекста в logcat.
-                        dispatch(text)
-                    }
-                    override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                        if (!opened.isCompleted) opened.completeExceptionally(t)
-                        drop(t)
-                    }
-                    override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                        drop(RuntimeException("relay closed: $reason"))
-                    }
-                }
-            )
-            return try {
-                withTimeout(45_000L) { opened.await() }.also { ws = it }
-            } catch (e: Exception) {
-                sock.cancel()
-                throw e
-            }
-        }
-    }
-
-    private fun dispatch(text: String) {
-        try {
-            val arr = JSONArray(text)
-            when (arr.optString(0)) {
-                "EVENT" -> {
-                    val sub = subs[arr.optString(1)] ?: return
-                    NostrEvent.fromJson(arr.getJSONObject(2))?.let { ev ->
-                        val cb = sub.onEvent
-                        if (cb != null) cb(ev) else synchronized(sub.events) { sub.events.add(ev) }
-                    }
-                }
-                "EOSE" -> subs[arr.optString(1)]?.eose?.complete(Unit)
-                "CLOSED" -> subs[arr.optString(1)]?.eose?.complete(Unit)
-                "OK" -> {
-                    val waiter = pubs.remove(arr.optString(1)) ?: return
-                    if (arr.optBoolean(2, true)) waiter.complete(Unit)
-                    else waiter.completeExceptionally(
-                        RuntimeException("Relay rejected event: ${arr.optString(3)}")
-                    )
-                }
-                // "NOTICE" — игнорируем
-            }
-        } catch (_: Exception) { }
-    }
-
-    /**
-     * Принудительный сброс сокета — ТОЛЬКО если он всё ещё текущий (===). Защита от
-     * гонки: если параллельная корутина уже переподключила соединение, мы не рвём
-     * новое живое. Используется когда query/publish не получили ответа за таймаут —
-     * мёртвое соединение нужно отбраковать, не дожидаясь медленного okhttp-пинга.
-     */
-    private fun resetIfCurrent(sock: WebSocket) {
-        if (ws === sock) {
-            runCatching { sock.cancel() }
-            drop(RuntimeException("relay reset: stale socket $url"))
-        }
-    }
-
-    /** Обрыв соединения: сбрасываем сокет и завершаем все ожидания, чтобы они ретраились. */
-    private fun drop(cause: Throwable) {
-        ws = null
-        subs.values.forEach { if (!it.eose.isCompleted) it.eose.complete(Unit) }
-        subs.clear()
-        pubs.values.forEach { if (!it.isCompleted) it.completeExceptionally(cause) }
-        pubs.clear()
-    }
-
-    suspend fun query(filter: org.json.JSONObject, timeoutMs: Long): List<NostrEvent> =
-        withContext(Dispatchers.IO) {
-            val sock = socket()
-            val subId = "atrum_${seq.incrementAndGet()}"
-            val sub = Sub()
-            subs[subId] = sub
-            try {
-                val req = JSONArray().apply { put("REQ"); put(subId); put(filter) }.toString()
-                if (!sock.send(req)) throw RuntimeException("ws send failed")
-                try {
-                    withTimeout(timeoutMs) { sub.eose.await() }
-                } catch (_: TimeoutCancellationException) {
-                    // EOSE так и не пришёл за timeoutMs → сокет, скорее всего, мёртв
-                    // (мёртвая Tor-цепочка / half-open соединение, которое okhttp-пинг
-                    // ещё не отбраковал). Сбрасываем его, чтобы СЛЕДУЮЩИЙ запрос
-                    // переподключился, и сигналим вызывателю ошибкой — иначе пустой
-                    // ответ зомби-сокета засчитается как «реле ответило» и опрос
-                    // молча застрянет навсегда (sync «не происходит»).
-                    resetIfCurrent(sock)
-                    throw RuntimeException("relay query timeout (no EOSE): $url")
-                }
-                runCatching { sock.send(JSONArray().apply { put("CLOSE"); put(subId) }.toString()) }
-                synchronized(sub.events) { sub.events.toList() }
-            } catch (ce: CancellationException) {
-                // Внешняя отмена (мягкий дедлайн queryAllRelays). Не сбрасываем сокет
-                // принудительно, т.к. он может быть здоров, просто медленнее конкурентов.
-                // Настоящий «зомби-сокет» будет отбракован по внутреннему timeoutMs (20с).
-                throw ce
-            } finally {
-                subs.remove(subId)
-            }
-        }
-
-    /** Потоковая подписка: REQ остаётся ОТКРЫТЫМ, реле само шлёт новые EVENT в onEvent. */
-    suspend fun subscribe(subId: String, filter: org.json.JSONObject, onEvent: (NostrEvent) -> Unit): Unit =
-        withContext(Dispatchers.IO) {
-            val sock = socket()
-            subs[subId] = Sub(onEvent)
-            val req = JSONArray().apply { put("REQ"); put(subId); put(filter) }.toString()
-            if (!sock.send(req)) { subs.remove(subId); throw RuntimeException("ws send failed") }
-        }
-
-    fun unsubscribe(subId: String) {
-        subs.remove(subId)
-        try { ws?.send(JSONArray().apply { put("CLOSE"); put(subId) }.toString()) } catch (_: Exception) {}
-    }
-
-    /** true если подписка ещё жива (реконнект через drop() её снимает → нужно переоткрыть). */
-    fun hasSub(subId: String): Boolean = subs.containsKey(subId)
-
-    suspend fun publish(event: NostrEvent, timeoutMs: Long): Unit = withContext(Dispatchers.IO) {
-        val sock = socket()
-        val waiter = CompletableDeferred<Unit>()
-        pubs[event.id] = waiter
-        try {
-            val msg = JSONArray().apply { put("EVENT"); put(event.toJson()) }.toString()
-            if (!sock.send(msg)) throw RuntimeException("ws send failed")
-            try {
-                withTimeout(timeoutMs) { waiter.await() }
-            } catch (_: TimeoutCancellationException) {
-                // Нет "OK" за таймаут → сокет, вероятно, мёртв. Сбрасываем, чтобы
-                // следующая отправка переподключилась, а не зависала на зомби-сокете.
-                resetIfCurrent(sock)
-                throw RuntimeException("Relay $url publish timeout")
-            }
-        } finally {
-            pubs.remove(event.id)
-        }
-    }
-
-    fun close() {
-        try { ws?.close(1000, null) } catch (_: Exception) {}
-        drop(RuntimeException("pool shutdown"))
-    }
-}
+                        // ⚠️ НЕ логиров�

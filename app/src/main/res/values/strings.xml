@@ -29,6 +29,9 @@
     <string name="intro_5_title">Безопасность не абсолютна</string>
     <string name="intro_5_subtitle">Идеальной защиты не существует, и автор её не гарантирует. Многое зависит от тебя: используй надёжные пароли для приглашений и передавай код приглашения только надёжным способом. Если он утечёт или попадёт в незащищённый мессенджер — переписку теоретически смогут прочитать.</string>
 
+    <string name="intro_vpn_title">Фото и голосовые не отправляются?</string>
+    <string name="intro_vpn_subtitle">В некоторых странах провайдеры блокируют часть сети. Попробуй включить VPN или прокси — на приватность это не влияет: сообщения всё равно шифруются на устройстве до отправки. Это временная мера, пока мы работаем над более надёжной доставкой.</string>
+
     <string name="badge_beta">EXPERIMENTAL BETA</string>
 
     <!-- Onboarding -->
@@ -794,7 +797,36 @@
     <string name="settings_section_network">Сеть</string>
     <string name="settings_item_relays">Реле сообщений</string>
     <string name="settings_item_publisher">Издатель списка реле</string>
+    <string name="settings_item_connection">Соединение</string>
     <string name="relays_sub_builtin">%1$d встроенных</string>
+
+    <!-- Экран «Соединение»: статус реле + пользовательский SOCKS5-прокси -->
+    <string name="connection_section_relays">Статус реле</string>
+    <string name="connection_relays_privacy_hint">Адреса реле не показываются — только статус и задержка ответа. Данные обновляются, пока открыт хотя бы один чат.</string>
+    <string name="connection_relay_label">Реле %1$d</string>
+    <string name="connection_no_data">нет данных</string>
+    <string name="connection_ms_value">%1$d мс</string>
+    <string name="connection_section_proxy">Прокси</string>
+    <string name="connection_proxy_off">Без прокси</string>
+    <string name="connection_proxy_socks5">Свой SOCKS5</string>
+    <string name="connection_proxy_host_label">Сервер</string>
+    <string name="connection_proxy_host_hint">адрес или домен</string>
+    <string name="connection_proxy_port_label">Порт</string>
+    <string name="connection_proxy_port_hint">1080</string>
+    <string name="connection_proxy_login_label">Логин (необязательно)</string>
+    <string name="connection_proxy_login_hint">логин</string>
+    <string name="connection_proxy_password_label">Пароль (необязательно)</string>
+    <string name="connection_proxy_password_hint">пароль</string>
+    <string name="connection_proxy_save">Сохранить</string>
+    <string name="connection_proxy_scope_hint">Действует только для прямого подключения (без Tor). Если чат использует Tor — эта настройка на него не влияет.</string>
+    <string name="connection_proxy_not_configured">Сначала укажи и сохрани адрес прокси</string>
+    <string name="connection_proxy_disabled_toast">Прокси отключён</string>
+    <string name="connection_proxy_invalid_toast">Проверь адрес и порт сервера</string>
+    <string name="connection_proxy_saved_toast">Сохранено</string>
+    <string name="connection_master_toggle">Соединение</string>
+    <string name="connection_mode_socks5">SOCKS5</string>
+    <string name="connection_mode_direct">Прямое соединение</string>
+    <string name="connection_relays_count">%1$d из %2$d реле</string>
     <string name="relays_sub_full">%1$d встроенных + %2$d добавленных · v%3$d</string>
     <string name="pub_title">Издатель списка реле</string>
     <string name="pub_no_key_info">Введи приватный ключ издателя. Он хранится только на этом телефоне (Keystore) и в сеть не уходит. Список реле подписывается им; пользователи принимают только список с подписью вшитого ключа.</string>
@@ -871,28 +903,4 @@
     <string name="media_diag_copied_fmt">Причина скопирована: %1$s</string>
     <!-- Экран предупреждения про экономию батареи (первое включение уведомлений) -->
     <string name="battery_hint_title">Разрешите работу в фоне</string>
-    <string name="battery_hint_body">Чтобы уведомления приходили стабильно и вовремя, отключите оптимизацию батареи для Atrum. Иначе система «усыпляет» приложение — и сообщения приходят с задержкой или не приходят вовсе.</string>
-    <string name="battery_hint_reassure">На заряд это почти не влияет — Atrum работает экономно и не расходует батарею впустую.</string>
-    <string name="battery_hint_btn_disable">Отключить оптимизацию</string>
-    <string name="battery_hint_btn_later">Позже</string>
-    <!-- Галерея выбора фото -->
-    <string name="gallery_title">Недавние</string>
-    <string name="gallery_empty">Нет фотографий</string>
-    <string name="gallery_pick_more">Выбрать ещё</string>
-    <string name="gallery_close_cd">Закрыть</string>
-    <string name="gallery_send_n">Отправить (%1$d)</string>
-    <string name="gallery_remove_cd">Убрать фото</string>
-    <string name="gallery_add_cd">Добавить ещё</string>
-    <string name="gallery_perm_needed">Разрешите доступ к фото, чтобы выбрать изображения</string>
-    <!-- Окно-предупреждение о root-правах -->
-    <string name="root_warn_title">Обнаружены root-права</string>
-    <string name="root_warn_xda">XDA Developers</string>
-    <string name="root_warn_4pda">4PDA</string>
-    <string name="root_warn_ok">Понятно</string>
-    <string name="root_warn_body">На устройстве обнаружен root-доступ (суперпользователь).\n\nЧем это может быть опасно:\n• Приложения с root получают полный доступ к системе в обход песочницы Android — вредонос может прочитать данные, ключи и переписку прямо из памяти, даже несмотря на шифрование.\n• Root ослабляет защиту хранилища паролей чатов.\n• Заражённые root-менеджеры и модули могут перехватывать ввод.\n\nМеры предосторожности:\n• Используйте только проверенные прошивки и софт — например, с %1$s и %2$s.\n• Не выдавайте root сомнительным приложениям.\n• Держите Magisk обновлённым, отзывайте лишние разрешения.\n\nЭто просто напоминание — на работу Atrum не влияет, все функции доступны как обычно.</string>
-    <!-- Плашка: анимация стикеров выключена при низком заряде -->
-    <string name="warn_sticker_title">Анимация стикеров выключена</string>
-    <string name="warn_sticker_message">Экономия заряда (≤15%). Стикеры показаны первым кадром.</string>
-    <string name="btn_enable_anim">Включить</string>
-    <string name="remember_choice">Запомнить</string>
-</resources>
+    <string name="battery_hint_body">Чтобы уведомления приходили стабильно и вовремя, отключите оптимизацию батареи для Atrum. Иначе система «усыпляет» приложение — и �

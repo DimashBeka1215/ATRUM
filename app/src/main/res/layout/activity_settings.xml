@@ -505,6 +505,24 @@
                     </LinearLayout>
 
                     <LinearLayout
+                        android:id="@+id/itemConnection"
+                        android:layout_width="match_parent"
+                        android:layout_height="56dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:paddingHorizontal="16dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true">
+                        <ImageView android:layout_width="22dp" android:layout_height="22dp"
+                            android:src="@drawable/ic_link" android:tint="@color/accent" android:layout_marginEnd="14dp" />
+                        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                            android:text="@string/settings_item_connection" android:textColor="@color/text_primary" android:textSize="15sp" />
+                        <ImageView android:layout_width="18dp" android:layout_height="18dp"
+                            android:src="@drawable/ic_chevron_right" android:tint="@color/text_tertiary" />
+                    </LinearLayout>
+
+                    <LinearLayout
                         android:id="@+id/itemPublisher"
                         android:layout_width="match_parent"
                         android:layout_height="56dp"
@@ -702,37 +720,4 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:background="@drawable/bg_avatar_purple">
-                <TextView
-                    android:id="@+id/tvTopBarAvatarInitial"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:textColor="@color/white"
-                    android:textSize="14sp"
-                    android:fontFamily="sans-serif-medium" />
-            </FrameLayout>
-        </FrameLayout>
-
-        <com.google.android.material.imageview.ShapeableImageView
-            android:id="@+id/ivTopBarAvatar"
-            android:layout_width="34dp"
-            android:layout_height="34dp"
-            android:scaleType="centerCrop"
-            android:visibility="gone"
-            app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.Circle" />
-
-        <TextView
-            android:id="@+id/tvTopBarName"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="10dp"
-            android:textColor="@color/text_primary"
-            android:textSize="17sp"
-            android:fontFamily="sans-serif-medium"
-            android:textStyle="bold" />
-    </LinearLayout>
-
-    <!-- Back button removed -->
-
-
-</FrameLayout>
+  

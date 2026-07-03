@@ -79,9 +79,15 @@ class ChatStore {
     }
 
     fun failSend(encryptedLine: String) {
-        if (pendingByRaw.containsKey(encryptedLine)) {
-            emit()
+        val m = pendingByRaw[encryptedLine] ?: return
+        // ⚠️ ФИКС (тот же класс бага, что с !isConfirmed в MessageAdapter): при сбое
+        // заливки кольцо прогресса иначе остаётся висеть на последнем % навсегда —
+        // isPending остаётся true, а imageUploadPct никто не сбрасывает. index=-1 не
+        // совпадает ни с одной ячейкой/фото → MessageAdapter скрывает кольцо.
+        if (m.imageUploadIndex != -1) {
+            pendingByRaw[encryptedLine] = m.copy(imageUploadIndex = -1)
         }
+        emit()
     }
 
     fun addTombstone(msgId: String) {
@@ -164,22 +170,4 @@ class ChatStore {
             // Пропускаем, если сообщение уже добавлено как замена или уже обработано
             if (p.msgId in replacedIds || p.rawEncrypted in addedRaw) continue
             
-            // Если это не правка (replacingId == null), добавляем как новое
-            if (p.replacingId == null) {
-                addWithReplacement(p)
-            } else {
-                // Если это правка, но оригинал не найден — показываем хотя бы саму правку
-                if (p.rawEncrypted !in addedRaw) {
-                    result.add(p)
-                    addedRaw.add(p.rawEncrypted)
-                }
-            }
-        }
-
-        return result
-    }
-
-    private fun emit() {
-        _messages.value = compose()
-    }
-}
+            // Если 

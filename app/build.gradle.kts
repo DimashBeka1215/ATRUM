@@ -39,8 +39,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 298
-        versionName = "3.20.75-beta220-patch72"
+        versionCode = 312
+        versionName = "3.20.89-beta227-torandroid-phase1"
 
         // Включаем multidex чтобы не упереться в лимит 65k методов
         // когда много AndroidX/Material/Room/uCrop/browser библиотек
@@ -159,8 +159,20 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
     // Tor (встроенный) — Nostr через Tor. runtime + бинарники tor (exec).
+    // ⚠️ ПУТЬ ОТКАТА (см. TorManager.kt / TOR_BRIDGES_CONTINUE.md): kmp-tor не умеет
+    // мосты (Snowflake/obfs4) — публичного API для Bridge/ClientTransportPlugin/UseBridges
+    // нет ни в одной версии (проверено). Оставлен как fallback, пока новый TorManager
+    // (на tor-android, см. ниже) не обкатан на реальных устройствах.
     implementation("io.matthewnelson.kmp-tor:runtime:2.6.0")
     implementation("io.matthewnelson.kmp-tor:resource-exec-tor:409.5.0")
+
+    // Tor Android (Guardian Project, стек Orbot) — путь B из TOR_BRIDGES_CONTINUE.md.
+    // Даёт мосты (Snowflake/obfs4) "из коробки" через обычный torrc + control-port.
+    // Версии отслеживаются Dependabot'ом (.github/dependabot.yml) — при новом релизе
+    // Guardian Project сюда прилетает Pull Request на GitHub, а не тихое авто-обновление
+    // сборки (supply-chain risk недопустим для крипто-мессенджера).
+    implementation("info.guardianproject:tor-android:0.4.9.11")
+    implementation("info.guardianproject:jtorctl:0.4.5.7")
 
     // EncryptedSharedPreferences для безопасного хранения данных
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
@@ -193,22 +205,4 @@ dependencies {
     implementation("com.google.zxing:core:3.5.3")
 
     // Biometric — системный отпечаток (BiometricPrompt). Биометрия НЕ хранится
-    // в приложении: запрос идёт в системную подсистему телефона (на Samsung — Knox/TEE).
-    implementation("androidx.biometric:biometric:1.1.0")
-
-    // IPtProxy — pluggable transports (Lyrebird=obfs4/meek/webtunnel + Snowflake) для
-    // обхода блокировки Tor. Нативные бинари под все ABI уже внутри AAR. Используется
-    // в TorManager для запуска мостов, когда обычный Tor не поднимается (цензура).
-    implementation("com.netzarchitekten:IPtProxy:5.5.0")
-
-    // CameraX — превью камеры + анализ кадров для QR-сканера (Bluetooth-подключение по QR).
-    val cameraX = "1.3.4"
-    implementation("androidx.camera:camera-core:$cameraX")
-    implementation("androidx.camera:camera-camera2:$cameraX")
-    implementation("androidx.camera:camera-lifecycle:$cameraX")
-    implementation("androidx.camera:camera-view:$cameraX")
-
-    testImplementation("junit:junit:4.13.2")
-    testImplementation("io.mockk:mockk:1.13.11")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
-}
+    // в приложении: запрос идё

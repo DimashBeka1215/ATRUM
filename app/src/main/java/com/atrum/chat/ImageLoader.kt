@@ -92,9 +92,21 @@ class ImageLoader(
      * манифест без чанков / битый base64 / файл цел (сбой воспроизведения).
      */
     suspend fun diagnoseMedia(ref: String): String = try {
-        val raw = withContext(Dispatchers.IO) { api.loadFileOrNull(ref) }
+        // ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА (не для релиза, см. TODO_REMOVE_EMPTY_MEDIA_CRASH):
+        // раньше здесь был api.loadFileOrNull(ref), который ГЛОТАЕТ сообщение исключения
+        // (любая причина схлопывалась в "файл не найден на реле"). Ловим loadFile()
+        // напрямую, чтобы показать РЕАЛЬНУЮ причину из NostrTransport.loadFile(): не
+        // ответило ни одно реле (сеть/Tor) / реле ответили но канала нет / реле ответили
+        // но именно этого файла нет (не долетел при отправке).
+        var loadError: String? = null
+        val raw = try {
+            withContext(Dispatchers.IO) { api.loadFile(ref) }
+        } catch (e: Exception) {
+            loadError = e.message ?: e.toString()
+            null
+        }
         when {
-            raw == null -> "файл не найден на реле"
+            raw == null -> loadError ?: "файл не найден на реле (причина неизвестна)"
             else -> {
                 val dec = CryptoHelper.decrypt(raw, password, cryptoChatId)
                 when {
@@ -276,29 +288,4 @@ class ImageLoader(
             val sem = Semaphore(MAX_PARALLEL_CHUNKS)
             val parts = coroutineScope {
                 chunkNames.map { name ->
-                    async(Dispatchers.IO) { sem.withPermit { loadFileRetry(name) } }
-                }.awaitAll()
-            }
-            CryptoHelper.decrypt(parts.joinToString(""), password, cryptoChatId)
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    /**
-     * Загружает файл с ретраями — через Tor чтение нестабильно, и один транзиентный
-     * промах (реле не ответило за дедлайн) не должен рушить всю картинку/чанк.
-     */
-    private suspend fun loadFileRetry(name: String, attempts: Int = 5): String {
-        var last: Exception? = null
-        repeat(attempts) { i ->
-            try {
-                return withContext(Dispatchers.IO) { api.loadFile(name) }
-            } catch (e: Exception) {
-                last = e
-                if (i < attempts - 1) delay(900L * (i + 1))
-            }
-        }
-        throw last ?: RuntimeException("loadFile failed: $name")
-    }
-}
+                    async(Dispatchers.IO) { sem.withPe

@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Gradle-зависимости (в т.ч. info.guardianproject:tor-android / jtorctl — см.
+  # TOR_BRIDGES_CONTINUE.md, путь B). Dependabot сам откроет Pull Request, когда
+  # Guardian Project (или любая другая зависимость) выпустит новую версию — НЕ
+  # тихое авто-обновление сборки: PR нужно вручную проверить и смёржить.
+  # Это осознанный выбор для крипто-мессенджера — supply-chain риск от слепого
+  # авто-подтягивания чужого кода недопустим (см. CLAUDE.md §1).
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps"
+
+  # Сам workflow-файл Dependabot тоже стоит держать актуальным.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

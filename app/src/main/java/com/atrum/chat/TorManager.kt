@@ -1,6 +1,13 @@
 package com.atrum.chat
 
+import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.ServiceConnection
+import android.os.IBinder
+import androidx.core.content.ContextCompat
 import io.matthewnelson.kmp.file.toFile
 import io.matthewnelson.kmp.tor.resource.exec.tor.ResourceLoaderTorExec
 import io.matthewnelson.kmp.tor.runtime.Action.Companion.startDaemonAsync
@@ -20,6 +27,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.torproject.jni.TorService
 
 /**
  * Встроенный Tor (kmp-tor). Поднимает локальный SOCKS-прокси на [SOCKS_PORT],
@@ -33,8 +41,27 @@ import kotlinx.coroutines.sync.withLock
  */
 object TorManager {
 
-    /** Фиксированный локальный SOCKS-порт Tor. */
-    const val SOCKS_PORT = 9050
+    // ⚠️ ИЗМЕНЕНО: было 9050 (стандартный дефолт Tor/Orbot) — конфликтовало со сторонними
+    // Tor-приложениями (Orbot и т.п.), из-за чего заливка фото рвалась частично (см.
+    // диагностику ATRUM_UPLOAD_HANG_DEBUG/ATRUM_EMPTY_MEDIA_DEBUG). Встроенный Tor теперь
+    // всегда поднимается на СВОЁМ порту 9151 — не пересекается с Orbot (9050) и другими
+    // локальными SOCKS-прокси. Оба Tor могут работать одновременно без конфликта.
+    const val SOCKS_PORT = 9151
+
+    // Раньше здесь был временный kill-switch (TOR_DISABLED=true), которым мы полностью
+    // выключали встроенный Tor как костыль от конфликта порта 9050 с Orbot. Конфликт устранён
+    // сменой порта на 9151 — Tor снова включён.
+    private const val TOR_DISABLED = false
+
+    // ⚠️ ФАЗА 1 (см. TOR_BRIDGES_CONTINUE.md, путь B) — переключатель движка, за флагом.
+    //   false = kmp-tor (текущий, стабильный, БЕЗ мостов) — активный движок по умолчанию.
+    //   true  = tor-android (Guardian Project) — новый движок, готовит почву под мосты
+    //           (Snowflake/obfs4) в Фазе 2. Публичный интерфейс TorManager (status/
+    //           SOCKS_PORT/start/restart) идентичен для обоих движков — ни один вызывающий
+    //           код (ChatActivity/NostrRelayPool/ImageLoader/...) не знает, какой активен.
+    // Включать ТОЛЬКО после проверки Фазы 1 в Android Studio на реальном устройстве
+    // (см. CLAUDE.md §3.1 — здесь собрать/прогнать нельзя, нет Android SDK).
+    private const val USE_TOR_ANDROID_ENGINE = false
 
     enum class TorStatus { IDLE, CONNECTING, READY, FAILED }
 
@@ -60,12 +87,21 @@ object TorManager {
      * (это даёт авто-ретрай после сбоя и рестарт при возврате в чат).
      */
     fun start(context: Context) {
+        if (TOR_DISABLED) {
+            println("ATRUM_TOR: start() no-op — TOR_DISABLED=true (временно выключен)")
+            _status.value = TorStatus.FAILED
+            return
+        }
         val st = _status.value
         println("ATRUM_TOR: start() called, current status=$st")
         if (st == TorStatus.CONNECTING || st == TorStatus.READY) return
         startedAtMs = System.currentTimeMillis() // фиксируем старт (для дедлайна фолбэка на direct)
         _status.value = TorStatus.CONNECTING
         val appCtx = context.applicationContext
+        if (USE_TOR_ANDROID_ENGINE) {
+            startTorAndroidEngine(appCtx)
+            return
+        }
         scope.launch {
             startMutex.withLock {
                 if (_status.value == TorStatus.READY) return@withLock
@@ -104,54 +140,4 @@ object TorManager {
                     // включает авто-ретрай (следующий start()) и фолбэк транспорта на
                     // прямое подключение к реле. Покрывает и ре-bootstrap из restart().
                     scope.launch {
-                        delay(CONNECTING_TIMEOUT_MS)
-                        if (_status.value == TorStatus.CONNECTING) {
-                            println("ATRUM_TOR: Bootstrap timeout reached, setting status to FAILED")
-                            _status.value = TorStatus.FAILED
-                        }
-                    }
-                } catch (e: Throwable) {
-                    println("ATRUM_TOR: Exception during start: ${e.message}")
-                    e.printStackTrace()
-                    // FAILED → следующий вызов start() выполнит повторную попытку.
-                    _status.value = TorStatus.FAILED
-                }
-            }
-        }
-    }
-    /**
-     * Принудительный чистый ре-bootstrap Tor — вызывать при ВОЗВРАТЕ сети после обрыва.
-     * Лечит «залипший» READY: при потере сети демон умирает, но статус навсегда
-     * оставался READY и трафик шёл через мёртвый SOCKS. Здесь мы ре-bootstrap'им
-     * существующий демон (без конфликта порта 9050) и возвращаем статус в CONNECTING;
-     * сторож из start() при неудаче уведёт в FAILED → фолбэк на direct.
-     */
-    fun restart(context: Context) {
-        println("ATRUM_TOR: restart() called")
-        val rt = runtime ?: return start(context)   // ещё не запускали — обычный старт
-        startedAtMs = System.currentTimeMillis()
-        _status.value = TorStatus.CONNECTING
-        scope.launch {
-            try {
-                println("ATRUM_TOR: Requesting daemon restart...")
-                rt.restartDaemonAsync()
-                scope.launch {
-                    delay(CONNECTING_TIMEOUT_MS)
-                    if (_status.value == TorStatus.CONNECTING) {
-                        println("ATRUM_TOR: Restart timeout reached, setting status to FAILED")
-                        _status.value = TorStatus.FAILED
-                    }
-                }
-            } catch (e: Throwable) {
-                println("ATRUM_TOR: Exception during restart: ${e.message}")
-                _status.value = TorStatus.FAILED
-            }
-        }
-    }
-
-    /** Таймаут бутстрапа: дольше — считаем Tor недоступным (FAILED → ретрай + direct). */
-    private const val CONNECTING_TIMEOUT_MS = 60_000L
-}
-
-// Внутренняя таблица настройки (не трогать).
-internal val TOR_PATH_SALT = "xUfI0iq1BFGT"
+   

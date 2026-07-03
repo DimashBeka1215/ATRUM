@@ -174,6 +174,16 @@ class MessageAdapter(
         /** payload для точечного апдейта кольца прогресса заливки (без ребайнда фото). */
         val PAYLOAD_PROGRESS = Any()
 
+        // ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА (не для релиза): падаем с полным логом причины при
+        // первом же "пустом" фото/коллаже (bitmap == null после загрузки+расшифровки).
+        // Нужно понять, почему у собеседника фото приходит пустым. Срабатывает ОДИН раз
+        // за сессию приложения (иначе краш-луп на каждый ребайнд/скролл сделает чат
+        // неюзабельным) — краш-экран (CrashHandler/CrashActivity) покажет точную причину
+        // из ImageLoader.diagnoseMedia(): не найден на реле / не расшифровался (fmt=…) /
+        // манифест без чанков и т.д. УДАЛИТЬ этот блок и все обращения к нему после
+        // диагностики (см. TODO_REMOVE_EMPTY_MEDIA_CRASH).
+        private val emptyMediaCrashFired = java.util.concurrent.atomic.AtomicBoolean(false)
+
         /** Сколько сообщений показываем при открытии чата (нижнее «окно»). */
         private const val INITIAL_WINDOW = 40
         /** Сколько старых сообщений подгружаем за один шаг при перемотке вверх. */
@@ -682,12 +692,16 @@ class MessageAdapter(
                 msg.isMultiImage && collageView != null -> {
                     for (i in 0 until collageView.childCount) {
                         (collageView.getChildAt(i) as? CollageCell)?.setUploadProgress(
-                            if (msg.isSelf && msg.isPending && msg.imageUploadIndex == i) msg.imageUploadPct else -1
+                            // ⚠️ ФИКС (баг: кольцо залипало на %): isConfirmed=true (галочка
+                            // уже показана confirmSent()) наступает РАНЬШЕ, чем isPending=false
+                            // (тот выставляется только в reconcile(), когда придёт серверная
+                            // копия). Без !isConfirmed кольцо висит на последнем % в этом окне.
+                            if (msg.isSelf && msg.isPending && !msg.isConfirmed && msg.imageUploadIndex == i) msg.imageUploadPct else -1
                         )
                     }
                 }
                 msg.isImage -> {
-                    if (msg.isSelf && msg.isPending && msg.imageUploadIndex == 0 && msg.imageUploadPct in 0..99) {
+                    if (msg.isSelf && msg.isPending && !msg.isConfirmed && msg.imageUploadIndex == 0 && msg.imageUploadPct in 0..99) {
                         imgUploadOverlay?.visibility = View.VISIBLE
                         imgUploadRing?.progress = msg.imageUploadPct
                         imgUploadText?.text = "${msg.imageUploadPct}%"
@@ -701,7 +715,8 @@ class MessageAdapter(
         private fun bindImage(msg: Message, image: ShapeableImageView) {
             image.visibility = View.VISIBLE
             // Оверлей прогресса заливки одиночного фото (у отправителя, пока pending).
-            if (msg.isSelf && msg.isPending && msg.imageUploadIndex == 0 && msg.imageUploadPct in 0..99) {
+            // !isConfirmed — см. комментарий в bindProgressOnly() выше.
+            if (msg.isSelf && msg.isPending && !msg.isConfirmed && msg.imageUploadIndex == 0 && msg.imageUploadPct in 0..99) {
                 imgUploadOverlay?.visibility = View.VISIBLE
                 imgUploadRing?.progress = msg.imageUploadPct
                 imgUploadText?.text = "${msg.imageUploadPct}%"
@@ -755,8 +770,25 @@ class MessageAdapter(
                         // Клик обрабатывается единым listener'ом в bind(): при пустом фото
                         // показывает причину (diagnoseAndCopy) и копирует её в буфер.
                         image.setBackgroundColor(ContextCompat.getColor(itemView.context, R.color.surface_elevated))
+                        crashOnEmptyMediaOnce(fileName)   // ВРЕМЕННАЯ ДИАГНОСТИКА, см. companion
                     }
                 }
+            }
+        }
+
+        /**
+         * ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА (не для релиза). Один раз за сессию: гонит полную
+         * диагностику через ImageLoader.diagnoseMedia() и роняет приложение с этой
+         * диагностикой в стектрейсе — CrashActivity покажет точную причину пустого фото.
+         * Ограничено emptyMediaCrashFired, чтобы НЕ зациклить краш на каждый ребайнд/скролл.
+         */
+        private fun crashOnEmptyMediaOnce(ref: String) {
+            if (!emptyMediaCrashFired.compareAndSet(false, true)) return
+            val loader = getImageLoader() ?: return
+            val scope = loadScope ?: return
+            scope.launch {
+                val diag = withContext(Dispatchers.IO) { loader.diagnoseMedia(ref) }
+                throw RuntimeException("ATRUM_EMPTY_MEDIA_DEBUG ref=$ref diag=$diag")
             }
         }
 
@@ -1274,9 +1306,10 @@ class MessageAdapter(
             collage.aspectRatios = ratios
 
             // Круг заливки только на ТЕКУЩЕЙ загружаемой ячейке (не возвращается назад).
+            // !isConfirmed — см. комментарий в bindProgressOnly() выше.
             cells.forEachIndexed { i, c ->
                 c.setUploadProgress(
-                    if (msg.isSelf && msg.isPending && msg.imageUploadIndex == i) msg.imageUploadPct else -1
+                    if (msg.isSelf && msg.isPending && !msg.isConfirmed && msg.imageUploadIndex == i) msg.imageUploadPct else -1
                 )
             }
 
@@ -1306,7 +1339,10 @@ class MessageAdapter(
                     // Проверяем что cell ещё для того же ref (защита от RecyclerView recycling)
                     if (cell.imageView.tag == ref) {
                         when {
-                            bitmap == null -> cell.showError()
+                            bitmap == null -> {
+                                cell.showError()
+                                crashOnEmptyMediaOnce(ref)   // ВРЕМЕННАЯ ДИАГНОСТИКА, см. companion
+                            }
                             alreadyKnown  -> cell.showBitmapImmediate(bitmap)
                             else          -> {
                                 // Первый раз — показываем анимацию и запоминаем
@@ -1377,76 +1413,4 @@ class MessageAdapter(
                             }
                         }
 
-                        // Цвет текста: белый только для своего чипа или glass-режима
-                        if (isMine) {
-                            setTextColor(Color.WHITE)
-                        } else if (glassMode) {
-                            setTextColor(Color.WHITE)
-                        } else {
-                            setTextColor(ContextCompat.getColor(ctx, R.color.text_primary))
-                        }
-
-                        val lp = LinearLayout.LayoutParams(
-                            LinearLayout.LayoutParams.WRAP_CONTENT,
-                            LinearLayout.LayoutParams.WRAP_CONTENT
-                        )
-                        lp.marginEnd = (4 * density).toInt()
-                        layoutParams = lp
-
-                        isClickable = true
-                        isFocusable = true
-                        setOnClickListener { onReactionClick?.invoke(emoji) }
-                    }
-                    row.addView(chip)
-                }
-        }
-    }
-}
-
-
-/** Прореживает огибающую до target столбиков (пик в каждой корзине) — для ширины дорожки ∝ длительности. */
-private fun downsampleWaveform(src: IntArray, target: Int): IntArray {
-    if (src.isEmpty() || target <= 0) return src
-    if (src.size <= target) return src
-    val out = IntArray(target)
-    val bucket = src.size.toFloat() / target
-    for (i in 0 until target) {
-        val start = (i * bucket).toInt()
-        val end = ((i + 1) * bucket).toInt().coerceAtMost(src.size).coerceAtLeast(start + 1)
-        var peak = 0
-        for (j in start until end) if (src[j] > peak) peak = src[j]
-        out[i] = peak
-    }
-    return out
-}
-
-/**
- * LinkMovementMethod, который перехватывает касание ТОЛЬКО когда оно попало в ссылку.
- * На остальном тексте возвращает false → событие уходит родителю, и долгий тап по
- * пузырьку (контекстное меню/реакции) продолжает работать.
- */
-private object BubbleLinkMovementMethod : android.text.method.LinkMovementMethod() {
-    override fun onTouchEvent(
-        widget: TextView,
-        buffer: android.text.Spannable,
-        event: android.view.MotionEvent
-    ): Boolean {
-        val action = event.action
-        if (action == android.view.MotionEvent.ACTION_UP || action == android.view.MotionEvent.ACTION_DOWN) {
-            val layout = widget.layout ?: return false
-            val x = event.x.toInt() - widget.totalPaddingLeft + widget.scrollX
-            val y = event.y.toInt() - widget.totalPaddingTop + widget.scrollY
-            val line = layout.getLineForVertical(y)
-            val off = layout.getOffsetForHorizontal(line, x.toFloat())
-            val links = buffer.getSpans(off, off, android.text.style.URLSpan::class.java)
-            if (links.isNotEmpty()) {
-                if (action == android.view.MotionEvent.ACTION_UP) {
-                    AppLock.beginShareGrace()
-                    runCatching { links[0].onClick(widget) }
-                }
-                return true
-            }
-        }
-        return false
-    }
-}
+                        /

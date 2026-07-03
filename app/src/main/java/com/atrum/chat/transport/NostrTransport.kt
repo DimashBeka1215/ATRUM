@@ -343,14 +343,29 @@ class NostrTransport(
             mediaCache.get(wireName(name))?.let { return it }
             mediaCache.get(name)?.let { return it } // старые события с cleartext-именем
         }
-        val events = queryAllRelays(fileFilter(name)) ?: emptyList()
+        // ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА (не для релиза, см. TODO_REMOVE_EMPTY_MEDIA_CRASH):
+        // раньше "не ответило ни одно реле" (queryAllRelays == null) и "реле ответили,
+        // но такого файла нет" (events без совпадения по тегу) схлопывались в ОДНО и то
+        // же сообщение — не отличить сетевую проблему от реального отсутствия контента
+        // на реле. Разбираем причину явно, только текст исключения меняется, логика
+        // (что бросаем при отсутствии) — та же самая.
+        val eventsOrNull = queryAllRelays(fileFilter(name))
+        val events = eventsOrNull ?: emptyList()
         val content = events
             .filter { ev -> eventHasFileName(ev, name) }
             .maxByOrNull { it.created_at }
             ?.content
-            ?: throw RuntimeException("Файл '$name' не найден в Nostr (channel=$channelId)")
-        if (isImmutableFile(name)) mediaCache.put(wireName(name), content)
-        return content
+        if (content != null) {
+            if (isImmutableFile(name)) mediaCache.put(wireName(name), content)
+            return content
+        }
+        val reason = when {
+            eventsOrNull == null -> "ни одно реле не ответило (сеть/Tor недоступны у ЧИТАЮЩЕГО)"
+            events.isEmpty() -> "реле ответили, но событий по каналу $channelId вообще нет"
+            else -> "реле ответили (${events.size} событий канала), но с тегом #d=этот файл — " +
+                "ни одного (контент не залит/не долетел до реле при отправке)"
+        }
+        throw RuntimeException("Файл '$name' не найден в Nostr (channel=$channelId): $reason")
     }
 
     /** Замена строки: надгробие старой + публикация новой. */
@@ -560,7 +575,13 @@ class NostrTransport(
         coroutineScope {
             val jobs = relays.map { url ->
                 launch {
+                    val t0 = System.currentTimeMillis()
                     val r = runCatching { NostrRelayPool.query(url, filter, useTor) }.getOrNull()
+                    // Телеметрия для экрана «Соединение» (ConnectionStats) — попутно с уже
+                    // идущим опросом, никакого нового polling-цикла (см. CLAUDE.md §1).
+                    com.atrum.chat.nostr.ConnectionStats.record(
+                        url, if (r != null) System.currentTimeMillis() - t0 else null
+                    )
                     // UNION READ: события собираются со ВСЕХ ответивших реле (у разных реле
                     // разные подмножества из-за retention и публикации на кворум, а не на все
                     // сразу), поэтому терять остальных после первого ответа нельзя.
@@ -585,7 +606,14 @@ class NostrTransport(
             this@coroutineScope.coroutineContext.cancelChildren()
         }
 
-        if (responded.get() == 0) return null
+        if (responded.get() == 0) {
+            // Прямой (не-Tor) путь совсем не отвечает — похоже на DPI-блокировку по SNI.
+            // Включаем фрагментацию ClientHello (см. nostr/SniFragment.kt) на СЛЕДУЮЩую
+            // попытку: сам этот тик уже не спасти, но опрос идёт каждые несколько секунд
+            // (SyncEngine), так что эффект будет виден быстро.
+            if (!useTor) NostrRelayPool.enableDirectFragmentation()
+            return null
+        }
         val seen = HashSet<String>()
         return collected.filter { seen.add(it.id) }
     }
@@ -635,6 +663,10 @@ class NostrTransport(
         } ?: false
 
         if (!result) {
+            // Тот же сигнал, что и в queryAllRelays(): прямой путь совсем не публикуется —
+            // включаем SNI-фрагментацию на дальнейшие попытки (MessageSendManager/PatchQueue
+            // и так ретраят отправку, следующая попытка уже пойдёт через неё).
+            if (!useTor && okCount.get() == 0) NostrRelayPool.enableDirectFragmentation()
             val errLog = failures.joinToString("; ")
             android.util.Log.e("AtrumNostr", "Publish failed for event ${event.id.take(8)}: $errLog")
             throw RuntimeException("Nostr-реле не подтвердили доставку ($okCount/$targetQuorum) — $errLog")
@@ -732,63 +764,4 @@ class NostrTransport(
             val ok = AtomicInteger(0)
             coroutineScope {
                 activeRelays().map { url ->
-                    launch { if (runCatching { NostrRelayPool.publish(url, ev, useTor) }.isSuccess) ok.incrementAndGet() }
-                }.joinAll()
-            }
-            return ok.get()
-        }
-
-        /**
-         * Проверка доставки: опрашивает реле и считает, на СКОЛЬКИХ реально читается
-         * опубликованный список (подпись валидна, версия >= ожидаемой). Это честнее, чем
-         * «реле приняло запись» — подтверждает, что обновление действительно доступно другим.
-         */
-        suspend fun countRelaysWithRelayList(pubkeyHex: String, minVersion: Int, useTor: Boolean): Int {
-            val filter = org.json.JSONObject().apply {
-                put("authors", org.json.JSONArray().put(pubkeyHex))
-                put("kinds", org.json.JSONArray().put(RelayListStore.KIND))
-                put("#d", org.json.JSONArray().put(RelayListStore.D_TAG))
-                put("limit", 1)
-            }
-            val hits = AtomicInteger(0)
-            coroutineScope {
-                activeRelays().map { url ->
-                    launch {
-                        val evs = runCatching { NostrRelayPool.query(url, filter, useTor) }.getOrNull() ?: return@launch
-                        val ok = evs.any { ev ->
-                            ev.pubkey.equals(pubkeyHex, ignoreCase = true) &&
-                                NostrEvent.verifySignature(ev) &&
-                                RelayListStore.versionOf(ev.content) >= minVersion
-                        }
-                        if (ok) hits.incrementAndGet()
-                    }
-                }.joinAll()
-            }
-            return hits.get()
-        }
-
-        /** Сколько всего реле сейчас опрашивается (для строки «M из K»). */
-        fun relayCount(): Int = activeRelays().size
-
-        val RELAYS = listOf(
-            "wss://nos.lol",
-            "wss://relay.damus.io",
-            "wss://relay.primal.net",
-            "wss://offchain.pub",
-            "wss://nostr.mom",
-            // Резервные реле — больше избыточности на случай бана/падения части реле.
-            // Публикация терпима к мёртвым адресам: неответивший просто уменьшает счётчик.
-            "wss://relay.snort.social",
-            "wss://nostr.oxtr.dev",
-            "wss://nostr-pub.wellorder.net",
-            "wss://relay.nostr.bg",
-            "wss://nostr.bitcoiner.social"
-        )
-
-        /** Фоновый scope для дослания публикаций на оставшиеся реле (не блокирует отправителя). */
-        private val publishScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-        fun sha256(s: String): ByteArray =
-            MessageDigest.getInstance("SHA-256").digest(s.toByteArray(Charsets.UTF_8))
-    }
-}
+                    launch { if (runCatching { NostrRelayPool.publish(url, ev, useTor) }.isSu

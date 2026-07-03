@@ -16,7 +16,7 @@ import com.atrum.chat.databinding.ActivityIntroBinding
 /**
  * Onboarding intro — показывается один раз при первом запуске.
  *
- *   Welcome → Шифрование → Транспорт → Безопасность → Поддержка → Бета
+ *   Welcome → Шифрование → Транспорт → Безопасность → VPN → Поддержка → Бета
  *
  * После Skip/Get Started ставим Prefs.introShown=true и идём в
  * WelcomeActivity (которая дальше уже разруливает onboarding/lock/chats).
@@ -47,6 +47,11 @@ class IntroActivity : AppCompatActivity() {
                 iconRes = R.drawable.ic_warning,
                 title = getString(R.string.intro_5_title),
                 subtitle = getString(R.string.intro_5_subtitle)
+            ),
+            IntroPage(
+                iconRes = R.drawable.ic_globe,
+                title = getString(R.string.intro_vpn_title),
+                subtitle = getString(R.string.intro_vpn_subtitle)
             ),
             IntroPage(
                 iconRes = R.drawable.ic_heart,
@@ -195,12 +200,4 @@ class IntroAdapter(private val pages: List<IntroPage>) :
         fun bind(page: IntroPage) {
             icon.setImageResource(page.iconRes)
             if (page.tintColor != null) {
-                icon.setColorFilter(page.tintColor, android.graphics.PorterDuff.Mode.SRC_IN)
-            } else {
-                icon.clearColorFilter()
-            }
-            title.text = page.title
-            subtitle.text = page.subtitle
-        }
-    }
-}
+                icon.setColorFilter(page.tin

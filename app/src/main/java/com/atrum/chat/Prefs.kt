@@ -676,6 +676,32 @@ class Prefs(private val context: Context) {
         get() = prefs.getInt(KEY_UI_ALPHA, 100).coerceIn(10, 100)
         set(v) = prefs.edit().putInt(KEY_UI_ALPHA, v.coerceIn(10, 100)).apply()
 
+    // ─── Пользовательский SOCKS5-прокси (экран «Соединение») ─────────────────────
+    // Применяется ТОЛЬКО к прямому (не-Tor) пути — см. ConnectionPrefs/NostrRelayPool.
+    // Не путать с Tor: preferTor=true по-прежнему строго идёт через Tor (без изменений).
+
+    /** Включён ли пользовательский SOCKS5-прокси вместо обычного прямого соединения. */
+    var customProxyEnabled: Boolean
+        get() = prefs.getBoolean(KEY_PROXY_ENABLED, false)
+        set(v) = prefs.edit().putBoolean(KEY_PROXY_ENABLED, v).apply()
+
+    var customProxyHost: String
+        get() = prefs.getString(KEY_PROXY_HOST, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_PROXY_HOST, v).apply()
+
+    var customProxyPort: Int
+        get() = prefs.getInt(KEY_PROXY_PORT, 1080)
+        set(v) = prefs.edit().putInt(KEY_PROXY_PORT, v).apply()
+
+    /** Логин SOCKS5 (опционально — пусто = без аутентификации). */
+    var customProxyLogin: String
+        get() = prefs.getString(KEY_PROXY_LOGIN, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_PROXY_LOGIN, v).apply()
+
+    var customProxyPassword: String
+        get() = prefs.getString(KEY_PROXY_PASSWORD, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_PROXY_PASSWORD, v).apply()
+
     companion object {
         /**
          * PIN в открытом виде, общий на весь процесс. Живёт только в памяти —
@@ -727,45 +753,15 @@ class Prefs(private val context: Context) {
         private const val KEY_BUBBLE_ALPHA_SELF  = "bubble_alpha_self"
         private const val KEY_BUBBLE_ALPHA_OTHER = "bubble_alpha_other"
         private const val KEY_UI_ALPHA           = "ui_alpha"
+        private const val KEY_PROXY_ENABLED      = "custom_proxy_enabled"
+        private const val KEY_PROXY_HOST         = "custom_proxy_host"
+        private const val KEY_PROXY_PORT         = "custom_proxy_port"
+        private const val KEY_PROXY_LOGIN        = "custom_proxy_login"
+        private const val KEY_PROXY_PASSWORD     = "custom_proxy_password"
 
         const val CHAT_UI_CLASSIC = "classic"
         const val CHAT_UI_GLASS   = "glass"
 
         /**
          * Создаёт EncryptedSharedPreferences. Если файл повреждён (например после
-         * сброса KeyStore) — удаляем и пересоздаём вместо тихого downgrade к plaintext.
-         *
-         * Прежнее поведение: тихий fallback → токены и хэши паролей хранились без шифрования.
-         * Текущее поведение: wipe + recreate. При повторной ошибке — RuntimeException:
-         * приложение должно упасть, а не работать без шифрования.
-         */
-        private fun createEncryptedPrefs(context: Context): SharedPreferences {
-            fun build(): SharedPreferences {
-                val masterKey = MasterKey.Builder(context)
-                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                    .build()
-                return EncryptedSharedPreferences.create(
-                    context,
-                    FILE_NAME,
-                    masterKey,
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-                )
-            }
-
-            return try {
-                build()
-            } catch (_: Exception) {
-                // Файл повреждён или KeyStore недоступен — чистим и пробуем ещё раз.
-                // Данные теряются, но это безопаснее, чем хранить секреты без шифрования.
-                try {
-                    context.deleteFile(FILE_NAME)
-                    build()
-                } catch (_: Exception) {
-                    // Последний шанс — незашифрованные SharedPreferences (не должно доходить).
-                    context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
-                }
-            }
-        }
-    }
-}
+         * сброса KeyStore) — удаляем и пересоздаём вместо тихого 

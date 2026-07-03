@@ -109,6 +109,9 @@ class SettingsActivity : SecureActivity() {
 
         // Реле: скрытый вход в издателя — 7 нажатий подряд по строке, затем запрос пароля.
         binding.itemRelays.setOnClickListener { onRelayTap() }
+        binding.itemConnection.setOnClickListener {
+            startActivity(Intent(this, ConnectionActivity::class.java))
+        }
 
         setupVersionRow()
         setupParallax()
@@ -694,9 +697,4 @@ class SettingsActivity : SecureActivity() {
         // 9 stops for maximum smoothness: прозрачный → сплошной фон страницы
         val colors = intArrayOf(a0, a0, a15, a60, a130, a210, bgColor, bgColor, bgColor)
         val gradient = android.graphics.drawable.GradientDrawable(
-            android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
-            colors
-        )
-        binding.vBannerGradient.background = gradient
-    }
-}
+            android.graphics.drawabl
