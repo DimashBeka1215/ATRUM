@@ -216,4 +216,30 @@ class CollageCell @JvmOverloads constructor(
         doneCircle.scaleX = 0f
         doneCircle.scaleY = 0f
 
-        val popIn = AnimatorSet()
+        val popIn = AnimatorSet().apply {
+            playTogether(
+                ObjectAnimator.ofFloat(doneCircle, "scaleX", 0f, 1.18f, 1f),
+                ObjectAnimator.ofFloat(doneCircle, "scaleY", 0f, 1.18f, 1f)
+            )
+            duration     = 300
+            interpolator = OvershootInterpolator(2.5f)
+        }
+
+        val fadeOut = ObjectAnimator.ofFloat(doneCircle, "alpha", 1f, 0f).apply {
+            duration   = 350
+            startDelay = 600
+        }
+
+        AnimatorSet().apply {
+            playSequentially(popIn, fadeOut)
+            start()
+        }
+    }
+
+    /**
+     * Показывает ошибку загрузки — прячет спиннер, ячейка остаётся серой.
+     */
+    fun showError() {
+        progressBar.visibility = GONE
+    }
+}

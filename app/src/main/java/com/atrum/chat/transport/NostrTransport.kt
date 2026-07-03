@@ -764,4 +764,72 @@ class NostrTransport(
             val ok = AtomicInteger(0)
             coroutineScope {
                 activeRelays().map { url ->
-                    launch { if (runCatching { NostrRelayPool.publish(url, ev, useTor) }.isSu
+                    launch { if (runCatching { NostrRelayPool.publish(url, ev, useTor) }.isSuccess) ok.incrementAndGet() }
+                }.joinAll()
+            }
+            return ok.get()
+        }
+
+        /**
+         * Проверка доставки: опрашивает реле и считает, на СКОЛЬКИХ реально читается
+         * опубликованный список (подпись валидна, версия >= ожидаемой). Это честнее, чем
+         * «реле приняло запись» — подтверждает, что обновление действительно доступно другим.
+         */
+        suspend fun countRelaysWithRelayList(pubkeyHex: String, minVersion: Int, useTor: Boolean): Int {
+            val filter = org.json.JSONObject().apply {
+                put("authors", org.json.JSONArray().put(pubkeyHex))
+                put("kinds", org.json.JSONArray().put(RelayListStore.KIND))
+                put("#d", org.json.JSONArray().put(RelayListStore.D_TAG))
+                put("limit", 1)
+            }
+            val hits = AtomicInteger(0)
+            coroutineScope {
+                activeRelays().map { url ->
+                    launch {
+                        val evs = runCatching { NostrRelayPool.query(url, filter, useTor) }.getOrNull() ?: return@launch
+                        val ok = evs.any { ev ->
+                            ev.pubkey.equals(pubkeyHex, ignoreCase = true) &&
+                                NostrEvent.verifySignature(ev) &&
+                                RelayListStore.versionOf(ev.content) >= minVersion
+                        }
+                        if (ok) hits.incrementAndGet()
+                    }
+                }.joinAll()
+            }
+            return hits.get()
+        }
+
+        /** Сколько всего реле сейчас опрашивается (для строки «M из K»). */
+        fun relayCount(): Int = activeRelays().size
+
+        val RELAYS = listOf(
+            "wss://nos.lol",
+            "wss://relay.damus.io",
+            "wss://relay.primal.net",
+            "wss://offchain.pub",
+            "wss://nostr.mom",
+            // Резервные реле — больше избыточности на случай бана/падения части реле.
+            // Публикация терпима к мёртвым адресам: неответивший просто уменьшает счётчик.
+            "wss://relay.snort.social",
+            "wss://nostr.oxtr.dev",
+            "wss://nostr-pub.wellorder.net",
+            "wss://relay.nostr.bg",
+            "wss://nostr.bitcoiner.social",
+            // ⚠️ ДОБАВЛЕНО: усиление устойчивости к DPI-блокировке по SNI/домену. Блокировка
+            // по SNI режет реле поодиночке — чем шире и разнообразнее встроенный floor-список
+            // (разные операторы/инфраструктура), тем меньше шанс, что ВСЕ реле окажутся
+            // заблокированы одновременно ещё до того, как подтянется подписанный список из
+            // RelayListStore (см. NostrTransport.refreshRelayList). Сам факт блокировки
+            // ОДНОГО реле не ломает синк — queryAllRelays() уже делает union-чтение по всем
+            // активным реле параллельно, так что часть недоступных просто не участвует.
+            "wss://relay.nostr.band",
+            "wss://purplepag.es"
+        )
+
+        /** Фоновый scope для дослания публикаций на оставшиеся реле (не блокирует отправителя). */
+        private val publishScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        fun sha256(s: String): ByteArray =
+            MessageDigest.getInstance("SHA-256").digest(s.toByteArray(Charsets.UTF_8))
+    }
+}

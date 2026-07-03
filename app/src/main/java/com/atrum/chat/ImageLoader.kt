@@ -288,4 +288,29 @@ class ImageLoader(
             val sem = Semaphore(MAX_PARALLEL_CHUNKS)
             val parts = coroutineScope {
                 chunkNames.map { name ->
-                    async(Dispatchers.IO) { sem.withPe
+                    async(Dispatchers.IO) { sem.withPermit { loadFileRetry(name) } }
+                }.awaitAll()
+            }
+            CryptoHelper.decrypt(parts.joinToString(""), password, cryptoChatId)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Загружает файл с ретраями — через Tor чтение нестабильно, и один транзиентный
+     * промах (реле не ответило за дедлайн) не должен рушить всю картинку/чанк.
+     */
+    private suspend fun loadFileRetry(name: String, attempts: Int = 5): String {
+        var last: Exception? = null
+        repeat(attempts) { i ->
+            try {
+                return withContext(Dispatchers.IO) { api.loadFile(name) }
+            } catch (e: Exception) {
+                last = e
+                if (i < attempts - 1) delay(900L * (i + 1))
+            }
+        }
+        throw last ?: RuntimeException("loadFile failed: $name")
+    }
+}

@@ -43,8 +43,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 315
-        versionName = "3.20.92-beta230-compilesdk36-toroldver"
+        versionCode = 316
+        versionName = "3.20.93-beta231-uploadring-vcenterfix"
 
         // Включаем multidex чтобы не упереться в лимит 65k методов
         // когда много AndroidX/Material/Room/uCrop/browser библиотек
@@ -186,4 +186,77 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
     // Tor (встроенный) — Nostr через Tor. runtime + бинарники tor (exec).
-    // ⚠️ ПУТЬ ОТКАТА (с
+    // ⚠️ ПУТЬ ОТКАТА (см. TorManager.kt / TOR_BRIDGES_CONTINUE.md): kmp-tor не умеет
+    // мосты (Snowflake/obfs4) — публичного API для Bridge/ClientTransportPlugin/UseBridges
+    // нет ни в одной версии (проверено). Оставлен как fallback, пока новый TorManager
+    // (на tor-android, см. ниже) не обкатан на реальных устройствах.
+    // ⚠️ Конфликтует по lib/arm64-v8a/libtor.so с tor-android ниже — см. подробный
+    // комментарий у packagingOptions.jniLibs.pickFirst выше по файлу перед тем, как
+    // переключать движки.
+    implementation("io.matthewnelson.kmp-tor:runtime:2.6.0")
+    implementation("io.matthewnelson.kmp-tor:resource-exec-tor:409.5.0")
+
+    // Tor Android (Guardian Project, стек Orbot) — путь B из TOR_BRIDGES_CONTINUE.md.
+    // Даёт мосты (Snowflake/obfs4) "из коробки" через обычный torrc + control-port.
+    // Версии отслеживаются Dependabot'ом (.github/dependabot.yml) — при новом релизе
+    // Guardian Project сюда прилетает Pull Request на GitHub, а не тихое авто-обновление
+    // сборки (supply-chain risk недопустим для крипто-мессенджера).
+    // ⚠️ ВЕРСИЯ ЗАФИКСИРОВАНА НА 0.4.8.22 (не последняя!). Самая свежая на день добавления
+    // (0.4.9.11, ветка master) требует compileSdk 37 — это НОВЕЕ, чем официально поддерживает
+    // сам AGP 8.13.2 (максимум 36), сборка падала с "AAR metadata check" ошибкой. 0.4.8.22 —
+    // релиз до этого скачка требований, собирается на compileSdk 36 (см. выше). Когда
+    // Dependabot предложит апдейт — ПЕРЕД мёржем свериться, что новая версия не требует
+    // compileSdk выше того, что поддерживает актуальный на тот момент AGP.
+    implementation("info.guardianproject:tor-android:0.4.8.22")
+    implementation("info.guardianproject:jtorctl:0.4.5.7")
+
+    // EncryptedSharedPreferences для безопасного хранения данных
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // WorkManager — резервное периодическое пробуждение доставки пушей (переживает Doze/kill).
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+
+    // Room — локальная база данных для списка чатов
+    val roomVersion = "2.7.0"
+    implementation("androidx.room:room-runtime:$roomVersion")
+    implementation("androidx.room:room-ktx:$roomVersion")
+    ksp("androidx.room:room-compiler:$roomVersion")
+
+    // uCrop — кроп фото с круглой маской (как в Telegram)
+    implementation("com.github.yalantis:ucrop:2.2.8")
+
+    // Chrome Custom Tabs — для встроенного браузера в OAuth flow
+    implementation("androidx.browser:browser:1.7.0")
+
+    // ViewPager2 — для intro/onboarding с свайпом
+    implementation("androidx.viewpager2:viewpager2:1.0.0")
+
+    // Bouncy Castle — Argon2id KDF для защищённой деривации ключа шифрования
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+
+    // Lottie — анимации и стикеры
+    implementation("com.airbnb.android:lottie:6.3.0")
+
+    // ZXing — генерация QR-кода сверки (SAS) для защиты от MITM.
+    implementation("com.google.zxing:core:3.5.3")
+
+    // Biometric — системный отпечаток (BiometricPrompt). Биометрия НЕ хранится
+    // в приложении: запрос идёт в системную подсистему телефона (на Samsung — Knox/TEE).
+    implementation("androidx.biometric:biometric:1.1.0")
+
+    // IPtProxy — pluggable transports (Lyrebird=obfs4/meek/webtunnel + Snowflake) для
+    // обхода блокировки Tor. Нативные бинари под все ABI уже внутри AAR. Используется
+    // в TorManager для запуска мостов, когда обычный Tor не поднимается (цензура).
+    implementation("com.netzarchitekten:IPtProxy:5.5.0")
+
+    // CameraX — превью камеры + анализ кадров для QR-сканера (Bluetooth-подключение по QR).
+    val cameraX = "1.3.4"
+    implementation("androidx.camera:camera-core:$cameraX")
+    implementation("androidx.camera:camera-camera2:$cameraX")
+    implementation("androidx.camera:camera-lifecycle:$cameraX")
+    implementation("androidx.camera:camera-view:$cameraX")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("io.mockk:mockk:1.13.11")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+}

@@ -3913,4 +3913,67 @@ class ChatActivity : SecureActivity() {
             .setDuration(350)
             .setStartDelay(80)
             .setInterpolator(android.view.animation.DecelerateInterpolator())
- 
+            .withStartAction { rv.visibility = View.VISIBLE }
+            .start()
+
+        // Оверлей ушёл — теперь корректно показываем/прячем заглушку "чат пуст".
+        binding.tvEmptyPlaceholder.visibility =
+            if (currentMessages.isEmpty()) View.VISIBLE else View.GONE
+    }
+
+    companion object {
+        /** За сколько позиций до верха начинать подгрузку старых сообщений (ленивый рендер). */
+        private const val REVEAL_THRESHOLD = 6
+        /** Макс. картинок в одном коллаже. */
+        const val MAX_COLLAGE_IMAGES = 10
+        /** Подряд неудачных загрузок до показа предупреждения. */
+        const val FAILURES_BEFORE_WARNING = 5
+        /** Максимальная длительность голосового. */
+        private const val MAX_VOICE_MS = 15 * 60 * 1000L
+        /** Максимум одновременных загрузок изображений. */
+        const val MAX_CONCURRENT = 3
+        /** Ключ intent-экстра: идентификатор чата (Long, из Room). */
+        const val EXTRA_CHAT_ID = "extra_chat_id"
+
+        /** Перейти к сообщению по msgId (из списка медиа) и подсветить. */
+        const val EXTRA_SCROLL_TO_MSGID = "extra_scroll_to_msgid"
+        /** Удалить сообщение по msgId (из списка медиа). */
+        const val EXTRA_DELETE_MSGID = "extra_delete_msgid"
+
+        // ── Polling ───────────────────────────────────────────────────────────
+        // Интервал поллинга управляется SyncEngine.ACTIVE_INTERVAL_MS (5 сек).
+        /** Базовый интервал адаптивного поллинга (зарезервирован, не используется). */
+        const val BASE_MS = 4_000L
+        /** Максимальный интервал адаптивного поллинга (зарезервирован, не используется). */
+        const val MAX_MS = 30_000L
+
+        // ── Presence ──────────────────────────────────────────────────────────
+        /**
+         * Период presence-цикла (heartbeat): один write-only PATCH каждые N мс.
+         * Поднято с 2с до 5с: частый presence+poll заставлял публичные Nostr-реле
+         * резать запросы. 5с — баланс «онлайн» без миганий и нагрузки на реле.
+         */
+        const val PRESENCE_INTERVAL_MS = 5_000L
+        // Фаза 1 синхронизации: union-чтение слотов profiles.txt (убирает lost-update —
+        // мерцание аватара/presence). ВЫКЛ по умолчанию: включить на ОБОИХ телефонах для
+        // теста; после подтверждения сделать дефолтом. (см. SYNC_AUDIT.md)
+        const val SLOT_UNION_PROFILES = true
+        /** Через сколько мс без обновления партнёр считается офлайн. */
+        const val ONLINE_EXPIRY_MS = 12_000L
+        /** Через сколько мс без обновления статус «записывает голосовое» считается устаревшим. */
+        const val RECORDING_EXPIRY_MS = 8_000L
+        /** Период локального тикера пере-вычисления presence по таймауту. */
+        const val PRESENCE_TICK_MS = 1_000L
+        /** Через сколько мс без обновления typing-сигнал считается устаревшим. */
+        const val TYPING_EXPIRY_MS = 14_000L
+        /** Задержка после последнего нажатия клавиши до отправки «перестал печатать». */
+        const val TYPING_STOP_DELAY_MS = 3_000L
+
+        // ── Profile sync ──────────────────────────────────────────────────────
+        /** Количество попыток sync профилей при запуске. */
+        const val SYNC_PROFILES_MAX_ATTEMPTS = 3
+        /** Базовая задержка между retry sync-профилей (умножается на номер попытки). */
+        const val SYNC_PROFILES_RETRY_BASE_MS = 3_000L
+
+    }
+}

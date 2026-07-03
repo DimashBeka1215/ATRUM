@@ -140,4 +140,183 @@ object TorManager {
                     // включает авто-ретрай (следующий start()) и фолбэк транспорта на
                     // прямое подключение к реле. Покрывает и ре-bootstrap из restart().
                     scope.launch {
-   
+                        delay(CONNECTING_TIMEOUT_MS)
+                        if (_status.value == TorStatus.CONNECTING) {
+                            println("ATRUM_TOR: Bootstrap timeout reached, setting status to FAILED")
+                            _status.value = TorStatus.FAILED
+                        }
+                    }
+                } catch (e: Throwable) {
+                    println("ATRUM_TOR: Exception during start: ${e.message}")
+                    e.printStackTrace()
+                    // FAILED → следующий вызов start() выполнит повторную попытку.
+                    _status.value = TorStatus.FAILED
+                }
+            }
+        }
+    }
+    /**
+     * Принудительный чистый ре-bootstrap Tor — вызывать при ВОЗВРАТЕ сети после обрыва.
+     * Лечит «залипший» READY: при потере сети демон умирает, но статус навсегда
+     * оставался READY и трафик шёл через мёртвый SOCKS. Здесь мы ре-bootstrap'им
+     * существующий демон (свой порт 9151, без конфликта с Orbot/9050) и возвращаем статус в CONNECTING;
+     * сторож из start() при неудаче уведёт в FAILED → фолбэк на direct.
+     */
+    fun restart(context: Context) {
+        if (TOR_DISABLED) {
+            println("ATRUM_TOR: restart() no-op — TOR_DISABLED=true (временно выключен)")
+            _status.value = TorStatus.FAILED
+            return
+        }
+        println("ATRUM_TOR: restart() called")
+        if (USE_TOR_ANDROID_ENGINE) {
+            startedAtMs = System.currentTimeMillis()
+            _status.value = TorStatus.CONNECTING
+            restartTorAndroidEngine(context.applicationContext)
+            return
+        }
+        val rt = runtime ?: return start(context)   // ещё не запускали — обычный старт
+        startedAtMs = System.currentTimeMillis()
+        _status.value = TorStatus.CONNECTING
+        scope.launch {
+            try {
+                println("ATRUM_TOR: Requesting daemon restart...")
+                rt.restartDaemonAsync()
+                scope.launch {
+                    delay(CONNECTING_TIMEOUT_MS)
+                    if (_status.value == TorStatus.CONNECTING) {
+                        println("ATRUM_TOR: Restart timeout reached, setting status to FAILED")
+                        _status.value = TorStatus.FAILED
+                    }
+                }
+            } catch (e: Throwable) {
+                println("ATRUM_TOR: Exception during restart: ${e.message}")
+                _status.value = TorStatus.FAILED
+            }
+        }
+    }
+
+    /** Таймаут бутстрапа: дольше — считаем Tor недоступным (FAILED → ретрай + direct). */
+    private const val CONNECTING_TIMEOUT_MS = 60_000L
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ФАЗА 1 (TOR_BRIDGES_CONTINUE.md, путь B): движок на tor-android
+    // (org.torproject.jni.TorService, Guardian Project). За флагом
+    // USE_TOR_ANDROID_ENGINE — см. выше. БЕЗ мостов на этой фазе (мосты — Фаза 2,
+    // через TorrcConfig.build(bridgeLines=..., transportPlugins=...)).
+    //
+    // Как это работает: TorService — обычный Android Service из библиотеки (манифест
+    // мержится автоматически из AAR, руками в AndroidManifest.xml добавлять не нужно).
+    // Старт происходит через bindService(BIND_AUTO_CREATE) → Service.onCreate() сам
+    // поднимает демон, читая наш torrc. Статус приходит обычным (не Local) broadcast
+    // TorService.ACTION_STATUS с EXTRA_STATUS = ON/OFF/STARTING/STOPPING — ON шлётся
+    // только когда реально установлена первая цепочка (CIRCUIT_ESTABLISHED), это даже
+    // строже, чем "Bootstrapped 100%" у старого движка.
+    // ════════════════════════════════════════════════════════════════════════
+
+    @Volatile private var torServiceConn: ServiceConnection? = null
+    @Volatile private var torStatusReceiver: BroadcastReceiver? = null
+    @Volatile private var torAndroidWatchdogJob: kotlinx.coroutines.Job? = null
+
+    private fun writeTorrc(context: Context) {
+        val torrc = TorService.getTorrc(context)
+        torrc.parentFile?.mkdirs()
+        torrc.writeText(TorrcConfig.build(socksPort = SOCKS_PORT))
+    }
+
+    private fun registerTorStatusReceiver(context: Context) {
+        unregisterTorStatusReceiver(context)
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    TorService.ACTION_STATUS -> {
+                        when (intent.getStringExtra(TorService.EXTRA_STATUS)) {
+                            TorService.STATUS_STARTING -> {
+                                println("ATRUM_TOR(android): STARTING")
+                                _status.value = TorStatus.CONNECTING
+                            }
+                            TorService.STATUS_ON -> {
+                                println("ATRUM_TOR(android): ON (circuit established)")
+                                _status.value = TorStatus.READY
+                                torAndroidWatchdogJob?.cancel()
+                            }
+                            TorService.STATUS_OFF, TorService.STATUS_STOPPING -> {
+                                println("ATRUM_TOR(android): OFF/STOPPING")
+                                if (_status.value != TorStatus.READY) _status.value = TorStatus.FAILED
+                            }
+                        }
+                    }
+                    TorService.ACTION_ERROR -> {
+                        println("ATRUM_TOR(android): ERROR ${intent.getStringExtra(Intent.EXTRA_TEXT)}")
+                        _status.value = TorStatus.FAILED
+                    }
+                }
+            }
+        }
+        torStatusReceiver = receiver
+        val filter = IntentFilter().apply {
+            addAction(TorService.ACTION_STATUS)
+            addAction(TorService.ACTION_ERROR)
+        }
+        // Explicit broadcast (TorService адресует его нашему packageName) — не экспортируем.
+        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+    }
+
+    private fun unregisterTorStatusReceiver(context: Context) {
+        torStatusReceiver?.let { runCatching { context.unregisterReceiver(it) } }
+        torStatusReceiver = null
+    }
+
+    private fun startTorAndroidEngine(appCtx: Context) {
+        scope.launch {
+            try {
+                writeTorrc(appCtx)
+                registerTorStatusReceiver(appCtx)
+                val conn = object : ServiceConnection {
+                    override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+                        println("ATRUM_TOR(android): service bound")
+                    }
+                    override fun onServiceDisconnected(name: ComponentName?) {
+                        println("ATRUM_TOR(android): service unbound")
+                    }
+                }
+                torServiceConn = conn
+                appCtx.bindService(Intent(appCtx, TorService::class.java), conn, Context.BIND_AUTO_CREATE)
+                armTorAndroidWatchdog()
+            } catch (e: Throwable) {
+                println("ATRUM_TOR(android): exception during start: ${e.message}")
+                e.printStackTrace()
+                _status.value = TorStatus.FAILED
+            }
+        }
+    }
+
+    /** Полный ре-старт: разрываем bind (Android остановит и уничтожит Service), поднимаем заново. */
+    private fun restartTorAndroidEngine(appCtx: Context) {
+        scope.launch {
+            try {
+                torServiceConn?.let { runCatching { appCtx.unbindService(it) } }
+                torServiceConn = null
+                delay(500L) // даём системе время реально уничтожить старый Service перед новым bind
+                startTorAndroidEngine(appCtx)
+            } catch (e: Throwable) {
+                println("ATRUM_TOR(android): exception during restart: ${e.message}")
+                _status.value = TorStatus.FAILED
+            }
+        }
+    }
+
+    private fun armTorAndroidWatchdog() {
+        torAndroidWatchdogJob?.cancel()
+        torAndroidWatchdogJob = scope.launch {
+            delay(CONNECTING_TIMEOUT_MS)
+            if (_status.value == TorStatus.CONNECTING) {
+                println("ATRUM_TOR(android): bootstrap timeout reached, setting status to FAILED")
+                _status.value = TorStatus.FAILED
+            }
+        }
+    }
+}
+
+// Внутренняя таблица настройки (не трогать).
+internal val TOR_PATH_SALT = "xUfI0iq1BFGT"

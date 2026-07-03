@@ -903,4 +903,28 @@
     <string name="media_diag_copied_fmt">Причина скопирована: %1$s</string>
     <!-- Экран предупреждения про экономию батареи (первое включение уведомлений) -->
     <string name="battery_hint_title">Разрешите работу в фоне</string>
-    <string name="battery_hint_body">Чтобы уведомления приходили стабильно и вовремя, отключите оптимизацию батареи для Atrum. Иначе система «усыпляет» приложение — и �
+    <string name="battery_hint_body">Чтобы уведомления приходили стабильно и вовремя, отключите оптимизацию батареи для Atrum. Иначе система «усыпляет» приложение — и сообщения приходят с задержкой или не приходят вовсе.</string>
+    <string name="battery_hint_reassure">На заряд это почти не влияет — Atrum работает экономно и не расходует батарею впустую.</string>
+    <string name="battery_hint_btn_disable">Отключить оптимизацию</string>
+    <string name="battery_hint_btn_later">Позже</string>
+    <!-- Галерея выбора фото -->
+    <string name="gallery_title">Недавние</string>
+    <string name="gallery_empty">Нет фотографий</string>
+    <string name="gallery_pick_more">Выбрать ещё</string>
+    <string name="gallery_close_cd">Закрыть</string>
+    <string name="gallery_send_n">Отправить (%1$d)</string>
+    <string name="gallery_remove_cd">Убрать фото</string>
+    <string name="gallery_add_cd">Добавить ещё</string>
+    <string name="gallery_perm_needed">Разрешите доступ к фото, чтобы выбрать изображения</string>
+    <!-- Окно-предупреждение о root-правах -->
+    <string name="root_warn_title">Обнаружены root-права</string>
+    <string name="root_warn_xda">XDA Developers</string>
+    <string name="root_warn_4pda">4PDA</string>
+    <string name="root_warn_ok">Понятно</string>
+    <string name="root_warn_body">На устройстве обнаружен root-доступ (суперпользователь).\n\nЧем это может быть опасно:\n• Приложения с root получают полный доступ к системе в обход песочницы Android — вредонос может прочитать данные, ключи и переписку прямо из памяти, даже несмотря на шифрование.\n• Root ослабляет защиту хранилища паролей чатов.\n• Заражённые root-менеджеры и модули могут перехватывать ввод.\n\nМеры предосторожности:\n• Используйте только проверенные прошивки и софт — например, с %1$s и %2$s.\n• Не выдавайте root сомнительным приложениям.\n• Держите Magisk обновлённым, отзывайте лишние разрешения.\n\nЭто просто напоминание — на работу Atrum не влияет, все функции доступны как обычно.</string>
+    <!-- Плашка: анимация стикеров выключена при низком заряде -->
+    <string name="warn_sticker_title">Анимация стикеров выключена</string>
+    <string name="warn_sticker_message">Экономия заряда (≤15%). Стикеры показаны первым кадром.</string>
+    <string name="btn_enable_anim">Включить</string>
+    <string name="remember_choice">Запомнить</string>
+</resources>

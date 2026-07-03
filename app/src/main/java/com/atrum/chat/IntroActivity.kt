@@ -200,4 +200,12 @@ class IntroAdapter(private val pages: List<IntroPage>) :
         fun bind(page: IntroPage) {
             icon.setImageResource(page.iconRes)
             if (page.tintColor != null) {
-                icon.setColorFilter(page.tin
+                icon.setColorFilter(page.tintColor, android.graphics.PorterDuff.Mode.SRC_IN)
+            } else {
+                icon.clearColorFilter()
+            }
+            title.text = page.title
+            subtitle.text = page.subtitle
+        }
+    }
+}

@@ -170,4 +170,22 @@ class ChatStore {
             // Пропускаем, если сообщение уже добавлено как замена или уже обработано
             if (p.msgId in replacedIds || p.rawEncrypted in addedRaw) continue
             
-            // Если 
+            // Если это не правка (replacingId == null), добавляем как новое
+            if (p.replacingId == null) {
+                addWithReplacement(p)
+            } else {
+                // Если это правка, но оригинал не найден — показываем хотя бы саму правку
+                if (p.rawEncrypted !in addedRaw) {
+                    result.add(p)
+                    addedRaw.add(p.rawEncrypted)
+                }
+            }
+        }
+
+        return result
+    }
+
+    private fun emit() {
+        _messages.value = compose()
+    }
+}

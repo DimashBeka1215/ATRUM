@@ -172,4 +172,7 @@ class App : Application() {
                 }
             }
         } catch (_: Exception) {
-            // Non-fatal — DB may not exist yet or 
+            // Non-fatal — DB may not exist yet or may already be at v10
+        }
+    }
+}

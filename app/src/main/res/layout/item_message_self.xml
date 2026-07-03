@@ -96,7 +96,7 @@
             android:layout_marginBottom="4dp"/>
 
                 <!-- Одиночная картинка -->
-        <FrameLayout
+        <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/image_container"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -111,16 +111,26 @@
                 android:maxHeight="320dp"
                 android:contentDescription="@null"
                 android:visibility="gone"
+                app:layout_constraintTop_toTopOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
                 app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.RoundedImage"/>
 
-            <!-- ⚠️ Кольцо прогресса ВСЕГДА строго по центру фото — позиционирования по
-                 углам в разметке нет и не должно появляться (см. CLAUDE.md §13). Затемняется
-                 только маленький круг ПОД кольцом (bg_upload_ring_backdrop), а не всё фото. -->
+            <!-- ⚠️ Кольцо прогресса ВСЕГДА строго по центру фото — ЖЁСТКО подвешено
+                 констрейнтами на все 4 стороны @id/iv_image (а не через match_parent
+                 обёртку внутри wrap_content-родителя — та схема давала залипание кольца
+                 у верхнего края на высоких/портретных фото, см. CLAUDE.md §13). Центр
+                 пересчитывается на каждый layout-pass детерминированно от реальных границ
+                 фото. Затемняется только маленький круг ПОД кольцом (bg_upload_ring_backdrop),
+                 а не всё фото. -->
             <FrameLayout
                 android:id="@+id/img_upload_overlay"
-                android:layout_width="260dp"
-                android:layout_height="match_parent"
-                android:visibility="gone">
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone"
+                app:layout_constraintTop_toTopOf="@id/iv_image"
+                app:layout_constraintBottom_toBottomOf="@id/iv_image"
+                app:layout_constraintStart_toStartOf="@id/iv_image"
+                app:layout_constraintEnd_toEndOf="@id/iv_image">
 
                 <FrameLayout
                     android:layout_width="64dp"
@@ -149,7 +159,7 @@
                         android:fontFamily="sans-serif-medium"/>
                 </FrameLayout>
             </FrameLayout>
-        </FrameLayout>
+        </androidx.constraintlayout.widget.ConstraintLayout>
 
         <!-- Коллаж из нескольких изображений -->
         <com.atrum.chat.CollageLayout
@@ -351,4 +361,24 @@
             android:orientation="horizontal"
             android:gravity="center_vertical"
             android:layout_marginTop="2dp"
-            android:paddingHoriz
+            android:paddingHorizontal="2dp">
+
+            <TextView
+                android:id="@+id/tv_time"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/accent_light"
+                android:textSize="10sp"
+                android:fontFamily="sans-serif"/>
+
+            <ImageView
+                android:id="@+id/iv_tick"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:layout_marginStart="4dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_check"
+                app:tint="@color/accent_light"/>
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

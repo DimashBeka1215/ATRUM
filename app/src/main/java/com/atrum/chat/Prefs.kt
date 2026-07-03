@@ -764,4 +764,39 @@ class Prefs(private val context: Context) {
 
         /**
          * Создаёт EncryptedSharedPreferences. Если файл повреждён (например после
-         * сброса KeyStore) — удаляем и пересоздаём вместо тихого 
+         * сброса KeyStore) — удаляем и пересоздаём вместо тихого downgrade к plaintext.
+         *
+         * Прежнее поведение: тихий fallback → токены и хэши паролей хранились без шифрования.
+         * Текущее поведение: wipe + recreate. При повторной ошибке — RuntimeException:
+         * приложение должно упасть, а не работать без шифрования.
+         */
+        private fun createEncryptedPrefs(context: Context): SharedPreferences {
+            fun build(): SharedPreferences {
+                val masterKey = MasterKey.Builder(context)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
+                return EncryptedSharedPreferences.create(
+                    context,
+                    FILE_NAME,
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                )
+            }
+
+            return try {
+                build()
+            } catch (_: Exception) {
+                // Файл повреждён или KeyStore недоступен — чистим и пробуем ещё раз.
+                // Данные теряются, но это безопаснее, чем хранить секреты без шифрования.
+                try {
+                    context.deleteFile(FILE_NAME)
+                    build()
+                } catch (_: Exception) {
+                    // Последний шанс — незашифрованные SharedPreferences (не должно доходить).
+                    context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
+                }
+            }
+        }
+    }
+}

@@ -1413,4 +1413,76 @@ class MessageAdapter(
                             }
                         }
 
-                        /
+                        // Цвет текста: белый только для своего чипа или glass-режима
+                        if (isMine) {
+                            setTextColor(Color.WHITE)
+                        } else if (glassMode) {
+                            setTextColor(Color.WHITE)
+                        } else {
+                            setTextColor(ContextCompat.getColor(ctx, R.color.text_primary))
+                        }
+
+                        val lp = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.WRAP_CONTENT,
+                            LinearLayout.LayoutParams.WRAP_CONTENT
+                        )
+                        lp.marginEnd = (4 * density).toInt()
+                        layoutParams = lp
+
+                        isClickable = true
+                        isFocusable = true
+                        setOnClickListener { onReactionClick?.invoke(emoji) }
+                    }
+                    row.addView(chip)
+                }
+        }
+    }
+}
+
+
+/** Прореживает огибающую до target столбиков (пик в каждой корзине) — для ширины дорожки ∝ длительности. */
+private fun downsampleWaveform(src: IntArray, target: Int): IntArray {
+    if (src.isEmpty() || target <= 0) return src
+    if (src.size <= target) return src
+    val out = IntArray(target)
+    val bucket = src.size.toFloat() / target
+    for (i in 0 until target) {
+        val start = (i * bucket).toInt()
+        val end = ((i + 1) * bucket).toInt().coerceAtMost(src.size).coerceAtLeast(start + 1)
+        var peak = 0
+        for (j in start until end) if (src[j] > peak) peak = src[j]
+        out[i] = peak
+    }
+    return out
+}
+
+/**
+ * LinkMovementMethod, который перехватывает касание ТОЛЬКО когда оно попало в ссылку.
+ * На остальном тексте возвращает false → событие уходит родителю, и долгий тап по
+ * пузырьку (контекстное меню/реакции) продолжает работать.
+ */
+private object BubbleLinkMovementMethod : android.text.method.LinkMovementMethod() {
+    override fun onTouchEvent(
+        widget: TextView,
+        buffer: android.text.Spannable,
+        event: android.view.MotionEvent
+    ): Boolean {
+        val action = event.action
+        if (action == android.view.MotionEvent.ACTION_UP || action == android.view.MotionEvent.ACTION_DOWN) {
+            val layout = widget.layout ?: return false
+            val x = event.x.toInt() - widget.totalPaddingLeft + widget.scrollX
+            val y = event.y.toInt() - widget.totalPaddingTop + widget.scrollY
+            val line = layout.getLineForVertical(y)
+            val off = layout.getOffsetForHorizontal(line, x.toFloat())
+            val links = buffer.getSpans(off, off, android.text.style.URLSpan::class.java)
+            if (links.isNotEmpty()) {
+                if (action == android.view.MotionEvent.ACTION_UP) {
+                    AppLock.beginShareGrace()
+                    runCatching { links[0].onClick(widget) }
+                }
+                return true
+            }
+        }
+        return false
+    }
+}
