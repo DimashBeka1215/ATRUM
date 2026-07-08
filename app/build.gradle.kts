@@ -233,7 +233,7 @@ dependencies {
     implementation("com.github.yalantis:ucrop:2.2.8")
 
     // Chrome Custom Tabs — для встроенного браузера в OAuth flow
-    implementation("androidx.browser:browser:1.7.0")
+    implementation("androidx.browser:browser:1.10.0")
 
     // ViewPager2 — для intro/onboarding с свайпом
     implementation("androidx.viewpager2:viewpager2:1.0.0")
