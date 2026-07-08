@@ -15,13 +15,52 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * проход гарантирует что ни одна запись не хранит приватный ключ в БД.
  * init-проверка в Chat убрана — миграция надёжнее аварийного краша.
  */
-@Database(entities = [Chat::class], version = 12, exportSchema = false)
+@Database(entities = [Chat::class, ChatParticipant::class], version = 14, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun chatDao(): ChatDao
+    abstract fun chatParticipantDao(): ChatParticipantDao
 
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null
+
+        /** Версия 14: описание группы (ADR-001) — колонка с дефолтом, 1:1-чаты не затронуты. */
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE chats ADD COLUMN groupDescription TEXT DEFAULT NULL")
+            }
+        }
+
+        /**
+         * Версия 13: реальные групповые чаты (ADR-001, см. ADR_GROUP_CHATS.md).
+         * Новые колонки в chats — все с дефолтами, старые 1:1-чаты не затронуты.
+         * Новая таблица chat_participants — локальный кэш членства/бана, источник
+         * истины — подписанный members.txt (см. ChatParticipant.kt).
+         */
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE chats ADD COLUMN isGroup INTEGER NOT NULL DEFAULT 0")
+                database.execSQL("ALTER TABLE chats ADD COLUMN participantLimit INTEGER DEFAULT NULL")
+                database.execSQL("ALTER TABLE chats ADD COLUMN adminUserId TEXT DEFAULT NULL")
+                database.execSQL("ALTER TABLE chats ADD COLUMN groupName TEXT DEFAULT NULL")
+                database.execSQL("ALTER TABLE chats ADD COLUMN groupAvatarBase64 TEXT DEFAULT NULL")
+                database.execSQL("ALTER TABLE chats ADD COLUMN membersVersion INTEGER NOT NULL DEFAULT 0")
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS chat_participants (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        ownerId INTEGER NOT NULL,
+                        userId TEXT NOT NULL,
+                        banned INTEGER NOT NULL DEFAULT 0,
+                        joinedAtMs INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_chat_participants_ownerId_userId ON chat_participants (ownerId, userId)"
+                )
+            }
+        }
 
         private val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(database: SupportSQLiteDatabase) {
@@ -122,7 +161,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "atrum.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }

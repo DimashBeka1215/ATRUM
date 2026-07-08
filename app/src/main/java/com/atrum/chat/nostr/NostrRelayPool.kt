@@ -1,5 +1,6 @@
 package com.atrum.chat.nostr
 
+import com.atrum.chat.BuildConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -217,8 +218,19 @@ object NostrRelayPool {
         conn(url, useTor).query(filter, timeoutMs)
 
     /** Публикует событие; бросает исключение при отказе реле / таймауте. */
-    suspend fun publish(url: String, event: NostrEvent, useTor: Boolean, timeoutMs: Long = 20_000L) =
+    suspend fun publish(url: String, event: NostrEvent, useTor: Boolean, timeoutMs: Long = 20_000L) {
+        // ⚠️ Только для DEBUG-сборки (BuildConfig.DEBUG) — в release R8 вырезает эту ветку
+        // целиком (см. §14 CLAUDE.md, нет утечки в проде). Нужно для отладочного
+        // watch_relay_messages.bat — посмотреть, что реально уходит на реле.
+        if (BuildConfig.DEBUG) {
+            android.util.Log.d(
+                "AtrumRelayDebug",
+                "-> PUBLISH url=$url kind=${event.kind} id=${event.id.take(8)} " +
+                    "len=${event.content.length} content=${event.content.take(300)}"
+            )
+        }
         conn(url, useTor).publish(event, timeoutMs)
+    }
 
     /** Открывает потоковую подписку к реле (REQ остаётся открытым). */
     suspend fun subscribe(url: String, subId: String, filter: org.json.JSONObject, useTor: Boolean, onEvent: (NostrEvent) -> Unit) =
@@ -296,6 +308,15 @@ private class RelayConn(private val url: String, private val client: OkHttpClien
                 "EVENT" -> {
                     val sub = subs[arr.optString(1)] ?: return
                     NostrEvent.fromJson(arr.getJSONObject(2))?.let { ev ->
+                        // DEBUG-only, см. комментарий у top-level publish() — для
+                        // watch_relay_messages.bat. Не влияет на release (ветка вырезается R8).
+                        if (BuildConfig.DEBUG) {
+                            android.util.Log.d(
+                                "AtrumRelayDebug",
+                                "<- EVENT url=$url kind=${ev.kind} id=${ev.id.take(8)} " +
+                                    "len=${ev.content.length} content=${ev.content.take(300)}"
+                            )
+                        }
                         val cb = sub.onEvent
                         if (cb != null) cb(ev) else synchronized(sub.events) { sub.events.add(ev) }
                     }
@@ -304,7 +325,14 @@ private class RelayConn(private val url: String, private val client: OkHttpClien
                 "CLOSED" -> subs[arr.optString(1)]?.eose?.complete(Unit)
                 "OK" -> {
                     val waiter = pubs.remove(arr.optString(1)) ?: return
-                    if (arr.optBoolean(2, true)) waiter.complete(Unit)
+                    val accepted = arr.optBoolean(2, true)
+                    if (BuildConfig.DEBUG) {
+                        android.util.Log.d(
+                            "AtrumRelayDebug",
+                            "<- OK url=$url id=${arr.optString(1).take(8)} accepted=$accepted reason=${arr.optString(3)}"
+                        )
+                    }
+                    if (accepted) waiter.complete(Unit)
                     else waiter.completeExceptionally(
                         RuntimeException("Relay rejected event: ${arr.optString(3)}")
                     )

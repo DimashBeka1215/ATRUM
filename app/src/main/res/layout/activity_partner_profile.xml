@@ -54,35 +54,65 @@
                 android:contentDescription="@null"
                 android:visibility="gone"
                 app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.Circle" />
+
+            <!-- Демо-группа (см. PartnerProfileActivity.EXTRA_DEMO_GROUP): смена аватара
+                 чата админом. Скрыт для обычного (не групповое, не админ) профиля. -->
+            <ImageButton
+                android:id="@+id/btn_avatar_edit_demo"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_gravity="bottom|end"
+                android:background="@drawable/bg_edit_avatar_btn"
+                android:padding="7dp"
+                android:src="@drawable/ic_pencil"
+                android:contentDescription="@string/cd_group_avatar"
+                android:visibility="gone" />
         </FrameLayout>
 
-        <!-- Name + shield статуса безопасности -->
-        <LinearLayout
-            android:layout_width="wrap_content"
+        <!-- Name — во всю ширину, центрируется по КАЖДОЙ строке (не обрезается, переносится).
+             Раньше жила в горизонтальном wrap_content-ряду вместе с иконками — на длинных
+             (переносящихся на 2+ строки) названиях это ломало центрирование и выталкивало
+             карандаш редактирования за экран (см. фикс: иконки переехали в отдельные строки
+             ниже, каждая сама по себе центрирована — не зависят от ширины текста). -->
+        <TextView
+            android:id="@+id/tv_profile_name"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
             android:layout_marginTop="16dp"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
-            <TextView
-                android:id="@+id/tv_profile_name"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:fontFamily="sans-serif-medium"
-                android:textColor="@color/text_primary"
-                android:textSize="22sp" />
-            <ImageButton
-                android:id="@+id/btn_shield_status"
-                android:layout_width="34dp"
-                android:layout_height="34dp"
-                android:layout_marginStart="8dp"
-                android:padding="5dp"
-                android:src="@drawable/ic_shield"
-                app:tint="@color/text_primary"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:visibility="gone"
-                android:contentDescription="@string/profile_security_label" />
-        </LinearLayout>
+            android:paddingHorizontal="32dp"
+            android:fontFamily="sans-serif-medium"
+            android:gravity="center"
+            android:textAlignment="center"
+            android:textColor="@color/text_primary"
+            android:textSize="22sp" />
+
+        <!-- Shield статуса безопасности (1:1, верифицированный собеседник). -->
+        <ImageButton
+            android:id="@+id/btn_shield_status"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="4dp"
+            android:padding="5dp"
+            android:src="@drawable/ic_shield"
+            app:tint="@color/text_primary"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:visibility="gone"
+            android:contentDescription="@string/profile_security_label" />
+
+        <!-- Группа (демо/реальная): переименование чата админом. -->
+        <ImageButton
+            android:id="@+id/btn_name_edit_demo"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="4dp"
+            android:padding="6dp"
+            android:src="@drawable/ic_pencil"
+            app:tint="@color/text_secondary"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:visibility="gone"
+            android:contentDescription="@string/cc_group_name_label" />
 
         <!-- Tag -->
         <TextView
@@ -94,6 +124,92 @@
             android:fontFamily="sans-serif"
             android:textColor="@color/accent"
             android:textSize="14sp" />
+
+        <!-- Группа (реальная, ADR-001): описание чата. Видна у всех, если описание
+             заполнено; у админа видна всегда — с плейсхолдером-приглашением, если
+             пусто, и карандашом редактирования. Публикуется через тот же
+             подписанный members.txt, что имя/аватар группы (см. MembersSync). -->
+        <LinearLayout
+            android:id="@+id/card_group_description"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="24dp"
+            android:layout_marginTop="20dp"
+            android:background="@drawable/bg_settings_card"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="18dp"
+            android:paddingVertical="14dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tv_group_description"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="sans-serif"
+                android:lineSpacingExtra="2dp"
+                android:textColor="@color/text_secondary"
+                android:textSize="13.5sp" />
+
+            <ImageButton
+                android:id="@+id/btn_group_description_edit"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:layout_marginStart="10dp"
+                android:padding="6dp"
+                android:src="@drawable/ic_pencil"
+                app:tint="@color/text_tertiary"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:visibility="gone"
+                android:contentDescription="@string/cd_group_description_edit" />
+        </LinearLayout>
+
+        <!-- Демо-группа: переключатель роли предпросмотра (Участник/Админ).
+             НЕ показывается в реальном 1:1-профиле — только когда экран открыт
+             через TesterSettingsActivity.EXTRA_DEMO_GROUP. -->
+        <LinearLayout
+            android:id="@+id/demo_role_toggle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="24dp"
+            android:layout_marginTop="20dp"
+            android:background="@drawable/bg_input"
+            android:orientation="horizontal"
+            android:padding="4dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/demo_role_member"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@drawable/bg_chip_selected"
+                android:clickable="true"
+                android:focusable="true"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:paddingVertical="9dp"
+                android:text="@string/demo_role_member"
+                android:textColor="@color/accent_light"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/demo_role_admin"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_chip_default"
+                android:clickable="true"
+                android:focusable="true"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:paddingVertical="9dp"
+                android:text="@string/demo_role_admin"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+        </LinearLayout>
 
         <!-- Status card -->
         <LinearLayout
@@ -127,6 +243,35 @@
                 android:lineSpacingExtra="2dp"
                 android:textColor="@color/text_primary"
                 android:textSize="14sp" />
+        </LinearLayout>
+
+        <!-- Демо-группа: список участников (виден только админу). Строки добавляются
+             программно в PartnerProfileActivity.buildDemoMembers() — id ll_members_container. -->
+        <LinearLayout
+            android:id="@+id/section_members"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="24dp"
+                android:layout_marginBottom="10dp"
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.08"
+                android:text="@string/group_members_label"
+                android:textAllCaps="true"
+                android:textColor="@color/text_tertiary"
+                android:textSize="11sp" />
+
+            <LinearLayout
+                android:id="@+id/ll_members_container"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
         </LinearLayout>
 
         <!-- Security section — скрыта, раскрывается по тапу на щит -->

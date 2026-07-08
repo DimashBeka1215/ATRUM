@@ -20,7 +20,15 @@ data class AllChannelData(
     val profilesContent: String,
     /** Все слоты profiles.txt (по одному событию на участника) — для union-чтения
      *  (Фаза 1: убирает lost-update). Пусто для не-Nostr транспортов. */
-    val profileSlots: List<String> = emptyList()
+    val profileSlots: List<String> = emptyList(),
+    /**
+     * Содержимое members.txt (ADR-001, групповые чаты) — УЖЕ проверенное по подписи
+     * администратора группы (см. NostrTransport.adminUserId/splitAll). Пустая строка —
+     * либо это не групповой чат, либо валидного admin-подписанного members.txt ещё нет.
+     * Любые события members.txt от НЕ-администратора сюда не попадают — отфильтрованы
+     * до того, как контент покинул транспортный слой.
+     */
+    val membersContent: String = ""
 )
 
 typealias AllGistData = AllChannelData

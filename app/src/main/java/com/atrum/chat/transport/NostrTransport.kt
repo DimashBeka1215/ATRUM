@@ -37,7 +37,16 @@ class NostrTransport(
     private val chatPassword: String,
     private val myUserId: String,
     /** Предпочитать Tor. Фактический режим ([useTor]) — динамический (см. ниже). */
-    private val preferTor: Boolean = true
+    private val preferTor: Boolean = true,
+    /**
+     * userId администратора группового чата (ADR-001). null для 1:1-чатов и для
+     * участников группы, которые ещё не знают админа (тогда members.txt просто
+     * не проверяется/не отдаётся — безопасный дефолт, а не "доверяй всему").
+     * Публичный ключ админа детерминированно вычисляется из (chatPassword, adminUserId) —
+     * тот же способ, каким получается pubkey ЛЮБОГО участника (см. [privkey] ниже),
+     * отдельный ключ для админа хранить не нужно.
+     */
+    private val adminUserId: String? = null
 ) : ChatTransport {
 
     /**
@@ -50,6 +59,15 @@ class NostrTransport(
     override val useTor: Boolean
         get() = preferTor
 
+    /**
+     * true, если для ЭТОГО (прямого, не-Tor) транспорта сейчас активен пользовательский
+     * SOCKS5-прокси (экран «Соединение» → ConnectionPrefs). Используется, чтобы дать
+     * прямому пути через удалённый VPS тот же щедрый бюджет по времени, что и Tor —
+     * без прокси остаётся прежний быстрый фейл (см. NostrRelayPool.buildCustomProxyClient).
+     */
+    private fun viaCustomProxy(): Boolean =
+        !useTor && com.atrum.chat.ConnectionPrefs.customProxyEnabled && com.atrum.chat.ConnectionPrefs.isConfigValid()
+
     override val displayName: String get() = "Nostr P2P"
     override val displayIcon: String get() = "⚡"
     override val chatId: String get() = channelId
@@ -57,6 +75,19 @@ class NostrTransport(
     override val cryptoChatId: String get() = sourceId
 
     val channelId: String = sha256("atrum_channel_v1_$sourceId").toHex().take(16)
+
+    /**
+     * Публичный ключ администратора группы (hex) — вычисляется детерминированно из
+     * (chatPassword, adminUserId), тем же способом, что и [privkey] ниже. null, если
+     * adminUserId не задан (1:1-чат либо участник группы ещё не знает админа) —
+     * тогда members.txt нигде не проверяется и не применяется (безопасный дефолт).
+     */
+    private val adminPubkeyHex: String? by lazy {
+        adminUserId?.let { uid ->
+            val adminPriv = sha256("atrum_nostr_v1_${chatPassword}_$uid")
+            com.atrum.chat.nostr.Schnorr.pubkeyFromPrivkey(adminPriv).toHex()
+        }
+    }
 
     @Volatile private var lastContentHash: String? = null
 
@@ -161,6 +192,17 @@ class NostrTransport(
     private fun wireName(name: String): String =
         sha256("atrum_file_v1_${chatPassword}_$name").toHex().take(24)
 
+    /**
+     * Сбрасывает закэшированную копию неизменяемого файла (img_/stk_ — см. isImmutableFile)
+     * из mediaCache. Нужно ImageLoader'у: если у чанка не сошёлся SHA-256 (см.
+     * ImageChunker.parseChunkHashes), повторный loadFile() без сброса вернул бы ТУ ЖЕ
+     * (уже закэшированную, потенциально битую) копию, не сходив в сеть заново.
+     */
+    fun evictCachedFile(name: String) {
+        mediaCache.remove(wireName(name))
+        mediaCache.remove(name)
+    }
+
     /** Совпадает ли file/d-тег события с именем [name] — принимает И старый
      *  cleartext-тег, И новый wireName (обратная совместимость чтения истории). */
     private fun eventHasFileName(ev: NostrEvent, name: String): Boolean {
@@ -201,8 +243,27 @@ class NostrTransport(
             profileSlots = events
                 .filter { ev -> eventHasFileName(ev, "profiles.txt") }
                 .sortedByDescending { it.created_at }
-                .map { it.content }
+                .map { it.content },
+            membersContent = latestVerifiedMembersFile(events)
         )
+    }
+
+    /**
+     * Content members.txt (ADR-001) от САМОГО СВЕЖЕГО события, чей pubkey совпадает
+     * с вычисленным [adminPubkeyHex] И чья подпись валидна. Любые "members.txt" от
+     * других участников (даже валидно зашифрованные — они все знают общий пароль
+     * группы) молча отбрасываются: единственный источник доверия — подпись админа,
+     * тот же принцип, что и в RelayListStore.tryApply(). Пусто, если adminUserId
+     * не задан, подходящих событий нет или все не прошли проверку.
+     */
+    private fun latestVerifiedMembersFile(events: List<NostrEvent>): String {
+        val trustedPubkey = adminPubkeyHex ?: return ""
+        return events
+            .filter { ev -> eventHasFileName(ev, "members.txt") }
+            .filter { ev -> ev.pubkey.equals(trustedPubkey, ignoreCase = true) }
+            .filter { ev -> NostrEvent.verifySignature(ev) }
+            .maxByOrNull { it.created_at }
+            ?.content ?: ""
     }
 
     /**
@@ -294,6 +355,25 @@ class NostrTransport(
     }
 
     /**
+     * Публикация файла/чанка с ОДНОЙ повторной попыткой. Фото/голосовые чаще всего —
+     * это НЕСКОЛЬКО последовательных событий (чанки + манифест); без ретрая единичный
+     * сбой кворума на ЛЮБОМ из них (нестабильная сеть, DPI-помеха на один RTT, кастомный
+     * прокси через удалённый VPS) ронял всю заливку целиком, хотя остальные события
+     * уже ушли успешно. Короткая пауза перед повтором — не бесконечный цикл (это НЕ
+     * замена scheduleRebroadcast/ретраю всего сообщения на уровне ChatActivity, а
+     * страховка от одного случайного сбоя на конкретном событии). Если и вторая
+     * попытка падает — исключение уходит наружу как раньше (failSend в ChatActivity).
+     */
+    private suspend fun publishFileWithRetry(name: String, content: String) {
+        try {
+            publishFile(name, content)
+        } catch (e: Exception) {
+            delay(500L)
+            publishFile(name, content)
+        }
+    }
+
+    /**
      * Сохраняет файл. Крупный контент (изображения) АВТОМАТИЧЕСКИ чанкуется —
      * иначе реле отклоняет большое событие ("too large"). Это покрывает и путь
      * appendLine(extraFiles=...) для фото. Чанки и манифест публикуются
@@ -301,7 +381,7 @@ class NostrTransport(
      */
     override suspend fun saveFile(name: String, content: String) {
         if (content.length > NOSTR_CHUNK_CHARS) saveFileChunked(name, content, chatPassword, null)
-        else publishFile(name, content)
+        else publishFileWithRetry(name, content)
     }
 
     /**
@@ -316,20 +396,27 @@ class NostrTransport(
         onProgress: ((current: Int, total: Int) -> Unit)?
     ) {
         if (encryptedContent.length <= NOSTR_CHUNK_CHARS) {
-            publishFile(name, encryptedContent)
+            publishFileWithRetry(name, encryptedContent)
             return
         }
         val chunks = encryptedContent.chunked(NOSTR_CHUNK_CHARS)
         val chunkNames = chunks.indices.map { ImageChunker.chunkName(name, it) }
         chunks.forEachIndexed { i, chunk ->
-            publishFile(chunkNames[i], chunk)
+            publishFileWithRetry(chunkNames[i], chunk)
             onProgress?.invoke(i + 1, chunks.size)
         }
+        // Проверка целостности (по просьбе пользователя): список SHA-256 каждого чанка —
+        // ОТДЕЛЬНЫЙ файл, публикуется ДО манифеста. Старые версии приложения о нём не
+        // знают и никогда не запрашивают — обратная совместимость не страдает (см.
+        // ImageChunker.kt, раздел "Проверка целостности чанков"). Best-effort: если это
+        // само не долетит — получатель просто не проверяет, как и раньше.
+        val hashesEnc = CryptoHelper.encrypt(ImageChunker.makeChunkHashesPlain(chunks), password, sourceId)
+        publishFileWithRetry(ImageChunker.chunkHashesFileName(name), hashesEnc)
         // Манифест шифруем под sourceId (chat.chatId) через encrypt() — тем же ключом/
         // сессией, что и контент и текст. Иначе домены не совпадут и манифест не
         // расшифруется у получателя (cryptoChatId = chat.chatId).
         val manifestEnc = CryptoHelper.encrypt(ImageChunker.makeManifestPlain(chunkNames), password, sourceId)
-        publishFile(name, manifestEnc)
+        publishFileWithRetry(name, manifestEnc)
     }
 
     override suspend fun loadFileOrNull(name: String): String? = try {
@@ -568,8 +655,12 @@ class NostrTransport(
         val collected = ConcurrentLinkedQueue<NostrEvent>()
         val responded = AtomicInteger(0)
         val firstResponse = CompletableDeferred<Unit>()
-        val hardDeadline = if (useTor) SOFT_READ_DEADLINE_TOR_MS else SOFT_READ_DEADLINE_MS
-        val graceMs = if (useTor) READ_GRACE_TOR_MS else READ_GRACE_MS
+        // Кастомный SOCKS5-прокси (экран «Соединение») добавляет реальный round-trip до
+        // удалённого VPS — «быстрый фейл» direct-режима (8с) тут так же нереалистичен, как
+        // и без Tor-цепочки. Даём такой же щедрый бюджет, как Tor, а не только сам Tor.
+        val patientMode = useTor || viaCustomProxy()
+        val hardDeadline = if (patientMode) SOFT_READ_DEADLINE_TOR_MS else SOFT_READ_DEADLINE_MS
+        val graceMs = if (patientMode) READ_GRACE_TOR_MS else READ_GRACE_MS
         val relays = activeRelays()
 
         coroutineScope {
@@ -657,8 +748,12 @@ class NostrTransport(
             }
         }
         
-        // Ждем подтверждения. Увеличиваем общий дедлайн ожидания кворума до 20с для Tor.
-        val result = withTimeoutOrNull(if (useTor) 20_000L else 8_000L) {
+        // Ждем подтверждения. Увеличиваем общий дедлайн ожидания кворума до 20с для Tor —
+        // и точно так же для кастомного SOCKS5-прокси (см. viaCustomProxy()): удалённый
+        // VPS-прокси добавляет тот же порядок задержки, что и Tor-цепочка, «быстрый фейл»
+        // 8с там нереалистичен и был главной причиной срыва заливки фото/голосовых
+        // чанками — один неуспевший чанк ронял всю отправку.
+        val result = withTimeoutOrNull(if (useTor || viaCustomProxy()) 20_000L else 8_000L) {
             firstSuccess.await()
         } ?: false
 
@@ -727,6 +822,33 @@ class NostrTransport(
 
         /** Активный набор: встроенные + добавленные, без дублей. Floor сохраняется всегда. */
         fun activeRelays(): List<String> = (RELAYS + extraRelays).distinct()
+
+        /**
+         * ⚠️ Лёгкий РАЗОВЫЙ пинг ОДНОГО реле — ТОЛЬКО для живой телеметрии экрана
+         * «Соединение» (см. ConnectionActivity.startLivePing/stopLivePing). Это НЕ
+         * часть боевого чтения ([queryAllRelays]) и НЕ создаёт собственный
+         * polling-цикл — вызывающая сторона (ConnectionActivity) сама решает, когда
+         * дёргать эту функцию, и делает это ТОЛЬКО пока экран открыт (onResume/onPause),
+         * никакого фонового анализа. Минимальный REQ(limit:0) → EOSE через уже
+         * существующий персистентный NostrRelayPool — новый WebSocket не создаётся,
+         * никакого отдельного OkHttpClient. Всегда useTor=false: экран «Соединение»
+         * отвечает именно за прямой/прокси-путь (см. doc-comment ConnectionActivity),
+         * Tor-чаты сюда не относятся. Таймаут щедрый и НЕ связан с READ_GRACE_MS —
+         * боевой хедж доставки сообщений эта функция не трогает и не может замедлить.
+         */
+        suspend fun pingRelayForConnectionScreen(url: String, timeoutMs: Long = 6_000L): Long? {
+            val probe = JSONObject().apply {
+                put("kinds", JSONArray().put(1))
+                put("limit", 0)
+            }
+            val t0 = System.currentTimeMillis()
+            return runCatching {
+                NostrRelayPool.query(url, probe, useTor = false, timeoutMs = timeoutMs)
+            }.fold(
+                onSuccess = { System.currentTimeMillis() - t0 },
+                onFailure = { null }
+            )
+        }
 
         /**
          * Одноразово (без цикла) подтягивает подписанный список реле с реле же и применяет.

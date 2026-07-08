@@ -200,6 +200,7 @@
     <string name="error_network">Network error</string>
     <string name="error_load">Failed to load chat</string>
     <string name="error_send">Failed to send</string>
+    <string name="error_upload_timeout">Connection too slow — please try again</string>
     <string name="confirm_logout">Sign out of chat?</string>
     <string name="yes">Yes</string>
     <string name="no">No</string>
@@ -221,6 +222,9 @@
 
     <string name="warn_fs_title">Messages from previous session are hidden</string>
     <string name="warn_fs_message">Some messages are encrypted with a previous session key that has already been destroyed. This is expected — it\'s how forward secrecy works: the past is unreadable even if the password leaks.</string>
+
+    <string name="warn_group_pending_title">Waiting for confirmation</string>
+    <string name="warn_group_pending_message">The group admin hasn\'t added you to the member list yet — this usually takes a few seconds. If it takes too long, the group may be full or the admin offline; you can delete this chat from the chat list.</string>
 
     <string name="chat_loading">Loading messages…</string>
 
@@ -246,6 +250,56 @@
     <string name="cc_feature_exchange_desc">Each participant in this chat will see the other\'s name and avatar.</string>
     <string name="cc_feature_e2e_title">End-to-end encryption</string>
     <string name="cc_feature_e2e_desc">All messages are protected with end-to-end encryption.</string>
+
+    <!-- ══ Group chats (UI, experimental) ══ -->
+    <string name="cc_mode_pair">Regular chat</string>
+    <string name="cc_mode_group">Group chat</string>
+    <string name="cc_group_name_label">Chat name</string>
+    <string name="cc_group_name_hint">e.g. Friends</string>
+    <string name="cc_group_default_name">Group chat</string>
+    <string name="cc_group_avatar_hint">Tap the avatar to choose a photo</string>
+    <string name="cc_group_participants_label">Max participants</string>
+    <string name="cc_group_participants_helper_fmt">Up to %1$d people will be able to join via this invite.</string>
+    <string name="cc_group_participants_unlimited">No limit — any number of people can join via this invite.</string>
+    <string name="cc_group_profile_subtitle">This group chat will be created using your current profile.</string>
+    <string name="cc_group_feature_exchange_title">Participant profiles</string>
+    <string name="cc_group_feature_exchange_desc">In this chat all participants see each other\'s names and avatars.</string>
+    <string name="cc_group_invite_only_text">Participants will get an invite code via «Share invite». The password is set automatically for everyone.</string>
+    <string name="cc_group_create_button">Create group chat</string>
+    <string name="cc_group_coming_soon">Group chats are still in development. Coming soon!</string>
+    <string name="cc_part_5">5</string>
+    <string name="cc_part_10">10</string>
+    <string name="cc_part_15">15</string>
+    <string name="cc_part_unlim">∞</string>
+    <string name="cd_group_avatar">Choose chat avatar</string>
+
+    <!-- ══ Group profile demo (TesterSettingsActivity → PartnerProfileActivity) ══ -->
+    <string name="demo_role_member">Regular member</string>
+    <string name="demo_role_admin">Admin</string>
+    <string name="demo_role_admin_suffix">admin</string>
+    <string name="demo_group_name">Friends</string>
+    <string name="demo_group_status_text">End-to-end encryption. Encrypted group chat (demo).</string>
+    <string name="group_members_label">Members</string>
+    <string name="group_members_count_fmt">%1$d members</string>
+    <string name="group_banned_toast">You were removed from this group</string>
+    <string name="demo_member_online">online</string>
+    <string name="demo_member_offline">offline</string>
+    <string name="demo_member_last_seen">last seen 2h ago</string>
+    <string name="demo_member_banned">banned</string>
+    <string name="demo_ban_title">Ban %1$s?</string>
+    <string name="demo_ban_message">They will no longer be able to write to this chat, the chat will be deleted locally on their device, and they won\'t be able to rejoin via the invite.</string>
+    <string name="demo_ban_confirm">Ban</string>
+    <string name="demo_ban_cd">Ban %1$s</string>
+    <string name="demo_unban_title">Unban %1$s?</string>
+    <string name="demo_unban_message">They will be able to join the chat again, but they\'ll need a new invite — their old device was disconnected when they were banned.</string>
+    <string name="demo_unban_confirm">Unban</string>
+    <string name="demo_unban_cd">Unban %1$s</string>
+    <string name="demo_unban_share_hint">Unbanned. For them to come back, share a new invite from the chat list.</string>
+    <string name="cd_group_description_edit">Edit group description</string>
+    <string name="group_description_placeholder_admin">Add a group description</string>
+    <string name="group_description_dialog_title">Group description</string>
+    <string name="tester_item_group_profile_demo">Preview: group chat profile</string>
+    <string name="tester_item_group_profile_demo_desc">Demo screen (members, ban, editing)</string>
     <string name="cc_password_label">Connection password</string>
     <string name="cc_password_hint">Enter password</string>
     <string name="cc_password_helper">Share this password with your contact to connect. It encrypts all messages end-to-end.</string>
@@ -280,6 +334,7 @@
 
     <!-- Join chat statuses and errors -->
     <string name="join_default_partner_name">Chat</string>
+    <string name="cc_system_partner_joined">%1$s joined the chat</string>
     <string name="join_btn_connecting">Connecting…</string>
     <string name="join_status_checking">Checking chat…</string>
     <string name="join_status_connecting">Connecting to Relay…</string>
@@ -325,6 +380,16 @@
     <string name="invite_pin_regenerate">Generate a new code</string>
     <string name="invite_pin_empty">Enter an invite code</string>
     <string name="invite_create_failed">Couldn\'t create invite</string>
+    <string name="invite_ttl_label">Invite expires in</string>
+    <string name="cd_ttl_decrease">Decrease expiry time</string>
+    <string name="cd_ttl_increase">Increase expiry time</string>
+    <string name="invite_ttl_unlimited">Never expires</string>
+    <string name="invite_ttl_unlimited_sub">This invite will never expire</string>
+    <string name="invite_ttl_expiry_sub">Expires %1$s</string>
+    <plurals name="invite_ttl_hours">
+        <item quantity="one">%1$d hour</item>
+        <item quantity="other">%1$d hours</item>
+    </plurals>
 
     <!-- Password mode -->
     <string name="cc_pwd_mode_generate">Generate</string>
@@ -337,6 +402,8 @@
 
     <!-- Chat full -->
     <string name="join_err_chat_full">This chat is already taken. Another contact has already connected.</string>
+    <string name="join_err_group_full">This group has reached its participant limit.</string>
+    <string name="join_err_banned">You were removed from this group. You can\'t rejoin.</string>
 
     <!-- Expired chat -->
     <string name="chat_expired_toast">Chat deleted — it has expired.</string>

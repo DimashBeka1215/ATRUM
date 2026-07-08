@@ -2,11 +2,14 @@ package com.atrum.chat
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.hardware.camera2.CaptureRequest
 import android.os.Bundle
 import android.util.Size
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -14,6 +17,7 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import com.atrum.chat.databinding.ActivityQrScanBinding
+import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.DecodeHintType
 import com.google.zxing.MultiFormatReader
@@ -38,7 +42,14 @@ class QrScanActivity : AppCompatActivity() {
     private var mode = MODE_BT
 
     private val reader = MultiFormatReader().apply {
-        setHints(mapOf(DecodeHintType.TRY_HARDER to true))
+        setHints(
+            mapOf(
+                DecodeHintType.TRY_HARDER to true,
+                // Сканер принимает только QR (BT-токен и invite оба кодируются в QR) —
+                // ограничение формата чуть ускоряет декод и не влияет на распознавание.
+                DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE)
+            )
+        )
     }
 
     private val permLauncher =
@@ -68,6 +79,7 @@ class QrScanActivity : AppCompatActivity() {
         }
     }
 
+    @OptIn(ExperimentalCamera2Interop::class)
     private fun startCamera() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
@@ -77,10 +89,27 @@ class QrScanActivity : AppCompatActivity() {
             val preview = Preview.Builder().build().also {
                 it.setSurfaceProvider(binding.previewView.surfaceProvider)
             }
-            val analysis = ImageAnalysis.Builder()
+            val analysisBuilder = ImageAnalysis.Builder()
                 .setTargetResolution(Size(1280, 720))
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build()
+            // БАГ (частично исправлено): без явного режима автофокуса CameraX для связки
+            // Preview+ImageAnalysis (без ImageCapture) на части устройств выбирает
+            // CONTROL_AF_MODE_CONTINUOUS_VIDEO — он оптимизирован под плавное видео и
+            // менее агрессивно наводится на резкость на близкой дистанции (10-20см),
+            // на которой обычно держат телефон при сканировании QR. Отсюда и жалоба:
+            // сторонний сканер (со своим автофокусом фото-типа) читает тот же QR, а наш
+            // экран — нет, потому что кадр анализа просто расфокусирован. Форсируем
+            // CONTINUOUS_PICTURE — тот же режим, что использует системная камера для фото,
+            // он агрессивнее подстраивается под близкие объекты.
+            // graceful fallback: setCaptureRequestOption не бросает исключение, если режим
+            // недоступен на конкретном железе — камера просто продолжит с дефолтным AF.
+            runCatching {
+                Camera2Interop.Extender(analysisBuilder).setCaptureRequestOption(
+                    CaptureRequest.CONTROL_AF_MODE,
+                    CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+                )
+            }
+            val analysis = analysisBuilder.build()
             analysis.setAnalyzer(analysisExecutor) { proxy -> decode(proxy) }
 
             runCatching {
@@ -90,6 +119,27 @@ class QrScanActivity : AppCompatActivity() {
                 )
             }.onFailure { finish() }
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    /**
+     * Диагностика (см. CLAUDE.md §14): раньше ЛЮБОЕ исключение в этой функции —
+     * включая НЕ штатные (не NotFoundException) — молча проглатывалось на каждом
+     * кадре без единого следа. Если декодер падает не на «QR не найден в кадре»,
+     * а на чём-то структурном (например IllegalArgumentException из
+     * PlanarYUVLuminanceSource при несовпадении реального размера буфера кадра с
+     * ожидаемым на конкретном железе), сканер выглядел как «вообще не реагирует»,
+     * и разобраться без логов было невозможно. Показываем причину ОДИН раз (не
+     * спамим тостами по кадрам) — этого достаточно, чтобы прислать текст ошибки.
+     */
+    private val reportedError = AtomicBoolean(false)
+
+    private fun reportDecodeError(where: String, e: Throwable) {
+        if (!reportedError.compareAndSet(false, true)) return
+        val msg = "$where: ${e::class.simpleName}: ${e.message}"
+        android.util.Log.e("AtrumQr", msg, e)
+        runOnUiThread {
+            Toast.makeText(this, "QR-сканер: $msg", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun decode(proxy: ImageProxy) {
@@ -103,7 +153,14 @@ class QrScanActivity : AppCompatActivity() {
             val h = proxy.height
             val source = PlanarYUVLuminanceSource(data, plane.rowStride, h, 0, 0, w.coerceAtMost(plane.rowStride), h, false)
             val bitmap = BinaryBitmap(HybridBinarizer(source))
-            val result = runCatching { reader.decodeWithState(bitmap) }.getOrNull()
+            val result = try {
+                reader.decodeWithState(bitmap)
+            } catch (_: com.google.zxing.NotFoundException) {
+                null // штатно — в этом конкретном кадре QR не найден, пробуем следующий
+            } catch (e: Throwable) {
+                reportDecodeError("decodeWithState", e)
+                null
+            }
             reader.reset()
             val text = result?.text
             if (text != null) {
@@ -119,8 +176,11 @@ class QrScanActivity : AppCompatActivity() {
                     }
                 }
             }
-        } catch (_: Throwable) {
-            // кадр не распознан — продолжаем
+        } catch (e: Throwable) {
+            // Это уже НЕ decodeWithState (тот перехвачен выше) — значит упало на сборке
+            // источника/битмапа (PlanarYUVLuminanceSource/BinaryBitmap/HybridBinarizer)
+            // ДО декодера. Раньше такой кадр молча пропускался КАЖДЫЙ раз без следа.
+            reportDecodeError("decode", e)
         } finally {
             proxy.close()
         }

@@ -5,6 +5,16 @@
     android:layout_height="match_parent"
     android:background="@color/bg">
 
+    <!--
+        ScrollView + fillViewport — страховка на маленьких экранах/крупном системном
+        шрифте (см. CLAUDE.md, адаптация под старые телефоны): в обычных условиях не
+        активируется, gravity=center внутри работает как раньше.
+    -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:scrollbars="none">
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
@@ -13,18 +23,18 @@
         android:padding="32dp">
 
         <ImageView
-            android:layout_width="80dp"
-            android:layout_height="80dp"
+            android:layout_width="@dimen/lock_icon_size"
+            android:layout_height="@dimen/lock_icon_size"
             android:src="@drawable/ic_lock"
             android:contentDescription="@null"
-            android:layout_marginBottom="24dp"/>
+            android:layout_marginBottom="@dimen/lock_icon_margin_bottom"/>
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/lock_title"
             android:textColor="@color/text_primary"
-            android:textSize="22sp"
+            android:textSize="@dimen/lock_title_size"
             android:textStyle="bold"
             android:layout_marginBottom="6dp"/>
 
@@ -34,7 +44,7 @@
             android:text="@string/lock_hint"
             android:textColor="@color/text_secondary"
             android:textSize="14sp"
-            android:layout_marginBottom="28dp"/>
+            android:layout_marginBottom="@dimen/lock_hint_margin_bottom"/>
 
         <EditText
             android:id="@+id/et_pwd"
@@ -136,6 +146,7 @@
                 android:layout_marginTop="10dp"/>
         </LinearLayout>
     </LinearLayout>
+    </ScrollView>
 
     <!-- Плашка-объяснение про вход по отпечатку (скрыта, выезжает по тапу на "?") -->
     <LinearLayout

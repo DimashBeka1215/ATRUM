@@ -36,8 +36,16 @@ class TesterSettingsActivity : SecureActivity() {
             showCrashConfirmDialog()
         }
 
+        binding.itemGroupProfileDemo.setOnClickListener {
+            startActivity(
+                android.content.Intent(this, PartnerProfileActivity::class.java)
+                    .putExtra(PartnerProfileActivity.EXTRA_DEMO_GROUP, true)
+            )
+        }
+
         binding.itemScreenshots.visibility = View.VISIBLE
         binding.itemCrash.visibility = View.VISIBLE
+        binding.itemGroupProfileDemo.visibility = View.VISIBLE
     }
 
     private fun showCrashConfirmDialog() {

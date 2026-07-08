@@ -71,6 +71,86 @@
             android:contentDescription="@string/invite_pin_regenerate" />
     </LinearLayout>
 
+    <!--
+        Групповой чат (ADR-001): степпер срока действия приглашения, только для групп
+        (для 1:1 остаётся дефолт InviteCodec.DEFAULT_TTL_MS = 48ч, см. ChatsListActivity).
+        1-24 часа с шагом в час, дальше отдельное состояние "Без ограничений" —
+        решение по итогам обсуждения с пользователем (слайдер отклонён как неточный
+        и непривычный для security-критичного выбора, см. ChatsListActivity/степпер-мокап).
+    -->
+    <LinearLayout
+        android:id="@+id/ttl_group_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/bg_ttl_card"
+        android:padding="14dp"
+        android:layout_marginBottom="14dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="0.06"
+            android:text="@string/invite_ttl_label"
+            android:textAllCaps="true"
+            android:textColor="@color/text_tertiary"
+            android:textSize="10.5sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="10dp">
+
+            <ImageButton
+                android:id="@+id/btn_ttl_minus"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:background="@drawable/bg_ttl_step_btn"
+                android:src="@drawable/ic_minus"
+                app:tint="@color/text_primary"
+                android:padding="10dp"
+                android:contentDescription="@string/cd_ttl_decrease" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="center">
+
+                <TextView
+                    android:id="@+id/tv_ttl_value"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-medium"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/tv_ttl_sub"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:textColor="@color/text_tertiary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/btn_ttl_plus"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:background="@drawable/bg_ttl_step_btn"
+                android:src="@drawable/ic_add"
+                app:tint="@color/text_primary"
+                android:padding="10dp"
+                android:contentDescription="@string/cd_ttl_increase" />
+        </LinearLayout>
+    </LinearLayout>
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

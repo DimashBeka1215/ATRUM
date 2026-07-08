@@ -79,8 +79,8 @@ class ImageLoader(
      * Загружает сырые байты файла (для TGS-стикеров).
      * Контент хранится как base64 — декодируем обратно в байты.
      */
-    suspend fun loadRawBytes(fileName: String): ByteArray? {
-        val base64 = loadBase64(fileName) ?: return null
+    suspend fun loadRawBytes(fileName: String, onChunkProgress: ((current: Int, total: Int) -> Unit)? = null): ByteArray? {
+        val base64 = loadBase64(fileName, onChunkProgress) ?: return null
         return try {
             android.util.Base64.decode(base64, android.util.Base64.NO_WRAP)
         } catch (_: Exception) { null }
@@ -169,7 +169,7 @@ class ImageLoader(
      * Дедупликация: если загрузка уже идёт, await'ит существующий Deferred
      * вместо нового сетевого запроса.
      */
-    suspend fun loadBase64(fileName: String): String? {
+    suspend fun loadBase64(fileName: String, onChunkProgress: ((current: Int, total: Int) -> Unit)? = null): String? {
         // Быстрый путь: уже в кеше
         ImageCache.getBase64(fileName)?.let { return it }
 
@@ -196,7 +196,7 @@ class ImageLoader(
                 fileName.startsWith("http://", true) || fileName.startsWith("https://", true) -> {
                     loadFromExternalUrl(fileName)
                 }
-                else -> loadFromChatContent(fileName)
+                else -> loadFromChatContent(fileName, onChunkProgress)
             }
             if (base64 != null) {
                 ImageCache.put(fileName, base64, null)
@@ -265,35 +265,99 @@ class ImageLoader(
      * Загружает изображение из основного контента чата (старый формат).
      * Обрабатывает plain base64, CHUNKED-манифест и любые другие форматы.
      */
-    private suspend fun loadFromChatContent(fileName: String): String? {
+    private suspend fun loadFromChatContent(
+        fileName: String,
+        onChunkProgress: ((current: Int, total: Int) -> Unit)? = null
+    ): String? {
         val mainContent = loadFileRetry(fileName)
         val decrypted = CryptoHelper.decrypt(mainContent, password, cryptoChatId) ?: return null
         return if (decrypted.startsWith(ImageChunker.CHUNKED_MARKER)) {
-            assembleChunkedImage(decrypted)
+            assembleChunkedImage(fileName, decrypted, onChunkProgress)
         } else {
+            onChunkProgress?.invoke(1, 1)
             decrypted
         }
     }
 
     /**
      * Собирает CHUNKED-изображение из отдельных файлов основного контента чата.
+     *
+     * Проверка целостности (best-effort): если отправитель опубликовал файл с SHA-256
+     * каждого чанка (см. ImageChunker.CHUNK_HASHES_MARKER), после скачивания сверяем
+     * хеши и для НЕСОВПАВШИХ чанков делаем ОДИН точечный повторный запрос (сбросив
+     * закэшированную копию, если транспорт — NostrTransport). Если хешей нет (старая
+     * версия собеседника/старое фото) или их число не совпало — просто не проверяем,
+     * как и раньше. Финальную сборку это НИКОГДА не блокирует сильнее, чем раньше —
+     * даже если что-то в самой проверке пошло не так, попытка расшифровки всё равно
+     * происходит (сама AES-GCM уже даёт финальную гарантию целостности).
      */
-    private suspend fun assembleChunkedImage(manifest: String): String? {
+    private suspend fun assembleChunkedImage(
+        mainFileName: String,
+        manifest: String,
+        onChunkProgress: ((current: Int, total: Int) -> Unit)? = null
+    ): String? {
         val chunkNames = ImageChunker.parseManifest(manifest) ?: return null
         if (chunkNames.isEmpty()) return null
         return try {
             // Чанки качаем ПАРАЛЛЕЛЬНО (с ограничением одновременных запросов), порядок
             // сохраняем по индексу — это резко ускоряет длинные медиа (голос 10+ мин =
             // сотни чанков): вместо последовательного цикла через Tor — пачками.
+            // onChunkProgress репортит по мере ЗАВЕРШЕНИЯ каждого скачивания (не по
+            // порядку индекса — чанки параллельны) — для UI этого достаточно, это
+            // визуальная оценка «сколько уже скачано», как буфер-бар у YouTube, а не
+            // точная позиция воспроизведения.
             val sem = Semaphore(MAX_PARALLEL_CHUNKS)
+            val done = java.util.concurrent.atomic.AtomicInteger(0)
             val parts = coroutineScope {
                 chunkNames.map { name ->
-                    async(Dispatchers.IO) { sem.withPermit { loadFileRetry(name) } }
+                    async(Dispatchers.IO) {
+                        sem.withPermit { loadFileRetry(name) }.also {
+                            onChunkProgress?.invoke(done.incrementAndGet(), chunkNames.size)
+                        }
+                    }
                 }.awaitAll()
-            }
+            }.toMutableList()
+
+            verifyAndFixChunks(mainFileName, chunkNames, parts)
+
             CryptoHelper.decrypt(parts.joinToString(""), password, cryptoChatId)
         } catch (e: Exception) {
             null
+        }
+    }
+
+    /**
+     * Best-effort проверка SHA-256 каждого скачанного чанка против списка, который мог
+     * опубликовать отправитель (см. NostrTransport.saveFileChunked). Битые чанки
+     * перезапрашиваются РОВНО ОДИН раз (со сбросом кэша у NostrTransport — иначе
+     * повторный loadFile() тихо вернёт ту же испорченную копию). [parts] правится на месте.
+     */
+    private suspend fun verifyAndFixChunks(
+        mainFileName: String,
+        chunkNames: List<String>,
+        parts: MutableList<String>
+    ) {
+        val hashesName = ImageChunker.chunkHashesFileName(mainFileName)
+        val hashesRaw = try {
+            withContext(Dispatchers.IO) { api.loadFileOrNull(hashesName) }
+        } catch (_: Exception) { null } ?: return
+        val hashesDecrypted = CryptoHelper.decrypt(hashesRaw, password, cryptoChatId) ?: return
+        val expectedHashes = ImageChunker.parseChunkHashes(hashesDecrypted, chunkNames.size) ?: return
+
+        for (i in chunkNames.indices) {
+            if (ImageChunker.sha256Hex(parts[i]) == expectedHashes[i]) continue
+            android.util.Log.w("AtrumImageLoader",
+                "Чанк ${chunkNames[i]} не прошёл проверку целостности — точечный повтор")
+            (api as? com.atrum.chat.transport.NostrTransport)?.evictCachedFile(chunkNames[i])
+            val refetched = try {
+                withContext(Dispatchers.IO) { loadFileRetry(chunkNames[i], attempts = 3) }
+            } catch (_: Exception) { null } ?: continue
+            if (ImageChunker.sha256Hex(refetched) == expectedHashes[i]) {
+                parts[i] = refetched
+            } else {
+                android.util.Log.w("AtrumImageLoader",
+                    "Чанк ${chunkNames[i]} всё ещё не сходится после повтора — продолжаем как есть")
+            }
         }
     }
 

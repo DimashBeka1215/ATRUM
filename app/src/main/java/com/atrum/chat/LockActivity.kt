@@ -80,7 +80,26 @@ class LockActivity : SecureActivity() {
         prefs.pinFailCount = 0
         prefs.pinLockoutUntil = 0L
         AppLock.locked = false
-        startActivity(Intent(this, ChatsListActivity::class.java))
+        // БАГ (исправлено): раньше здесь БЕЗУСЛОВНО открывался ChatsListActivity —
+        // это ломало любой сценарий, где LockActivity вызван как "повторная блокировка"
+        // из SecureActivity.onStart() поверх УЖЕ существующего защищённого экрана
+        // (например JoinChatActivity, открытый по deep-link atrum://join из внешнего
+        // QR-сканера/камеры). Такой экран НЕ делает finish() перед показом LockActivity —
+        // он остаётся в стеке под ней. Принудительный переход в ChatsListActivity после
+        // разблокировки выбрасывал этот экран из стека, и вместе с ним — необработанное
+        // приглашение (JoinChatActivity так и не успевал показать свой диалог ввода PIN
+        // инвайта и вызвать runConnect()). Пользователь просто попадал в список чатов
+        // без единого намёка, что он вообще сканировал приглашение.
+        //
+        // ChatsListActivity нужен явно ТОЛЬКО при холодном старте (WelcomeActivity уже
+        // сделал finish() перед запуском LockActivity — под ней в стеке пусто, "просто
+        // finish()" привёл бы на рабочий стол). Это единственный вызывающий, который
+        // передаёт EXTRA_COLD_START. Во всех остальных случаях (повторная блокировка)
+        // достаточно закрыть LockActivity — система сама покажет то, что было под ней,
+        // со всем его состоянием (включая ещё не обработанный deep-link).
+        if (intent.getBooleanExtra(EXTRA_COLD_START, false)) {
+            startActivity(Intent(this, ChatsListActivity::class.java))
+        }
         finish()
     }
 
@@ -175,5 +194,16 @@ class LockActivity : SecureActivity() {
     override fun onBackPressed() {
         // Не даём выйти из приложения через back — пусть пользователь введёт пароль
         moveTaskToBack(true)
+    }
+
+    companion object {
+        /**
+         * Передаётся ТОЛЬКО из WelcomeActivity (холодный старт) — единственный вызывающий,
+         * который сам делает finish() ДО запуска LockActivity, так что под ней в стеке
+         * пусто. Только в этом случае unlock() обязан явно открыть ChatsListActivity.
+         * SecureActivity.onStart() (повторная блокировка поверх любого защищённого экрана)
+         * эту extra НЕ передаёт — там под LockActivity в стеке уже есть нужный экран.
+         */
+        const val EXTRA_COLD_START = "cold_start"
     }
 }

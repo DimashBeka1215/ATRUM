@@ -5,8 +5,14 @@
     android:background="@color/bg">
 
     <!-- Шаг 1: Ник -->
-    <LinearLayout
+    <!-- ScrollView + fillViewport — страховка на маленьких экранах (см. CLAUDE.md). -->
+    <ScrollView
         android:id="@+id/step_name"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:scrollbars="none">
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
@@ -22,7 +28,7 @@
             android:layout_height="wrap_content"
             android:text="@string/onboarding_name_title"
             android:textColor="@color/text_primary"
-            android:textSize="28sp"
+            android:textSize="@dimen/onboarding_title_size"
             android:textStyle="bold"
             android:layout_marginBottom="8dp"/>
 
@@ -32,7 +38,7 @@
             android:text="@string/onboarding_name_hint"
             android:textColor="@color/text_secondary"
             android:textSize="14sp"
-            android:layout_marginBottom="32dp"/>
+            android:layout_marginBottom="@dimen/onboarding_hint_margin_bottom"/>
 
         <EditText
             android:id="@+id/et_name"
@@ -53,7 +59,7 @@
             android:id="@+id/et_tag"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="@dimen/onboarding_field_gap"
             android:hint="@string/hint_tag"
             android:textColorHint="@color/text_tertiary"
             android:textColor="@color/accent"
@@ -82,15 +88,21 @@
             android:stateListAnimator="@null"
             android:textAllCaps="false"/>
     </LinearLayout>
+    </ScrollView>
 
     <!-- Шаг 2: Локальный пароль (опц.) -->
-    <LinearLayout
+    <ScrollView
         android:id="@+id/step_password"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="vertical"
-        android:padding="28dp"
+        android:fillViewport="true"
+        android:scrollbars="none"
         android:visibility="gone">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="28dp">
 
         <View
             android:layout_width="0dp"
@@ -102,7 +114,7 @@
             android:layout_height="wrap_content"
             android:text="@string/onboarding_pwd_title"
             android:textColor="@color/text_primary"
-            android:textSize="28sp"
+            android:textSize="@dimen/onboarding_title_size"
             android:textStyle="bold"
             android:layout_marginBottom="8dp"/>
 
@@ -113,7 +125,7 @@
             android:textColor="@color/text_secondary"
             android:textSize="14sp"
             android:lineSpacingExtra="2dp"
-            android:layout_marginBottom="32dp"/>
+            android:layout_marginBottom="@dimen/onboarding_hint_margin_bottom"/>
 
         <EditText
             android:id="@+id/et_pwd"
@@ -127,7 +139,7 @@
             android:paddingVertical="16dp"
             android:inputType="textPassword"
             android:textSize="16sp"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="@dimen/onboarding_field_gap"
             android:importantForAutofill="no"/>
 
         <EditText
@@ -161,4 +173,5 @@
             android:stateListAnimator="@null"
             android:textAllCaps="false"/>
     </LinearLayout>
+    </ScrollView>
 </FrameLayout>

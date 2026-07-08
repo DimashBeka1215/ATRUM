@@ -7,6 +7,8 @@ import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.bluetooth.BluetoothDevice
 import android.content.Intent
+import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
@@ -19,9 +21,11 @@ import androidx.lifecycle.lifecycleScope
 import com.atrum.chat.data.AppDatabase
 import com.atrum.chat.data.Chat
 import com.atrum.chat.databinding.ActivityCreateChatBinding
+import com.yalantis.ucrop.UCrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.security.SecureRandom
 
 /**
@@ -52,6 +56,27 @@ class CreateChatActivity : SecureActivity() {
     private var selectedPath: MsgPath = MsgPath.NOSTR
     /** Совместимость со старым кодом: true только для Tor-пути. */
     private val selectedTor: Boolean get() = selectedPath == MsgPath.TOR
+
+    /**
+     * Тип чата: обычный (P2P, двое) или групповой.
+     * Групповой режим создаётся реально (см. createGroupChat(), ADR_GROUP_CHATS.md):
+     * тот же Nostr-транспорт и V5-шифрование общим паролем, БЕЗ ECDH forward-secrecy
+     * рукопожатия (оно рассчитано только на двух участников). BLE-путь для групп
+     * не поддерживается — только Nostr.
+     */
+    private enum class ChatKind { PAIR, GROUP }
+    private var chatKind: ChatKind = ChatKind.PAIR
+
+    /** Лимит участников для группового чата. Проверяется при джойне (JoinChatActivity). */
+    private enum class ParticipantsLimit(val max: Int?) {
+        FIVE(5), TEN(10), FIFTEEN(15), UNLIMITED(null)
+    }
+    private var selectedParticipants: ParticipantsLimit = ParticipantsLimit.TEN
+
+    /** Аватар своего профиля — чтобы восстановить при возврате из группового режима. */
+    private var profileAvatarBitmap: android.graphics.Bitmap? = null
+    /** Аватар, выбранный для группового чата через галерею (пока только превью). */
+    private var groupAvatarBitmap: android.graphics.Bitmap? = null
 
     /** Пароль чата — генерируется автоматически при создании. */
     private val generatedPassword: String = generateSecurePassword()
@@ -160,6 +185,24 @@ class CreateChatActivity : SecureActivity() {
         else Toast.makeText(this, R.string.bt_perm_needed, Toast.LENGTH_LONG).show()
     }
 
+    // ── Аватарка группового чата (системный пикер + UCrop — как обычная аватарка) ──
+
+    private val pickGroupAvatar = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? -> if (uri != null) startGroupAvatarCrop(uri) }
+
+    private val cropGroupAvatar = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK && result.data != null) {
+            val uri = UCrop.getOutput(result.data!!)
+            if (uri != null) applyGroupAvatarUri(uri)
+        } else if (result.resultCode == UCrop.RESULT_ERROR && result.data != null) {
+            val err = UCrop.getError(result.data!!)
+            Toast.makeText(this, getString(R.string.error_avatar_load) + ": ${err?.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityCreateChatBinding.inflate(layoutInflater)
@@ -183,7 +226,16 @@ class CreateChatActivity : SecureActivity() {
         binding.btnCreateP2p.setOnClickListener { createP2pChat() }
 
         prefs.myAvatarBase64?.let { base64 ->
-            AvatarUtils.fromBase64(base64)?.let { bmp -> binding.ivAvatar.setImageBitmap(bmp) }
+            AvatarUtils.fromBase64(base64)?.let { bmp ->
+                binding.ivAvatar.setImageBitmap(bmp)
+                profileAvatarBitmap = bmp
+            }
+        }
+
+        setupChatModeToggle()
+        setupParticipantsChips()
+        binding.flAvatarContainer.setOnClickListener {
+            if (chatKind == ChatKind.GROUP) onGroupAvatarTap()
         }
 
         startAvatarAnimations()
@@ -357,9 +409,124 @@ class CreateChatActivity : SecureActivity() {
         }
     }
 
+    // ═══ Групповой чат (UI; создание чата — TODO, см. комментарий у ChatKind) ═══
+
+    private fun setupChatModeToggle() {
+        applyChatKind()
+        binding.togglePair.setOnClickListener { chatKind = ChatKind.PAIR; applyChatKind() }
+        binding.toggleGroup.setOnClickListener { chatKind = ChatKind.GROUP; applyChatKind() }
+    }
+
+    private fun applyChatKind() {
+        val group = chatKind == ChatKind.GROUP
+
+        binding.togglePair.setBackgroundResource(if (group) R.drawable.bg_chip_default else R.drawable.bg_chip_selected)
+        binding.toggleGroup.setBackgroundResource(if (group) R.drawable.bg_chip_selected else R.drawable.bg_chip_default)
+        binding.togglePair.setTextColor(
+            androidx.core.content.ContextCompat.getColor(this, if (group) R.color.text_secondary else R.color.accent_light)
+        )
+        binding.toggleGroup.setTextColor(
+            androidx.core.content.ContextCompat.getColor(this, if (group) R.color.accent_light else R.color.text_secondary)
+        )
+
+        binding.groupNameSection.visibility = if (group) View.VISIBLE else View.GONE
+        binding.groupParticipantsSection.visibility = if (group) View.VISIBLE else View.GONE
+        binding.tvAvatarHint.visibility = if (group) View.VISIBLE else View.GONE
+
+        binding.tvProfileSubtitle.setText(if (group) R.string.cc_group_profile_subtitle else R.string.cc_profile_subtitle)
+        binding.tvFeature1Title.setText(if (group) R.string.cc_group_feature_exchange_title else R.string.cc_feature_exchange_title)
+        binding.tvFeature1Desc.setText(if (group) R.string.cc_group_feature_exchange_desc else R.string.cc_feature_exchange_desc)
+        binding.tvInviteOnlyText.setText(if (group) R.string.cc_group_invite_only_text else R.string.cc_invite_only_text)
+        binding.btnCreateP2p.setText(if (group) R.string.cc_group_create_button else R.string.cc_create_button)
+
+        val avatarBmp = if (group) (groupAvatarBitmap ?: profileAvatarBitmap) else profileAvatarBitmap
+        avatarBmp?.let { binding.ivAvatar.setImageBitmap(it) }
+    }
+
+    private fun setupParticipantsChips() {
+        val chips = listOf(
+            binding.chipPart5 to ParticipantsLimit.FIVE,
+            binding.chipPart10 to ParticipantsLimit.TEN,
+            binding.chipPart15 to ParticipantsLimit.FIFTEEN,
+            binding.chipPartUnlim to ParticipantsLimit.UNLIMITED
+        )
+        applyParticipantsSelection(chips)
+        chips.forEach { (view, limit) ->
+            view.setOnClickListener {
+                selectedParticipants = limit
+                applyParticipantsSelection(chips)
+            }
+        }
+    }
+
+    private fun applyParticipantsSelection(chips: List<Pair<android.widget.TextView, ParticipantsLimit>>) {
+        chips.forEach { (view, limit) ->
+            val selected = limit == selectedParticipants
+            view.setBackgroundResource(if (selected) R.drawable.bg_chip_selected else R.drawable.bg_chip_default)
+            view.setTextColor(
+                androidx.core.content.ContextCompat.getColor(
+                    this, if (selected) R.color.accent_light else R.color.text_secondary
+                )
+            )
+        }
+        binding.tvParticipantsHelper.text = selectedParticipants.max?.let {
+            getString(R.string.cc_group_participants_helper_fmt, it)
+        } ?: getString(R.string.cc_group_participants_unlimited)
+    }
+
+    /** Тап по аватару в групповом режиме — системный пикер фото, затем кроп (как обычная аватарка). */
+    private fun onGroupAvatarTap() {
+        pickGroupAvatar.launch("image/*")
+    }
+
+    private fun startGroupAvatarCrop(sourceUri: Uri) {
+        val destUri = Uri.fromFile(File(cacheDir, "group_avatar_crop_${System.currentTimeMillis()}.jpg"))
+        val options = UCrop.Options().apply {
+            setCircleDimmedLayer(true)
+            setShowCropFrame(false)
+            setShowCropGrid(false)
+            setCompressionFormat(Bitmap.CompressFormat.JPEG)
+            setCompressionQuality(90)
+            setToolbarTitle(getString(R.string.crop_avatar_title))
+            setHideBottomControls(true)
+            setFreeStyleCropEnabled(false)
+        }
+        cropGroupAvatar.launch(
+            UCrop.of(sourceUri, destUri)
+                .withAspectRatio(1f, 1f)
+                .withMaxResultSize(1024, 1024)
+                .withOptions(options)
+                .getIntent(this)
+        )
+    }
+
+    private fun applyGroupAvatarUri(uri: Uri) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val bmp = AvatarUtils.loadAndResize(this@CreateChatActivity, uri)
+            withContext(Dispatchers.Main) {
+                if (bmp != null) {
+                    groupAvatarBitmap = bmp
+                    binding.ivAvatar.setImageBitmap(bmp)
+                } else {
+                    Toast.makeText(this@CreateChatActivity, R.string.error_avatar_load, Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
     // ═══ Создание чата ═══
 
     private fun createP2pChat() {
+        if (chatKind == ChatKind.GROUP) {
+            // Групповые чаты пока только поверх Nostr (см. ADR_GROUP_CHATS.md) —
+            // BLE-путь для групп не проектировался, не создаём с ложным ощущением поддержки.
+            if (selectedPath == MsgPath.BT) {
+                Toast.makeText(this, R.string.cc_group_coming_soon, Toast.LENGTH_LONG).show()
+                return
+            }
+            createGroupChat()
+            return
+        }
         if (selectedPath == MsgPath.BT) createBtChat() else createNostrChat()
     }
 
@@ -389,7 +556,12 @@ class CreateChatActivity : SecureActivity() {
             val pathToken = if (selectedTor) NostrTransport.NOSTR_TOKEN
                             else NostrTransport.NOSTR_DIRECT_TOKEN
             prefs.saveChatSecrets(channelId, pathToken, password)
-            if (selectedTor) TorManager.start(applicationContext)
+            if (selectedTor) {
+                TorManager.start(applicationContext)
+                // Автор Tor-чата — тоже нажатие «создать/подключиться» по смыслу, взводим
+                // тот же сторож, что и JoinChatActivity/ChatActivity (см. TorSyncWatchdog.kt).
+                TorSyncWatchdog.arm(applicationContext, channelId)
+            }
             val newId = withContext(Dispatchers.IO) { db.chatDao().insert(chat) }
 
             val myProfile = Profile(
@@ -401,8 +573,102 @@ class CreateChatActivity : SecureActivity() {
             AppScope.launch {
                 try {
                     val transport = NostrTransport(channelId, password, prefs.myUserId, preferTor = selectedTor)
+                    val ok = ProfileSync.pushMyProfile(transport, password, myProfile)
+                    if (!ok && selectedTor) {
+                        val cause = ProfileSync.lastError
+                            ?: IllegalStateException("pushMyProfile вернул false, но lastError пуст")
+                        TorSyncWatchdog.reportDeviation(applicationContext, channelId, "CreateChatActivity.pushMyProfile", cause)
+                    }
+                } catch (e: Exception) {
+                    if (selectedTor) {
+                        TorSyncWatchdog.reportDeviation(applicationContext, channelId, "CreateChatActivity.pushMyProfile", e)
+                    }
+                }
+            }
+
+            startActivity(Intent(this@CreateChatActivity, ChatActivity::class.java).apply {
+                putExtra(ChatActivity.EXTRA_CHAT_ID, newId)
+            })
+            finish()
+        }
+    }
+
+    /**
+     * Создаёт групповой чат (ADR-001, см. ADR_GROUP_CHATS.md). Транспортно и криптографически
+     * это ТОТ ЖЕ путь, что и обычный Nostr P2P-чат (общий channelId/пароль, V5-шифрование,
+     * без ECDH-рукопожатия — см. ChatActivity.onCreate) — единственное отличие: Chat.isGroup=true,
+     * плюс публикуется подписанный members.txt с самим создателем как единственным участником.
+     * Создатель автоматически становится администратором (adminUserId = мой userId).
+     */
+    private fun createGroupChat() {
+        val groupName = binding.etGroupName.text?.toString()?.trim().orEmpty()
+            .ifBlank { getString(R.string.cc_group_default_name) }
+        val channelId = generateChannelId()
+        val password = generatedPassword
+        val expiresAt = if (selectedDuration.days < 0) null
+            else System.currentTimeMillis() + selectedDuration.days * 24L * 60 * 60 * 1000
+        val adminUserId = prefs.myUserId
+        val groupAvatarB64 = groupAvatarBitmap?.let { AvatarUtils.toBase64(it) }
+
+        setLoading(true)
+        lifecycleScope.launch {
+            @Suppress("DEPRECATION")
+            val chat = Chat(
+                chatId = channelId,
+                transportToken = "",
+                chatPassword = "",
+                // partnerName — легаси-поле для экранов, ещё не переведённых на groupName
+                // (полная переделка UI под группы — отдельный шаг, см. ADR_GROUP_CHATS.md).
+                partnerName = groupName,
+                lastMessage = "",
+                lastTimeMs = System.currentTimeMillis(),
+                expiresAtMs = expiresAt,
+                isGroup = true,
+                participantLimit = selectedParticipants.max,
+                adminUserId = adminUserId,
+                groupName = groupName,
+                groupAvatarBase64 = groupAvatarB64,
+                // Версию 1 публикуем сами же прямо сейчас — сразу проставляем, чтобы
+                // applyIncoming (анти-откат) не отбросил наше же первичное members.txt.
+                membersVersion = 1
+            )
+            val pathToken = if (selectedTor) NostrTransport.NOSTR_TOKEN
+                            else NostrTransport.NOSTR_DIRECT_TOKEN
+            prefs.saveChatSecrets(channelId, pathToken, password)
+            if (selectedTor) {
+                TorManager.start(applicationContext)
+                TorSyncWatchdog.arm(applicationContext, channelId)
+            }
+            val newId = withContext(Dispatchers.IO) { db.chatDao().insert(chat) }
+
+            val myProfile = Profile(
+                userId = prefs.myUserId,
+                name = prefs.myName,
+                tag = prefs.myTag,
+                avatarBase64 = prefs.myAvatarBase64
+            )
+            AppScope.launch {
+                try {
+                    val transport = NostrTransport(
+                        sourceId = channelId,
+                        chatPassword = password,
+                        myUserId = adminUserId,
+                        preferTor = selectedTor,
+                        adminUserId = adminUserId
+                    )
                     ProfileSync.pushMyProfile(transport, password, myProfile)
-                } catch (_: Exception) {
+                    MembersSync.publish(
+                        transport = transport,
+                        password = password,
+                        chatId = channelId,
+                        adminUserId = adminUserId,
+                        newVersion = 1,
+                        participants = listOf(MembersSync.Entry(adminUserId, banned = false))
+                    )
+                } catch (e: Exception) {
+                    if (selectedTor) {
+                        TorSyncWatchdog.reportDeviation(applicationContext, channelId, "CreateChatActivity.createGroupChat", e)
+                    }
                 }
             }
 

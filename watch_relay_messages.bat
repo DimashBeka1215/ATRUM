@@ -34,16 +34,25 @@ echo ====================================================
 echo   ATRUM Relay Message Interceptor (Nostr Transport)
 echo ====================================================
 echo Использую: !ADB_EXE!
+echo.
+echo [ВАЖНО] Тег AtrumRelayDebug пишется ТОЛЬКО в debug-сборке приложения
+echo         (BuildConfig.DEBUG) - в release ветка логирования вырезана.
+echo         Установи debug APK на устройство перед запуском этого скрипта.
+echo.
 echo Ожидание устройства...
 !ADB_EXE! wait-for-device
 echo Устройство подключено!
 echo.
 echo [INFO] Очистка логов и запуск перехвата...
 !ADB_EXE! logcat -c
-echo [INFO] СЛУШАЮ: сообщения Nostr, ошибки и системный вывод.
+echo [INFO] СЛУШАЮ: AtrumRelayDebug (что публикуется/приходит с реле, включая
+echo        зашифрованный content), AtrumNostr (общие события транспорта),
+echo        AtrumUpload/AtrumImageLoader (заливка и приём медиа).
 echo.
 
-:: Слушаем AtrumRelay и System.out, фильтруя всё лишнее через findstr
-!ADB_EXE! logcat -v time AtrumRelay:V System.out:I *:S | findstr /i "ATRUM"
+:: Реальные теги логов ATRUM (см. NostrRelayPool.kt / NostrTransport.kt / ChatActivity.kt /
+:: ImageLoader.kt) - "AtrumRelay" без суффикса в коде не существует, поэтому старый фильтр
+:: ничего не показывал.
+!ADB_EXE! logcat -v time AtrumRelayDebug:D AtrumNostr:V AtrumUpload:V AtrumImageLoader:V *:S
 
 pause

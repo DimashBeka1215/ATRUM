@@ -1,22 +1,26 @@
 package com.atrum.chat
 
 import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.atrum.chat.transport.TransportFactory
 import com.google.android.material.imageview.ShapeableImageView
+import com.yalantis.ucrop.UCrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class PartnerProfileActivity : AppCompatActivity() {
 
@@ -44,6 +48,10 @@ class PartnerProfileActivity : AppCompatActivity() {
         const val EXTRA_EPH_PUB               = "eph_pub"
         const val EXTRA_EPH_SIG               = "eph_sig"
         const val EXTRA_VERIFIED_PARTNER_IDK  = "verified_partner_idk"
+        /** Демо-экран профиля группы (TesterSettingsActivity) — см. setupDemoGroupProfile(). */
+        const val EXTRA_DEMO_GROUP = "demo_group"
+        /** true — этот чат реально групповой (ADR-001), см. setupRealGroupExtras(). */
+        const val EXTRA_IS_GROUP = "is_group"
     }
 
     private var shieldPulse: android.animation.Animator? = null
@@ -62,11 +70,25 @@ class PartnerProfileActivity : AppCompatActivity() {
     private var verifyPassword = ""
     private var verifySyncJob: Job? = null   // лёгкий опрос профиля партнёра, пока экран открыт
     private var dotsJob: Job? = null          // анимированные точки «ждём…»
+
+    // ── Групповой чат, реальные данные (ADR-001) ────────────────────────────────
+    private var groupChatRoomId: Long = -1L
+    private var groupIsAdmin: Boolean = false
+    private var groupChatCached: com.atrum.chat.data.Chat? = null
+    private var groupAvatarPendingBitmap: Bitmap? = null
     private var lastBothConfirmed = false     // чтобы pop-анимацию проигрывать только при переходе
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_partner_profile)
+
+        // Демо-профиль группы — полностью отдельная ветка, не трогает реальный
+        // 1:1-путь ниже (нет transport/chatId/password, поэтому live-сверка и
+        // подгрузка медиа по сети тут не запускаются вообще).
+        if (intent.getBooleanExtra(EXTRA_DEMO_GROUP, false)) {
+            setupDemoGroupProfile()
+            return
+        }
 
         val name         = intent.getStringExtra(EXTRA_NAME) ?: ""
         val tag          = intent.getStringExtra(EXTRA_TAG)
@@ -172,6 +194,14 @@ class PartnerProfileActivity : AppCompatActivity() {
         // Голосовые и Ссылки
         setupVoiceSection(voiceItems, chatId, transportToken, chatPassword)
         setupLinksSection(linkItems)
+
+        // Групповой чат (ADR-001): дополнительная real-секция поверх уже отрисованного
+        // общего профиля (имя/аватар/фото/голос/ссылки выше УЖЕ реальные и общие для
+        // 1:1 и групп — ничего не дублируем). Тут только то, чего нет у 1:1: карточка
+        // безопасности (ECDH-сверка) скрывается, список участников и управление ими.
+        if (intent.getBooleanExtra(EXTRA_IS_GROUP, false)) {
+            setupRealGroupExtras(chatIdForMedia, chatId, chatPassword)
+        }
     }
 
     private fun loadPhotoGrid(
@@ -677,5 +707,916 @@ class PartnerProfileActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         stopVerifySync(); stopDots()  // уходим с экрана — не опрашиваем в фоне
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ═══ Демо-профиль группы (EXTRA_DEMO_GROUP) ═══
+    // ⚠️ Полностью локальный предпросмотр интерфейса. НИЧЕГО не сохраняется и не
+    // синкается — группы как реальной сущности ещё нет (нет multi-party
+    // крипто-схемы/списка участников/ролей/бан-листа, см. ROADMAP_TODO.md §8-9).
+    // Доступ: Настройки → «Для тестировщиков» → «Предпросмотр: профиль группы».
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private data class DemoMember(
+        val name: String,
+        val isAdmin: Boolean,
+        val online: Boolean,
+        val lastSeenText: String?,
+        val avatarColor: Int,
+        var banned: Boolean = false
+    )
+
+    private var demoIsAdminView = false
+    private var demoGroupName = ""
+    private var demoGroupAvatarBitmap: Bitmap? = null
+
+    private val demoMembers by lazy {
+        mutableListOf(
+            DemoMember("Игорь", isAdmin = true,  online = true,  lastSeenText = null, avatarColor = 0xFF3A5A78.toInt()),
+            DemoMember("Аня",   isAdmin = false, online = false, lastSeenText = getString(R.string.demo_member_last_seen), avatarColor = 0xFF6B4A5C.toInt()),
+            DemoMember("Марк",  isAdmin = false, online = false, lastSeenText = null, avatarColor = 0xFF5A4A3D.toInt()),
+            DemoMember("Соня",  isAdmin = false, online = true,  lastSeenText = null, avatarColor = 0xFF4A4A52.toInt())
+        )
+    }
+
+    private fun setupDemoGroupProfile() {
+        findViewById<ImageButton>(R.id.btn_back).setOnClickListener { finish() }
+
+        demoGroupName = getString(R.string.demo_group_name)
+        findViewById<TextView>(R.id.tv_profile_name).text = demoGroupName
+
+        val tvTag = findViewById<TextView>(R.id.tv_profile_tag)
+        tvTag.text = getString(R.string.group_members_count_fmt, demoMembers.size + 1)
+        tvTag.visibility = View.VISIBLE
+
+        findViewById<ShapeableImageView>(R.id.iv_profile_avatar).visibility = View.GONE
+        findViewById<TextView>(R.id.tv_avatar_initial).apply {
+            visibility = View.VISIBLE
+            text = demoGroupName.trim().firstOrNull()?.uppercase() ?: "?"
+        }
+
+        findViewById<View>(R.id.card_status).visibility = View.VISIBLE
+        findViewById<TextView>(R.id.tv_status).text = getString(R.string.demo_group_status_text)
+
+        val avatarEditBtn = findViewById<ImageButton>(R.id.btn_avatar_edit_demo)
+        avatarEditBtn.setOnClickListener { openDemoAvatarPicker() }
+
+        val nameEditBtn = findViewById<ImageButton>(R.id.btn_name_edit_demo)
+        nameEditBtn.setOnClickListener { renameDemoGroup() }
+
+        val roleToggle = findViewById<LinearLayout>(R.id.demo_role_toggle)
+        roleToggle.visibility = View.VISIBLE
+        val roleMember = findViewById<TextView>(R.id.demo_role_member)
+        val roleAdmin = findViewById<TextView>(R.id.demo_role_admin)
+        roleMember.setOnClickListener { demoIsAdminView = false; applyDemoRole(roleMember, roleAdmin, avatarEditBtn, nameEditBtn) }
+        roleAdmin.setOnClickListener { demoIsAdminView = true; applyDemoRole(roleMember, roleAdmin, avatarEditBtn, nameEditBtn) }
+        applyDemoRole(roleMember, roleAdmin, avatarEditBtn, nameEditBtn)
+
+        buildDemoPhotos()
+        buildDemoVoice()
+        buildDemoLinks()
+    }
+
+    private fun applyDemoRole(
+        roleMember: TextView,
+        roleAdmin: TextView,
+        avatarEditBtn: ImageButton,
+        nameEditBtn: ImageButton
+    ) {
+        roleMember.setBackgroundResource(if (demoIsAdminView) R.drawable.bg_chip_default else R.drawable.bg_chip_selected)
+        roleMember.setTextColor(ContextCompat.getColor(this, if (demoIsAdminView) R.color.text_secondary else R.color.accent_light))
+        roleAdmin.setBackgroundResource(if (demoIsAdminView) R.drawable.bg_chip_selected else R.drawable.bg_chip_default)
+        roleAdmin.setTextColor(ContextCompat.getColor(this, if (demoIsAdminView) R.color.accent_light else R.color.text_secondary))
+
+        avatarEditBtn.visibility = if (demoIsAdminView) View.VISIBLE else View.GONE
+        nameEditBtn.visibility = if (demoIsAdminView) View.VISIBLE else View.GONE
+
+        val membersSection = findViewById<View>(R.id.section_members)
+        membersSection.visibility = if (demoIsAdminView) View.VISIBLE else View.GONE
+        if (demoIsAdminView) buildDemoMembers()
+    }
+
+    private fun buildDemoMembers() {
+        val container = findViewById<LinearLayout>(R.id.ll_members_container)
+        container.removeAllViews()
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+
+        demoMembers.forEach { member ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(dp(24), dp(7), dp(24), dp(7))
+                alpha = if (member.banned) 0.4f else 1f
+            }
+
+            val avatar = View(this).apply {
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(member.avatarColor)
+                }
+                layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).also { it.marginEnd = dp(12) }
+            }
+
+            val col = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            val nameTv = TextView(this).apply {
+                textSize = 14f
+                setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_primary))
+                text = if (member.isAdmin) {
+                    val suffix = "  · " + getString(R.string.demo_role_admin_suffix)
+                    android.text.SpannableStringBuilder(member.name + suffix).apply {
+                        setSpan(
+                            android.text.style.ForegroundColorSpan(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_tertiary)),
+                            member.name.length, member.name.length + suffix.length,
+                            android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                    }
+                } else member.name
+            }
+            val statusTv = TextView(this).apply {
+                textSize = 11.5f
+                val (txt, colorRes) = when {
+                    member.banned -> getString(R.string.demo_member_banned) to R.color.error
+                    member.online -> getString(R.string.demo_member_online) to R.color.accent
+                    else -> (member.lastSeenText ?: getString(R.string.demo_member_offline)) to R.color.text_tertiary
+                }
+                text = txt
+                setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, colorRes))
+                setPadding(0, dp(2), 0, 0)
+            }
+            col.addView(nameTv); col.addView(statusTv)
+            row.addView(avatar); row.addView(col)
+
+            if (!member.isAdmin && !member.banned) {
+                val rippleVal = android.util.TypedValue()
+                theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, rippleVal, true)
+                val banBtn = ImageButton(this).apply {
+                    setImageResource(R.drawable.ic_close)
+                    setColorFilter(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_tertiary))
+                    setBackgroundResource(rippleVal.resourceId)
+                    contentDescription = getString(R.string.demo_ban_cd, member.name)
+                    layoutParams = LinearLayout.LayoutParams(dp(30), dp(30))
+                    setPadding(dp(6), dp(6), dp(6), dp(6))
+                    setOnClickListener { confirmBanDemo(member) }
+                }
+                row.addView(banBtn)
+            }
+
+            container.addView(row)
+        }
+    }
+
+    private fun confirmBanDemo(member: DemoMember) {
+        NeonDialog.showConfirm(
+            ctx = this,
+            title = getString(R.string.demo_ban_title, member.name),
+            message = getString(R.string.demo_ban_message),
+            positiveText = getString(R.string.demo_ban_confirm),
+            positiveIsDestructive = true,
+            negativeText = getString(R.string.btn_cancel),
+            onPositive = {
+                member.banned = true
+                buildDemoMembers()
+            }
+        )
+    }
+
+    private fun renameDemoGroup() {
+        NeonDialog.showEdit(
+            ctx = this,
+            title = getString(R.string.cc_group_name_label),
+            initialText = demoGroupName,
+            positiveText = getString(R.string.btn_save),
+            negativeText = getString(R.string.btn_cancel),
+            onPositive = { newName ->
+                val trimmed = newName.trim()
+                if (trimmed.isNotEmpty()) {
+                    demoGroupName = trimmed
+                    findViewById<TextView>(R.id.tv_profile_name).text = demoGroupName
+                    if (demoGroupAvatarBitmap == null) {
+                        findViewById<TextView>(R.id.tv_avatar_initial).text =
+                            demoGroupName.trim().firstOrNull()?.uppercase() ?: "?"
+                    }
+                }
+            }
+        )
+    }
+
+    // ── Аватар группы (демо) — системный пикер + UCrop, как у обычной аватарки ──
+
+    private val pickDemoAvatar = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? -> if (uri != null) startDemoAvatarCrop(uri) }
+
+    private val cropDemoAvatar = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK && result.data != null) {
+            val uri = UCrop.getOutput(result.data!!)
+            if (uri != null) applyDemoAvatarUri(uri)
+        } else if (result.resultCode == UCrop.RESULT_ERROR && result.data != null) {
+            val err = UCrop.getError(result.data!!)
+            android.widget.Toast.makeText(this, getString(R.string.error_avatar_load) + ": ${err?.message}", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun openDemoAvatarPicker() {
+        pickDemoAvatar.launch("image/*")
+    }
+
+    private fun startDemoAvatarCrop(sourceUri: Uri) {
+        val destUri = Uri.fromFile(File(cacheDir, "demo_group_avatar_crop_${System.currentTimeMillis()}.jpg"))
+        val options = UCrop.Options().apply {
+            setCircleDimmedLayer(true)
+            setShowCropFrame(false)
+            setShowCropGrid(false)
+            setCompressionFormat(Bitmap.CompressFormat.JPEG)
+            setCompressionQuality(90)
+            setToolbarTitle(getString(R.string.crop_avatar_title))
+            setHideBottomControls(true)
+            setFreeStyleCropEnabled(false)
+        }
+        cropDemoAvatar.launch(
+            UCrop.of(sourceUri, destUri)
+                .withAspectRatio(1f, 1f)
+                .withMaxResultSize(1024, 1024)
+                .withOptions(options)
+                .getIntent(this)
+        )
+    }
+
+    private fun applyDemoAvatarUri(uri: Uri) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val bmp = AvatarUtils.loadAndResize(this@PartnerProfileActivity, uri)
+            withContext(Dispatchers.Main) {
+                if (bmp != null) {
+                    demoGroupAvatarBitmap = bmp
+                    findViewById<ShapeableImageView>(R.id.iv_profile_avatar).apply {
+                        setImageBitmap(bmp)
+                        visibility = View.VISIBLE
+                    }
+                    findViewById<TextView>(R.id.tv_avatar_initial).visibility = View.GONE
+                } else {
+                    android.widget.Toast.makeText(this@PartnerProfileActivity, R.string.error_avatar_load, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    // ── Групповой чат, РЕАЛЬНЫЕ данные (ADR-001) ────────────────────────────────
+    // См. ADR_GROUP_CHATS.md. Источник истины — members.txt (подписан админом),
+    // применяется в ChatActivity.processChannelData(), локальный кэш — ChatParticipantDao.
+    // Имя/аватар/фото/голос/ссылки выше в onCreate() УЖЕ реальные (общий код с 1:1) —
+    // здесь только специфичное для групп: список участников, бан, ре-публикация
+    // имени/аватара группы через тот же подписанный канал.
+
+    private fun setupRealGroupExtras(chatRoomId: Long, networkChatId: String, password: String) {
+        // ECDH-сверка (fingerprint/QR/identity badge) не применима — группа шифруется
+        // общим паролем без forward-secrecy сессии (см. ChatActivity.applyGroupPresence).
+        findViewById<View>(R.id.card_security).visibility = View.GONE
+        // "Роль"-переключатель существовал только для демо-превью обоих видов экрана —
+        // в реальном режиме роль фиксирована (я админ или нет), переключать нечего.
+        findViewById<View>(R.id.demo_role_toggle)?.visibility = View.GONE
+
+        groupChatRoomId = chatRoomId
+        val database = com.atrum.chat.data.AppDatabase.get(this)
+
+        lifecycleScope.launch {
+            val chat = withContext(Dispatchers.IO) { database.chatDao().getById(chatRoomId) } ?: return@launch
+            groupChatCached = chat
+            groupIsAdmin = !chat.adminUserId.isNullOrBlank() && chat.adminUserId == prefs.myUserId
+
+            val avatarEditBtn = findViewById<ImageButton>(R.id.btn_avatar_edit_demo)
+            val nameEditBtn = findViewById<ImageButton>(R.id.btn_name_edit_demo)
+            if (groupIsAdmin) {
+                avatarEditBtn.visibility = View.VISIBLE
+                nameEditBtn.visibility = View.VISIBLE
+                avatarEditBtn.setOnClickListener { pickRealGroupAvatar.launch("image/*") }
+                nameEditBtn.setOnClickListener { renameGroupReal() }
+            } else {
+                avatarEditBtn.visibility = View.GONE
+                nameEditBtn.visibility = View.GONE
+            }
+
+            renderGroupDescription(chat)
+
+            findViewById<View>(R.id.section_members).visibility = View.VISIBLE
+            loadAndRenderGroupMembers(chat, networkChatId, password, database)
+        }
+    }
+
+    /**
+     * Карточка описания группы. У админа видна ВСЕГДА (плейсхолдер-приглашение,
+     * если описание ещё не задано) — у остальных участников только если описание
+     * заполнено. Карандаш редактирования — только у админа.
+     */
+    private fun renderGroupDescription(chat: com.atrum.chat.data.Chat) {
+        val card = findViewById<View>(R.id.card_group_description)
+        val tv = findViewById<TextView>(R.id.tv_group_description)
+        val editBtn = findViewById<ImageButton>(R.id.btn_group_description_edit)
+        val description = chat.groupDescription?.trim().orEmpty()
+
+        if (description.isNotEmpty()) {
+            card.visibility = View.VISIBLE
+            tv.text = description
+            tv.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+        } else if (groupIsAdmin) {
+            card.visibility = View.VISIBLE
+            tv.text = getString(R.string.group_description_placeholder_admin)
+            tv.setTextColor(ContextCompat.getColor(this, R.color.text_quaternary))
+        } else {
+            card.visibility = View.GONE
+        }
+
+        if (groupIsAdmin) {
+            editBtn.visibility = View.VISIBLE
+            editBtn.setOnClickListener { editGroupDescriptionReal() }
+            card.setOnClickListener { editGroupDescriptionReal() }
+        } else {
+            editBtn.visibility = View.GONE
+            card.setOnClickListener(null)
+        }
+    }
+
+    private fun editGroupDescriptionReal() {
+        val chat = groupChatCached ?: return
+        NeonDialog.showEdit(
+            ctx = this,
+            title = getString(R.string.group_description_dialog_title),
+            initialText = chat.groupDescription.orEmpty(),
+            positiveText = getString(R.string.btn_save),
+            negativeText = getString(R.string.btn_cancel),
+            onPositive = { newText -> doEditGroupDescriptionReal(chat, newText.trim().take(300)) }
+        )
+    }
+
+    /**
+     * Сохранение описания группы — тот же путь, что переименование/смена аватара
+     * (ADR-001): локально сразу, публикация через members.txt в фоне. В отличие от
+     * имени, описание разрешено сохранять пустым (админ может убрать текст — плейсхолдер
+     * вернётся), но пустая строка НЕ попадёт в members.txt явно (см. MembersSync.buildContent —
+     * "" считается "не менять"), поэтому обнуление описания видно только локально у
+     * админа, пока не будет отдельного протокола очистки поля. Не блокирует текущую
+     * задачу — тот же принцип уже действует для groupName/groupAvatarBase64.
+     */
+    private fun doEditGroupDescriptionReal(chat: com.atrum.chat.data.Chat, newDescription: String) {
+        val adminUserId = chat.adminUserId ?: return
+        if (adminUserId != prefs.myUserId) return
+        lifecycleScope.launch {
+            val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
+            withContext(Dispatchers.IO) {
+                database.chatDao().updateGroupProfile(chat.id, chat.groupName, chat.groupAvatarBase64, newDescription)
+            }
+            val updated = chat.copy(groupDescription = newDescription)
+            groupChatCached = updated
+            renderGroupDescription(updated)
+            try {
+                val password = prefs.getChatPassword(chat.chatId)
+                val transport = com.atrum.chat.transport.NostrTransport(
+                    sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
+                    preferTor = true, adminUserId = adminUserId
+                )
+                val participants = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
+                    .map { MembersSync.Entry(it.userId, it.banned) }
+                MembersSync.publish(
+                    transport = transport,
+                    password = password,
+                    chatId = chat.chatId,
+                    adminUserId = adminUserId,
+                    newVersion = chat.membersVersion + 1,
+                    participants = participants,
+                    groupName = chat.groupName,
+                    groupAvatarBase64 = chat.groupAvatarBase64,
+                    groupDescription = newDescription
+                )
+            } catch (_: Exception) {
+                android.widget.Toast.makeText(
+                    this@PartnerProfileActivity, R.string.invite_create_failed, android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    /**
+     * Список участников: локальный кэш (ChatParticipantDao — членство/бан, источник
+     * истины members.txt) + живые профили (имя/аватар/онлайн) из profiles.txt, тем же
+     * способом, что уже читает ChatActivity. Показывается мгновенно из локального кэша,
+     * не дожидаясь сети (§1.5 CLAUDE.md).
+     */
+    private suspend fun loadAndRenderGroupMembers(
+        chat: com.atrum.chat.data.Chat,
+        networkChatId: String,
+        password: String,
+        database: com.atrum.chat.data.AppDatabase
+    ) {
+        val participants = withContext(Dispatchers.IO) {
+            database.chatParticipantDao().getForChat(chat.id)
+        }
+        renderGroupMembersRows(participants, emptyMap(), chat)
+
+        // Живые профили — подтягиваем в фоне и перерисовываем, когда придут (без сети
+        // список участников/банов уже виден выше — только имена/аватары/онлайн донагружаются).
+        try {
+            val transport = com.atrum.chat.transport.NostrTransport(
+                sourceId = networkChatId,
+                chatPassword = password,
+                myUserId = prefs.myUserId,
+                preferTor = true,
+                adminUserId = chat.adminUserId
+            )
+            val profiles = withContext(Dispatchers.IO) { ProfileSync.pullProfiles(transport, password) }
+            renderGroupMembersRows(participants, profiles, chat)
+        } catch (_: Exception) {
+            // Офлайн/сеть не ответила — остаёмся с уже отрисованным локальным кэшем.
+        }
+    }
+
+    private fun renderGroupMembersRows(
+        participants: List<com.atrum.chat.data.ChatParticipant>,
+        profiles: Map<String, Profile>,
+        chat: com.atrum.chat.data.Chat
+    ) {
+        val container = findViewById<LinearLayout>(R.id.ll_members_container)
+        container.removeAllViews()
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+        val now = System.currentTimeMillis()
+
+        participants.sortedBy { it.joinedAtMs }.forEach { member ->
+            val profile = profiles[member.userId]
+            val isMe = member.userId == prefs.myUserId
+            val displayName = when {
+                isMe -> profile?.name?.takeIf { it.isNotBlank() } ?: prefs.myName
+                else -> profile?.name?.takeIf { it.isNotBlank() } ?: member.userId.take(8)
+            }
+            val isAdminRow = member.userId == chat.adminUserId
+            val isOnline = profile != null && profile.onlineTs > 0L && now - profile.onlineTs < ONLINE_EXPIRY_MS_LOCAL
+
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(dp(24), dp(7), dp(24), dp(7))
+                alpha = if (member.banned) 0.4f else 1f
+            }
+
+            val avatarBmp = AvatarUtils.fromBase64(profile?.avatarBase64)
+            val avatarView: View = if (avatarBmp != null) {
+                ShapeableImageView(this).apply {
+                    setImageBitmap(avatarBmp)
+                    layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).also { it.marginEnd = dp(12) }
+                    shapeAppearanceModel = shapeAppearanceModel.toBuilder()
+                        .setAllCornerSizes(dp(19).toFloat())
+                        .build()
+                }
+            } else {
+                TextView(this).apply {
+                    text = displayName.trim().firstOrNull()?.uppercase() ?: "?"
+                    gravity = android.view.Gravity.CENTER
+                    setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, R.color.white))
+                    background = ContextCompat.getDrawable(this@PartnerProfileActivity, R.drawable.bg_avatar_placeholder)
+                    layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).also { it.marginEnd = dp(12) }
+                }
+            }
+
+            val col = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            val nameTv = TextView(this).apply {
+                textSize = 14f
+                setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_primary))
+                text = if (isAdminRow) {
+                    val suffix = "  · " + getString(R.string.demo_role_admin_suffix)
+                    android.text.SpannableStringBuilder(displayName + suffix).apply {
+                        setSpan(
+                            android.text.style.ForegroundColorSpan(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_tertiary)),
+                            displayName.length, displayName.length + suffix.length,
+                            android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                    }
+                } else displayName
+            }
+            val statusTv = TextView(this).apply {
+                textSize = 11.5f
+                val (txt, colorRes) = when {
+                    member.banned -> getString(R.string.demo_member_banned) to R.color.error
+                    isOnline -> getString(R.string.demo_member_online) to R.color.accent
+                    else -> getString(R.string.demo_member_offline) to R.color.text_tertiary
+                }
+                text = txt
+                setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, colorRes))
+                setPadding(0, dp(2), 0, 0)
+            }
+            col.addView(nameTv); col.addView(statusTv)
+            row.addView(avatarView); row.addView(col)
+
+            if (groupIsAdmin && !isAdminRow && !member.banned) {
+                val rippleVal = android.util.TypedValue()
+                theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, rippleVal, true)
+                val banBtn = ImageButton(this).apply {
+                    setImageResource(R.drawable.ic_close)
+                    setColorFilter(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_tertiary))
+                    setBackgroundResource(rippleVal.resourceId)
+                    contentDescription = getString(R.string.demo_ban_cd, displayName)
+                    layoutParams = LinearLayout.LayoutParams(dp(30), dp(30))
+                    setPadding(dp(6), dp(6), dp(6), dp(6))
+                    setOnClickListener { confirmBanReal(member, displayName, chat) }
+                }
+                row.addView(banBtn)
+            } else if (groupIsAdmin && !isAdminRow && member.banned) {
+                val rippleVal = android.util.TypedValue()
+                theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, rippleVal, true)
+                val unbanBtn = ImageButton(this).apply {
+                    setImageResource(R.drawable.ic_refresh)
+                    setColorFilter(ContextCompat.getColor(this@PartnerProfileActivity, R.color.accent))
+                    setBackgroundResource(rippleVal.resourceId)
+                    contentDescription = getString(R.string.demo_unban_cd, displayName)
+                    layoutParams = LinearLayout.LayoutParams(dp(30), dp(30))
+                    setPadding(dp(6), dp(6), dp(6), dp(6))
+                    setOnClickListener { confirmUnbanReal(member, displayName, chat) }
+                }
+                row.addView(unbanBtn)
+            }
+
+            container.addView(row)
+        }
+    }
+
+    private fun confirmUnbanReal(member: com.atrum.chat.data.ChatParticipant, displayName: String, chat: com.atrum.chat.data.Chat) {
+        NeonDialog.showConfirm(
+            ctx = this,
+            title = getString(R.string.demo_unban_title, displayName),
+            message = getString(R.string.demo_unban_message),
+            positiveText = getString(R.string.demo_unban_confirm),
+            positiveIsDestructive = false,
+            negativeText = getString(R.string.btn_cancel),
+            onPositive = { doUnbanReal(member, chat) }
+        )
+    }
+
+    /**
+     * Разбан (ADR-001, §Меню забаненных). Снимает флаг banned в локальном кэше и
+     * публикует новую версию members.txt. ВАЖНО (проговорено и подтверждено
+     * пользователем): это НЕ отзывает и НЕ восстанавливает крипто-доступ выборочно —
+     * пароль чата общий и не меняется, так что реального разделения «видел/не видел
+     * старую историю» на уровне шифрования нет (см. ADR_GROUP_CHATS.md, §Технический
+     * долг). Разбаненный при этом НЕ возвращается в чат автоматически — его локальный
+     * чат/секреты уже удалены на его устройстве в момент бана (ChatActivity.checkSelfBanned),
+     * так что администратору нужно заново поделиться с ним приглашением (см. ChatsListActivity).
+     */
+    private fun doUnbanReal(member: com.atrum.chat.data.ChatParticipant, chat: com.atrum.chat.data.Chat) {
+        val adminUserId = chat.adminUserId ?: return
+        if (adminUserId != prefs.myUserId) return
+        lifecycleScope.launch {
+            val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
+            withContext(Dispatchers.IO) {
+                database.chatParticipantDao().unban(chat.id, member.userId)
+            }
+            // Перерисовываем сразу из локального кэша — оптимистично, не ждём сети (§1.5).
+            val fresh = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
+            renderGroupMembersRows(fresh, emptyMap(), chat)
+
+            try {
+                val password = prefs.getChatPassword(chat.chatId)
+                val transport = com.atrum.chat.transport.NostrTransport(
+                    sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
+                    preferTor = true, adminUserId = adminUserId
+                )
+                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned) }
+                MembersSync.publish(
+                    transport = transport,
+                    password = password,
+                    chatId = chat.chatId,
+                    adminUserId = adminUserId,
+                    newVersion = chat.membersVersion + 1,
+                    participants = entries,
+                    groupName = chat.groupName,
+                    groupAvatarBase64 = chat.groupAvatarBase64,
+                    groupDescription = chat.groupDescription
+                )
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(
+                        this@PartnerProfileActivity, R.string.demo_unban_share_hint, android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            } catch (_: Exception) {
+                android.widget.Toast.makeText(
+                    this@PartnerProfileActivity, R.string.invite_create_failed, android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    /** Presence-таймаут для online-статуса в списке участников (тот же порядок, что и в ChatActivity). */
+    private val ONLINE_EXPIRY_MS_LOCAL = 20_000L
+
+    private fun confirmBanReal(member: com.atrum.chat.data.ChatParticipant, displayName: String, chat: com.atrum.chat.data.Chat) {
+        NeonDialog.showConfirm(
+            ctx = this,
+            title = getString(R.string.demo_ban_title, displayName),
+            message = getString(R.string.demo_ban_message),
+            positiveText = getString(R.string.demo_ban_confirm),
+            positiveIsDestructive = true,
+            negativeText = getString(R.string.btn_cancel),
+            onPositive = { doBanReal(member, chat) }
+        )
+    }
+
+    private fun doBanReal(member: com.atrum.chat.data.ChatParticipant, chat: com.atrum.chat.data.Chat) {
+        val adminUserId = chat.adminUserId ?: return
+        if (adminUserId != prefs.myUserId) return
+        lifecycleScope.launch {
+            val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
+            withContext(Dispatchers.IO) {
+                database.chatParticipantDao().ban(chat.id, member.userId)
+            }
+            // Перерисовываем сразу из локального кэша — оптимистично, не ждём сети (§1.5).
+            val fresh = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
+            renderGroupMembersRows(fresh, emptyMap(), chat)
+
+            try {
+                val password = prefs.getChatPassword(chat.chatId)
+                val transport = com.atrum.chat.transport.NostrTransport(
+                    sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
+                    preferTor = true, adminUserId = adminUserId
+                )
+                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned) }
+                MembersSync.publish(
+                    transport = transport,
+                    password = password,
+                    chatId = chat.chatId,
+                    adminUserId = adminUserId,
+                    newVersion = chat.membersVersion + 1,
+                    participants = entries,
+                    groupName = chat.groupName,
+                    groupAvatarBase64 = chat.groupAvatarBase64,
+                    groupDescription = chat.groupDescription
+                )
+            } catch (_: Exception) {
+                android.widget.Toast.makeText(
+                    this@PartnerProfileActivity, R.string.invite_create_failed, android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    private fun renameGroupReal() {
+        val chat = groupChatCached ?: return
+        NeonDialog.showEdit(
+            ctx = this,
+            title = getString(R.string.cc_group_name_label),
+            initialText = chat.groupName ?: chat.partnerName,
+            positiveText = getString(R.string.btn_save),
+            negativeText = getString(R.string.btn_cancel),
+            onPositive = { newName ->
+                val trimmed = newName.trim()
+                if (trimmed.isNotEmpty()) doRenameGroupReal(chat, trimmed)
+            }
+        )
+    }
+
+    private fun doRenameGroupReal(chat: com.atrum.chat.data.Chat, newName: String) {
+        val adminUserId = chat.adminUserId ?: return
+        if (adminUserId != prefs.myUserId) return
+        // Оптимистично сразу в UI — не ждём сети (§1.5 CLAUDE.md).
+        findViewById<TextView>(R.id.tv_profile_name).text = newName
+        lifecycleScope.launch {
+            val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
+            withContext(Dispatchers.IO) {
+                database.chatDao().updateGroupProfile(chat.id, newName, chat.groupAvatarBase64, chat.groupDescription)
+            }
+            groupChatCached = chat.copy(groupName = newName)
+            try {
+                val password = prefs.getChatPassword(chat.chatId)
+                val transport = com.atrum.chat.transport.NostrTransport(
+                    sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
+                    preferTor = true, adminUserId = adminUserId
+                )
+                val participants = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
+                    .map { MembersSync.Entry(it.userId, it.banned) }
+                MembersSync.publish(
+                    transport = transport,
+                    password = password,
+                    chatId = chat.chatId,
+                    adminUserId = adminUserId,
+                    newVersion = chat.membersVersion + 1,
+                    participants = participants,
+                    groupName = newName,
+                    groupAvatarBase64 = chat.groupAvatarBase64,
+                    groupDescription = chat.groupDescription
+                )
+            } catch (_: Exception) {
+                android.widget.Toast.makeText(
+                    this@PartnerProfileActivity, R.string.invite_create_failed, android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    // ── Аватар группы (реальный) — системный пикер + UCrop, публикует через members.txt ──
+
+    private val pickRealGroupAvatar = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? -> if (uri != null) startRealGroupAvatarCrop(uri) }
+
+    private val cropRealGroupAvatar = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK && result.data != null) {
+            val uri = UCrop.getOutput(result.data!!)
+            if (uri != null) applyRealGroupAvatarUri(uri)
+        } else if (result.resultCode == UCrop.RESULT_ERROR && result.data != null) {
+            val err = UCrop.getError(result.data!!)
+            android.widget.Toast.makeText(this, getString(R.string.error_avatar_load) + ": ${err?.message}", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun startRealGroupAvatarCrop(sourceUri: Uri) {
+        val destUri = Uri.fromFile(File(cacheDir, "real_group_avatar_crop_${System.currentTimeMillis()}.jpg"))
+        val options = UCrop.Options().apply {
+            setCircleDimmedLayer(true)
+            setShowCropFrame(false)
+            setShowCropGrid(false)
+            setCompressionFormat(Bitmap.CompressFormat.JPEG)
+            setCompressionQuality(90)
+            setToolbarTitle(getString(R.string.crop_avatar_title))
+            setHideBottomControls(true)
+            setFreeStyleCropEnabled(false)
+        }
+        cropRealGroupAvatar.launch(
+            UCrop.of(sourceUri, destUri)
+                .withAspectRatio(1f, 1f)
+                .withMaxResultSize(1024, 1024)
+                .withOptions(options)
+                .getIntent(this)
+        )
+    }
+
+    private fun applyRealGroupAvatarUri(uri: Uri) {
+        val chat = groupChatCached ?: return
+        val adminUserId = chat.adminUserId ?: return
+        if (adminUserId != prefs.myUserId) return
+        lifecycleScope.launch(Dispatchers.IO) {
+            val bmp = AvatarUtils.loadAndResize(this@PartnerProfileActivity, uri)
+            if (bmp == null) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(this@PartnerProfileActivity, R.string.error_avatar_load, android.widget.Toast.LENGTH_SHORT).show()
+                }
+                return@launch
+            }
+            val newAvatarB64 = AvatarUtils.toBase64(bmp)
+            withContext(Dispatchers.Main) {
+                groupAvatarPendingBitmap = bmp
+                findViewById<ShapeableImageView>(R.id.iv_profile_avatar).apply {
+                    setImageBitmap(bmp)
+                    visibility = View.VISIBLE
+                }
+                findViewById<TextView>(R.id.tv_avatar_initial).visibility = View.GONE
+            }
+            val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
+            database.chatDao().updateGroupProfile(chat.id, chat.groupName, newAvatarB64, chat.groupDescription)
+            groupChatCached = chat.copy(groupAvatarBase64 = newAvatarB64)
+            try {
+                val password = prefs.getChatPassword(chat.chatId)
+                val transport = com.atrum.chat.transport.NostrTransport(
+                    sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
+                    preferTor = true, adminUserId = adminUserId
+                )
+                val participants = database.chatParticipantDao().getForChat(chat.id)
+                    .map { MembersSync.Entry(it.userId, it.banned) }
+                MembersSync.publish(
+                    transport = transport,
+                    password = password,
+                    chatId = chat.chatId,
+                    adminUserId = adminUserId,
+                    newVersion = chat.membersVersion + 1,
+                    participants = participants,
+                    groupName = chat.groupName,
+                    groupAvatarBase64 = newAvatarB64,
+                    groupDescription = chat.groupDescription
+                )
+            } catch (_: Exception) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(this@PartnerProfileActivity, R.string.invite_create_failed, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    // ── Демо-медиа (фото/голосовые/ссылки) — статичные заглушки, БЕЗ сети ──────
+
+    private fun buildDemoPhotos() {
+        findViewById<View>(R.id.section_photos).visibility = View.VISIBLE
+        findViewById<TextView>(R.id.tv_photos_count).text = "24"
+        findViewById<View>(R.id.btn_photos_all).visibility = View.GONE
+
+        val row = findViewById<LinearLayout>(R.id.ll_photo_grid_row1)
+        row.removeAllViews()
+        val density = resources.displayMetrics.density
+        val colors = intArrayOf(0xFF3A5A78.toInt(), 0xFF5A4A3D.toInt(), 0xFF6B4A5C.toInt())
+        colors.forEachIndexed { i, color ->
+            val cell = View(this).apply {
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = 8f * density
+                    setColor(color)
+                }
+                layoutParams = LinearLayout.LayoutParams(0, (100 * density).toInt(), 1f).also {
+                    if (i > 0) it.marginStart = (4 * density).toInt()
+                }
+            }
+            row.addView(cell)
+        }
+    }
+
+    private fun buildDemoVoice() {
+        findViewById<View>(R.id.section_voice).visibility = View.VISIBLE
+        findViewById<TextView>(R.id.tv_voice_count).text = "6"
+        findViewById<View>(R.id.btn_voice_all).visibility = View.GONE
+
+        val container = findViewById<LinearLayout>(R.id.ll_voice_container)
+        container.removeAllViews()
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+
+        listOf("0:14" to 35, "0:41" to 0).forEach { (dur, pct) ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(0, dp(7), 0, dp(7))
+            }
+            val playIcon = ImageView(this).apply {
+                setImageResource(R.drawable.ic_play)
+                setColorFilter(ContextCompat.getColor(this@PartnerProfileActivity, R.color.accent_light))
+                layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).also { it.marginEnd = dp(10) }
+            }
+            val trackWrap = android.widget.FrameLayout(this).apply {
+                layoutParams = LinearLayout.LayoutParams(0, dp(2), 1f)
+            }
+            val track = View(this).apply {
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(ContextCompat.getColor(this@PartnerProfileActivity, R.color.border))
+                }
+                layoutParams = android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT, dp(2)
+                )
+            }
+            val progress = View(this).apply {
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(ContextCompat.getColor(this@PartnerProfileActivity, R.color.accent))
+                }
+                layoutParams = android.widget.FrameLayout.LayoutParams(0, dp(2))
+            }
+            trackWrap.addView(track)
+            trackWrap.addView(progress)
+            trackWrap.post {
+                val w = trackWrap.width * pct / 100
+                progress.layoutParams = progress.layoutParams.apply { width = w }
+                progress.requestLayout()
+            }
+            val durTv = TextView(this).apply {
+                text = dur
+                textSize = 11f
+                setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_tertiary))
+                setPadding(dp(10), 0, 0, 0)
+            }
+            row.addView(playIcon); row.addView(trackWrap); row.addView(durTv)
+            container.addView(row)
+        }
+    }
+
+    private fun buildDemoLinks() {
+        findViewById<View>(R.id.section_links).visibility = View.VISIBLE
+        findViewById<TextView>(R.id.tv_links_count).text = "1"
+        findViewById<View>(R.id.btn_links_all).visibility = View.GONE
+
+        val container = findViewById<LinearLayout>(R.id.ll_links_container)
+        container.removeAllViews()
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+
+        listOf("github.com/atrum-chat/atrum").forEach { url ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(0, dp(6), 0, dp(6))
+            }
+            val icon = ImageView(this).apply {
+                setImageResource(R.drawable.ic_link)
+                setColorFilter(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_tertiary))
+                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).also { it.marginEnd = dp(10) }
+            }
+            val tv = TextView(this).apply {
+                text = url
+                textSize = 12.5f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, R.color.accent_light))
+            }
+            row.addView(icon); row.addView(tv)
+            container.addView(row)
+        }
     }
 }

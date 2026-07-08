@@ -1,58 +1,72 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:gravity="center_horizontal"
-    android:paddingHorizontal="32dp">
+    android:fillViewport="true"
+    android:scrollbars="none">
 
-    <View
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_weight="1"/>
-
-    <!-- Большой круглый "медальон" с иконкой -->
-    <FrameLayout
-        android:layout_width="180dp"
-        android:layout_height="180dp"
-        android:layout_marginBottom="48dp">
+    <!--
+        Размеры медальона/шрифтов — адаптивные (@dimen, см. values/dimens.xml и
+        values-sw400dp/dimens.xml): компактные по умолчанию (влезает и на маленьких
+        экранах), просторные на sw>=400dp. ScrollView — страховка на самый край (очень
+        длинные подписи вроде intro_donate_subtitle/intro_5_subtitle/intro_vpn_subtitle
+        + маленький экран/крупный системный шрифт), в обычных условиях не активируется.
+    -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:paddingHorizontal="32dp">
 
         <View
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_weight="1"/>
+
+        <!-- Большой круглый "медальон" с иконкой -->
+        <FrameLayout
+            android:layout_width="@dimen/intro_medallion_size"
+            android:layout_height="@dimen/intro_medallion_size"
+            android:layout_marginBottom="@dimen/intro_medallion_margin_bottom">
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_intro_icon"/>
+
+            <ImageView
+                android:id="@+id/iv_icon"
+                android:layout_width="@dimen/intro_medallion_icon_size"
+                android:layout_height="@dimen/intro_medallion_icon_size"
+                android:layout_gravity="center"
+                android:contentDescription="@null"/>
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/tv_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_primary"
+            android:textSize="@dimen/intro_title_size"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:lineSpacingExtra="2dp"
+            android:layout_marginBottom="16dp"/>
+
+        <TextView
+            android:id="@+id/tv_subtitle"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="@drawable/bg_intro_icon"/>
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_secondary"
+            android:textSize="@dimen/intro_subtitle_size"
+            android:gravity="center"
+            android:lineSpacingExtra="4dp"
+            android:layout_marginHorizontal="8dp"/>
 
-        <ImageView
-            android:id="@+id/iv_icon"
-            android:layout_width="80dp"
-            android:layout_height="80dp"
-            android:layout_gravity="center"
-            android:contentDescription="@null"/>
-    </FrameLayout>
-
-    <TextView
-        android:id="@+id/tv_title"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:textColor="@color/text_primary"
-        android:textSize="30sp"
-        android:textStyle="bold"
-        android:gravity="center"
-        android:lineSpacingExtra="2dp"
-        android:layout_marginBottom="16dp"/>
-
-    <TextView
-        android:id="@+id/tv_subtitle"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:textColor="@color/text_secondary"
-        android:textSize="15sp"
-        android:gravity="center"
-        android:lineSpacingExtra="4dp"
-        android:layout_marginHorizontal="8dp"/>
-
-    <View
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_weight="1.5"/>
-</LinearLayout>
+        <View
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_weight="1.5"/>
+    </LinearLayout>
+</ScrollView>

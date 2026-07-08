@@ -204,6 +204,7 @@
     <string name="error_network">Ошибка сети</string>
     <string name="error_load">Не удалось загрузить чат</string>
     <string name="error_send">Не удалось отправить</string>
+    <string name="error_upload_timeout">Слишком медленное соединение — попробуй ещё раз</string>
     <string name="confirm_logout">Выйти из чата?</string>
     <string name="yes">Да</string>
     <string name="no">Нет</string>
@@ -226,6 +227,9 @@
 
     <string name="warn_fs_title">Сообщения предыдущей сессии скрыты</string>
     <string name="warn_fs_message">Часть сообщений зашифрована ключом прошлой сессии, который уже уничтожен. Это нормально — именно так работает защита forward secrecy: прошлое нечитаемо даже при утечке пароля.</string>
+
+    <string name="warn_group_pending_title">Ожидаем подтверждения</string>
+    <string name="warn_group_pending_message">Администратор группы ещё не добавил вас в список участников — это обычно занимает несколько секунд. Если это не проходит долго, возможно группа заполнена или администратор офлайн; чат можно удалить из списка чатов.</string>
 
     <string name="chat_loading">Загрузка сообщений…</string>
 
@@ -251,6 +255,56 @@
     <string name="cc_feature_exchange_desc">В этом чате каждый участник увидит имя и аватарку другого.</string>
     <string name="cc_feature_e2e_title">Сквозное шифрование</string>
     <string name="cc_feature_e2e_desc">Все сообщения защищены end-to-end шифрованием.</string>
+
+    <!-- ══ Групповые чаты (UI, экспериментально) ══ -->
+    <string name="cc_mode_pair">Обычный чат</string>
+    <string name="cc_mode_group">Групповой чат</string>
+    <string name="cc_group_name_label">Название чата</string>
+    <string name="cc_group_name_hint">Например, Друзья</string>
+    <string name="cc_group_default_name">Групповой чат</string>
+    <string name="cc_group_avatar_hint">Нажмите на аватар, чтобы выбрать фото</string>
+    <string name="cc_group_participants_label">Максимум участников</string>
+    <string name="cc_group_participants_helper_fmt">До %1$d человек смогут присоединиться по этому приглашению.</string>
+    <string name="cc_group_participants_unlimited">Без ограничения — по этому приглашению сможет присоединиться любое количество участников.</string>
+    <string name="cc_group_profile_subtitle">Групповой чат будет создан с использованием вашего текущего профиля.</string>
+    <string name="cc_group_feature_exchange_title">Профили участников</string>
+    <string name="cc_group_feature_exchange_desc">В этом чате все участники видят имена и аватарки друг друга.</string>
+    <string name="cc_group_invite_only_text">Участники получат код-приглашение через раздел «Поделиться приглашением». Пароль задаётся автоматически для всех.</string>
+    <string name="cc_group_create_button">Создать групповой чат</string>
+    <string name="cc_group_coming_soon">Групповые чаты пока в разработке. Совсем скоро!</string>
+    <string name="cc_part_5">5</string>
+    <string name="cc_part_10">10</string>
+    <string name="cc_part_15">15</string>
+    <string name="cc_part_unlim">∞</string>
+    <string name="cd_group_avatar">Выбрать аватарку чата</string>
+
+    <!-- ══ Демо-профиль группы (TesterSettingsActivity → PartnerProfileActivity) ══ -->
+    <string name="demo_role_member">Обычный участник</string>
+    <string name="demo_role_admin">Админ</string>
+    <string name="demo_role_admin_suffix">админ</string>
+    <string name="demo_group_name">Друзья</string>
+    <string name="demo_group_status_text">Сквозное шифрование. Зашифрованный групповой чат (демо).</string>
+    <string name="group_members_label">Участники</string>
+    <string name="group_members_count_fmt">%1$d участников</string>
+    <string name="group_banned_toast">Вас исключили из этой группы</string>
+    <string name="demo_member_online">в сети</string>
+    <string name="demo_member_offline">не в сети</string>
+    <string name="demo_member_last_seen">был(а) 2 ч назад</string>
+    <string name="demo_member_banned">забанен(а)</string>
+    <string name="demo_ban_title">Забанить %1$s?</string>
+    <string name="demo_ban_message">Он(а) больше не сможет писать в чат, чат удалится у него(неё) локально, а по приглашению снова зайти будет нельзя.</string>
+    <string name="demo_ban_confirm">Забанить</string>
+    <string name="demo_ban_cd">Забанить %1$s</string>
+    <string name="demo_unban_title">Разбанить %1$s?</string>
+    <string name="demo_unban_message">Он(а) сможет снова присоединиться к чату, но потребуется новое приглашение — старое устройство было отключено при бане.</string>
+    <string name="demo_unban_confirm">Разбанить</string>
+    <string name="demo_unban_cd">Разбанить %1$s</string>
+    <string name="demo_unban_share_hint">Разбанен(а). Чтобы человек вернулся — поделитесь с ним новым приглашением из списка чатов.</string>
+    <string name="cd_group_description_edit">Изменить описание группы</string>
+    <string name="group_description_placeholder_admin">Добавить описание группы</string>
+    <string name="group_description_dialog_title">Описание группы</string>
+    <string name="tester_item_group_profile_demo">Предпросмотр: профиль группы</string>
+    <string name="tester_item_group_profile_demo_desc">Демо-экран (участники, бан, редактирование)</string>
     <string name="cc_password_label">Пароль для подключения</string>
     <string name="cc_password_hint">Введите пароль</string>
     <string name="cc_password_helper">Этот пароль нужно передать собеседнику для подключения. Он шифрует все сообщения end-to-end.</string>
@@ -285,6 +339,7 @@
 
     <!-- Join chat — статусы и ошибки -->
     <string name="join_default_partner_name">Чат</string>
+    <string name="cc_system_partner_joined">%1$s присоединился(ась) к чату</string>
     <string name="join_btn_connecting">Подключаемся…</string>
     <string name="join_status_checking">Проверяем чат…</string>
     <string name="join_status_connecting">Подключаемся к Relay…</string>
@@ -330,6 +385,18 @@
     <string name="invite_pin_regenerate">Сгенерировать новый код</string>
     <string name="invite_pin_empty">Введите код приглашения</string>
     <string name="invite_create_failed">Не удалось создать приглашение</string>
+    <string name="invite_ttl_label">Срок действия приглашения</string>
+    <string name="cd_ttl_decrease">Уменьшить срок действия</string>
+    <string name="cd_ttl_increase">Увеличить срок действия</string>
+    <string name="invite_ttl_unlimited">Без ограничений</string>
+    <string name="invite_ttl_unlimited_sub">Приглашение не истечёт</string>
+    <string name="invite_ttl_expiry_sub">Истекает %1$s</string>
+    <plurals name="invite_ttl_hours">
+        <item quantity="one">%1$d час</item>
+        <item quantity="few">%1$d часа</item>
+        <item quantity="many">%1$d часов</item>
+        <item quantity="other">%1$d часов</item>
+    </plurals>
 
     <!-- Password mode toggle + warning -->
     <string name="cc_pwd_mode_generate">Сгенерировать</string>
@@ -344,6 +411,8 @@
 
     <!-- Chat full / join refusal -->
     <string name="join_err_chat_full">Этот чат уже занят. К нему уже подключился другой собеседник.</string>
+    <string name="join_err_group_full">В этой группе уже достигнут лимит участников.</string>
+    <string name="join_err_banned">Вас исключили из этой группы. Присоединиться повторно нельзя.</string>
 
     <!-- Expired chat cleanup -->
     <string name="chat_expired_toast">Чат удалён — истёк срок жизни.</string>

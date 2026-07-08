@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Просторные размеры — для экранов с smallest-width >= 400dp (обычные современные
+        телефоны и крупнее). Ниже — прежние значения, которые были в layout-файлах до
+        адаптации под маленькие экраны. Базовый (безопасный для всех) вариант — в
+        values/dimens.xml, без -sw400dp он и есть значение по умолчанию.
+    -->
+
+    <dimen name="intro_medallion_size">180dp</dimen>
+    <dimen name="intro_medallion_icon_size">80dp</dimen>
+    <dimen name="intro_medallion_margin_bottom">48dp</dimen>
+    <dimen name="intro_title_size">30sp</dimen>
+    <dimen name="intro_subtitle_size">15sp</dimen>
+
+    <dimen name="lock_icon_size">80dp</dimen>
+    <dimen name="lock_icon_margin_bottom">24dp</dimen>
+    <dimen name="lock_title_size">22sp</dimen>
+    <dimen name="lock_hint_margin_bottom">28dp</dimen>
+
+    <dimen name="pin_icon_size">80dp</dimen>
+    <dimen name="pin_icon_margin_bottom">24dp</dimen>
+    <dimen name="pin_title_size">28sp</dimen>
+    <dimen name="pin_hint_margin_bottom">32dp</dimen>
+    <dimen name="pin_field_gap">12dp</dimen>
+
+    <dimen name="onboarding_title_size">28sp</dimen>
+    <dimen name="onboarding_hint_margin_bottom">32dp</dimen>
+    <dimen name="onboarding_field_gap">12dp</dimen>
+</resources>

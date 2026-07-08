@@ -46,6 +46,19 @@ object ProfileSync {
      */
     private val known = ConcurrentHashMap<String, MutableMap<String, Profile>>()
 
+    /**
+     * Последнее исключение, проглоченное [pushMyProfile]/[pushPresence] (их catch-блоки
+     * возвращают false вместо проброса — большинство вызывающих мест использует результат
+     * просто как Boolean, менять сигнатуру ради этого не стали). ТОЛЬКО для диагностики
+     * (см. TorSyncWatchdog.kt — иначе «pushMyProfile вернул false» ничего не говорит о
+     * РЕАЛЬНОЙ причине). Безопасно читать сразу после `false`-результата: обе функции
+     * держат один и тот же [profilesMutex] на всё тело try/catch, так что запись сюда и
+     * возврат false происходят под одним и тем же логическим удержанием лока — гонки с
+     * другим одновременным push той же функции нет.
+     */
+    @Volatile var lastError: Throwable? = null
+        private set
+
     /** Возвращает (кэш ∪ read), где read свежее (выигрывает по ключам, что в нём есть). */
     private fun unionWithKnown(chatId: String, read: Map<String, Profile>): MutableMap<String, Profile> {
         val result = LinkedHashMap<String, Profile>()
@@ -182,6 +195,7 @@ object ProfileSync {
         api.saveFile(FILE_NAME, encrypted)
         true
         } catch (e: Exception) {
+            lastError = e
             false
         }
     }
@@ -243,7 +257,8 @@ object ProfileSync {
             val encrypted = CryptoHelper.encryptMetadata(json.toString(), password, api.chatId)
             api.saveFile(FILE_NAME, encrypted)
             true
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            lastError = e
             false
         }
     }

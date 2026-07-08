@@ -27,17 +27,30 @@ class WaveformView @JvmOverloads constructor(
 
     private var samples: IntArray = IntArray(0)   // 0..100
     private var progress: Float = 0f              // 0..1
+    // Доля УЖЕ СКАЧАННОГО контента (0..1). По умолчанию 1 — «полностью готово»,
+    // так что все места, не знающие про буферизацию (запись вживую, старые вызовы),
+    // ведут себя ровно как раньше. Устанавливается прогрессом скачивания чанков
+    // голосового (см. MessageAdapter.bindVoice) — идея как у прогресс-бара YouTube.
+    private var bufferProgress: Float = 1f
     private val live = ArrayList<Int>()
     private var liveMode = false
 
     private var playedColor = 0xFF9D4EDD.toInt()
     private var unplayedColor = 0xFF8E8E96.toInt()
+    // Столбик «уже скачан, но ещё не прослушан» — между played и unplayed.
+    private var bufferedColor = 0xFF8E8E96.toInt()
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val rect = RectF()
 
-    fun setColors(played: Int, unplayed: Int) {
-        playedColor = played; unplayedColor = unplayed; invalidate()
+    fun setColors(played: Int, unplayed: Int, buffered: Int = unplayed) {
+        playedColor = played; unplayedColor = unplayed; bufferedColor = buffered; invalidate()
+    }
+
+    /** Прогресс буферизации (скачано/расшифровано), 0..1. См. doc-comment [bufferProgress]. */
+    fun setBufferProgress(p: Float) {
+        bufferProgress = p.coerceIn(0f, 1f)
+        invalidate()
     }
 
     /** Статичная огибающая (значения 0..100). */
@@ -62,7 +75,7 @@ class WaveformView @JvmOverloads constructor(
     }
 
     fun reset() {
-        live.clear(); samples = IntArray(0); progress = 0f; liveMode = false; invalidate()
+        live.clear(); samples = IntArray(0); progress = 0f; bufferProgress = 1f; liveMode = false; invalidate()
     }
 
     private fun maxBarsForWidth(): Int {
@@ -82,6 +95,7 @@ class WaveformView @JvmOverloads constructor(
         // Живой режим — прижимаем вправо; статичный — заполняем по всей ширине.
         val count = data.size
         val playedCount = (progress * count).toInt()
+        val bufferedCount = (bufferProgress * count).toInt()
 
         for (i in 0 until count) {
             val x = if (liveMode) totalW - (count - i) * step
@@ -90,7 +104,12 @@ class WaveformView @JvmOverloads constructor(
             val lvl = data[i] / 100f
             val barH = max(minH, lvl * maxH)
             rect.set(x, midY - barH / 2f, x + barW, midY + barH / 2f)
-            paint.color = if (!liveMode && i < playedCount) playedColor else if (liveMode) playedColor else unplayedColor
+            paint.color = when {
+                liveMode -> playedColor
+                i < playedCount -> playedColor
+                i < bufferedCount -> bufferedColor
+                else -> unplayedColor
+            }
             canvas.drawRoundRect(rect, radius, radius, paint)
         }
     }

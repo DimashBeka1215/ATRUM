@@ -43,8 +43,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 316
-        versionName = "3.20.93-beta231-uploadring-vcenterfix"
+        versionCode = 355
+        versionName = "3.20.132-beta270-group-list-members-sync"
 
         // Включаем multidex чтобы не упереться в лимит 65k методов
         // когда много AndroidX/Material/Room/uCrop/browser библиотек
@@ -87,16 +87,16 @@ android {
             // (UnsatisfiedLinkError / неверный протокол запуска).
             //
             // pickFirst ниже — официальный способ AGP разрешить дубликат и НЕ падать со
-            // сборкой. Он берёт файл от ПЕРВОЙ по порядку резолвинга зависимости — у нас
-            // это kmp-tor (объявлен в dependencies{} раньше tor-android), что совпадает с
-            // текущим активным движком (USE_TOR_ANDROID_ENGINE = false).
+            // сборкой. Он берёт файл от ПЕРВОЙ по порядку резолвинга зависимости — управляем
+            // этим порядком блоков `implementation(...)` в dependencies{} ниже, а не выключением
+            // одной из зависимостей (у обоих движков Kotlin-код живёт в TorManager.kt одновременно
+            // и должен компилироваться независимо от флага — закомментировать Gradle-строку без
+            // удаления соответствующего кода нельзя, будет ошибка компиляции на unresolved import).
             //
-            // ⚠️ КОГДА БУДЕШЬ ПЕРЕКЛЮЧАТЬ USE_TOR_ANDROID_ENGINE = true ДЛЯ ТЕСТА НА
-            // УСТРОЙСТВЕ — одного этого pickFirst НЕДОСТАТОЧНО для гарантии, что победит
-            // именно tor-android. Самый надёжный способ — временно закомментировать две
-            // строки "io.matthewnelson.kmp-tor:..." в dependencies{} ниже (движок всё равно
-            // не используется, пока флаг true), пересобрать, протестировать. Вернуть строки
-            // обратно перед возвратом на kmp-tor.
+            // ⚠️ ТЕКУЩЕЕ СОСТОЯНИЕ (см. TorManager.USE_TOR_ANDROID_ENGINE = true — тест на
+            // устройстве): блок tor-android объявлен ПЕРВЫМ в dependencies{} ниже — его .so
+            // и победит. Когда закончишь тест и вернёшь флаг на false — верни kmp-tor-блок
+            // обратно первым (порядок описан прямо там же, в dependencies{}).
             pickFirsts += "lib/*/libtor.so"
         }
         resources {
@@ -185,16 +185,10 @@ dependencies {
     // Корутины
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
-    // Tor (встроенный) — Nostr через Tor. runtime + бинарники tor (exec).
-    // ⚠️ ПУТЬ ОТКАТА (см. TorManager.kt / TOR_BRIDGES_CONTINUE.md): kmp-tor не умеет
-    // мосты (Snowflake/obfs4) — публичного API для Bridge/ClientTransportPlugin/UseBridges
-    // нет ни в одной версии (проверено). Оставлен как fallback, пока новый TorManager
-    // (на tor-android, см. ниже) не обкатан на реальных устройствах.
-    // ⚠️ Конфликтует по lib/arm64-v8a/libtor.so с tor-android ниже — см. подробный
-    // комментарий у packagingOptions.jniLibs.pickFirst выше по файлу перед тем, как
-    // переключать движки.
-    implementation("io.matthewnelson.kmp-tor:runtime:2.6.0")
-    implementation("io.matthewnelson.kmp-tor:resource-exec-tor:409.5.0")
+    // ⚠️ ПОРЯДОК ЭТИХ ДВУХ БЛОКОВ ВРЕМЕННО ПОМЕНЯН МЕСТАМИ (см. TorManager.USE_TOR_ANDROID_ENGINE
+    // = true — тест на устройстве). packagingOptions.jniLibs.pickFirst берёт lib/arm64-v8a/libtor.so
+    // от ПЕРВОЙ по порядку резолвинга зависимости — сейчас это tor-android (нужный движок для
+    // теста). Верни kmp-tor-блок обратно ПЕРВЫМ, когда закончишь тест и вернёшь флаг на false.
 
     // Tor Android (Guardian Project, стек Orbot) — путь B из TOR_BRIDGES_CONTINUE.md.
     // Даёт мосты (Snowflake/obfs4) "из коробки" через обычный torrc + control-port.
@@ -209,6 +203,17 @@ dependencies {
     // compileSdk выше того, что поддерживает актуальный на тот момент AGP.
     implementation("info.guardianproject:tor-android:0.4.8.22")
     implementation("info.guardianproject:jtorctl:0.4.5.7")
+
+    // Tor (встроенный) — Nostr через Tor. runtime + бинарники tor (exec).
+    // ⚠️ ПУТЬ ОТКАТА (см. TorManager.kt / TOR_BRIDGES_CONTINUE.md): kmp-tor не умеет
+    // мосты (Snowflake/obfs4) — публичного API для Bridge/ClientTransportPlugin/UseBridges
+    // нет ни в одной версии (проверено). Оставлен как fallback, пока новый TorManager
+    // (на tor-android, см. выше) не обкатан на реальных устройствах.
+    // ⚠️ Конфликтует по lib/arm64-v8a/libtor.so с tor-android выше — см. подробный
+    // комментарий у packagingOptions.jniLibs.pickFirst выше по файлу перед тем, как
+    // переключать движки.
+    implementation("io.matthewnelson.kmp-tor:runtime:2.6.0")
+    implementation("io.matthewnelson.kmp-tor:resource-exec-tor:409.5.0")
 
     // EncryptedSharedPreferences для безопасного хранения данных
     implementation("androidx.security:security-crypto:1.1.0-alpha06")

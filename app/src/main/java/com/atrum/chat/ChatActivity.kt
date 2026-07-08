@@ -83,11 +83,14 @@ class ChatActivity : SecureActivity() {
      */
     private val imageUploadQueue = ImageUploadQueue()
 
-    // ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА (не для релиза, см. TODO_REMOVE_EMPTY_MEDIA_CRASH): если
-    // заливка фото не завершится (ни успехом, ни ошибкой) за это время — роняем приложение
-    // с диагностикой, чтобы понять, где именно "зависает" колесо процента. УДАЛИТЬ после
-    // диагностики вместе с диагностикой пустых фото.
-    private val UPLOAD_HANG_CRASH_MS = 30_000L
+    // Сторож долгой заливки фото/коллажа: если заливка не завершится (ни успехом, ни
+    // ошибкой) за это время — считаем её зависшей и переводим сообщение в failSend с
+    // диагностикой в логе (а НЕ роняем приложение — краш при сбое отправки запрещён,
+    // см. CLAUDE.md "ATRUM — мессенджер на каждый день"). 90с — с учётом того, что
+    // прямой путь через кастомный SOCKS5-прокси и Tor теперь ждут кворум до 20с НА
+    // КАЖДЫЙ чанк (см. NostrTransport.viaCustomProxy), а фото может состоять из
+    // нескольких чанков + манифест + одна повторная попытка на каждый.
+    private val UPLOAD_HANG_CRASH_MS = 90_000L
 
     /**
      * Счётчик активных загрузок изображений. При count > 0 поле ввода и кнопки
@@ -121,7 +124,7 @@ class ChatActivity : SecureActivity() {
     // ── Warning banner ────────────────────────────────────────────────────────
 
     /** Типы мягких предупреждений. Каждый имеет свой текст, но одинаковый визуал. */
-    private enum class WarningType { TOKEN, RATE_LIMIT, NETWORK, FORWARD_SECRECY, TOR, STICKER_ANIM }
+    private enum class WarningType { TOKEN, RATE_LIMIT, NETWORK, FORWARD_SECRECY, TOR, STICKER_ANIM, GROUP_PENDING }
 
     /** Текущий активный тип предупреждения, null если баннер скрыт. */
     private var activeWarning: WarningType? = null
@@ -197,6 +200,51 @@ class ChatActivity : SecureActivity() {
 
     /** Расшифрованный контент reactions.txt — для парсинга и манипуляций в handleReactionToggle. */
     private var lastReactionsContent: String = ""
+
+    /**
+     * Сырой (зашифрованный, уже проверенный транспортом по подписи админа) контент
+     * members.txt с последнего poll'а — для дедупа (ADR-001, групповые чаты).
+     */
+    private var lastMembersRaw: String = ""
+
+    /**
+     * Кэш числа активных (не забаненных) участников группы — обновляется раз за
+     * опрос в processChannelData(), читается синхронно каждую секунду из
+     * applyGroupPresence() (тикер), чтобы не дёргать Room в горячем пути.
+     */
+    private var groupActiveParticipantCount: Int = 0
+
+    /** true — уже показали пользователю экран «вас исключили» и закрываем чат (анти-дубль). */
+    private var groupBanHandled: Boolean = false
+
+    /** true после первого опроса профилей группового чата в этой сессии (см. doSyncProfilesOnce). */
+    private var groupJoinAnnounceInitialized: Boolean = false
+
+    /** userId участников группы, чьё присоединение уже объявлено системным сообщением в этой сессии. */
+    private val announcedJoinedUserIds = mutableSetOf<String>()
+
+    // ── Гонка джойна в группу (ADR-001, §Пропагация бана / известное ограничение) ──
+    // Приём в группу неатомарен: JoinChatActivity проверяет ёмкость по устаревшему
+    // members.txt/приближённо по profiles.txt, а реальное добавление делает админ
+    // фоном (maybeAdminEnrollNewMembers). Если лимит участников почти исчерпан и
+    // несколько человек джойнятся одновременно — кто-то может остаться локально
+    // "в чате", но так и не попасть в members.txt. Ниже — честный сигнал об этом
+    // вместо тихого зависания в неопределённом состоянии (см. checkPendingGroupEnrollment).
+
+    /** Подряд тиков, когда я (не админ) отсутствую в локальном ChatParticipant. Сбрасывается при подтверждении. */
+    private var groupPendingTicks: Int = 0
+
+    /**
+     * Через сколько подряд тиков без подтверждения членства показываем баннер
+     * «ожидаем подтверждения». Не сразу — обычное добавление админом занимает
+     * один-два его опроса + распространение по реле, поднято, чтобы не мигать
+     * баннером на нормальной, чуть более медленной, но штатной задержке
+     * (тот же порядок величины, что и FS_BANNER_MIN_TICKS).
+     */
+    private val GROUP_PENDING_BANNER_TICKS = 20
+
+    /** Локальные метки первого наблюдения кандидата в profiles.txt (для админа, честный FIFO-порядок enrollment'а). */
+    private val groupCandidateFirstSeenMs = mutableMapOf<String, Long>()
 
     /** Менеджер отправки: token bucket + очередь + прогрессивные блокировки. */
     private lateinit var sendManager: MessageSendManager
@@ -488,37 +536,44 @@ class ChatActivity : SecureActivity() {
             // FORWARD SECRECY: приватный эфемерный ключ хранится ТОЛЬКО в Keystore-
             // шифрованном Prefs (не в открытой Room-БД). Pub остаётся в БД. Сессия
             // переживает перезаход (ключ не пересоздаётся), но при краже БД он недоступен.
-            val storedEphPriv = prefs.getEphemeralPriv(chat.chatId)
-            if (storedEphPriv != null && chat.myEphemeralPubKeyB64 != null) {
-                myEphemeralPrivKey = storedEphPriv
-                myCurrentEphemeralPubKey = chat.myEphemeralPubKeyB64
-            } else if (chat.myEphemeralPrivKeyB64 != null && chat.myEphemeralPubKeyB64 != null) {
-                // МИГРАЦИЯ старого чата: priv лежал в открытой БД — переносим в Keystore-Prefs
-                // и СТИРАЕМ из БД (pub оставляем). Так старые чаты тоже становятся защищёнными.
-                val migrated = Base64.decode(chat.myEphemeralPrivKeyB64, Base64.NO_WRAP)
-                myEphemeralPrivKey = migrated
-                myCurrentEphemeralPubKey = chat.myEphemeralPubKeyB64
-                prefs.setEphemeralPriv(chat.chatId, migrated)
-                db.chatDao().updateMyEphemeralKeys(chat.id, null, chat.myEphemeralPubKeyB64)
-            } else {
-                val (privKey, pubKeyB64) = CryptoHelper.generateEphemeralKeyPair()
-                myEphemeralPrivKey = privKey
-                myCurrentEphemeralPubKey = pubKeyB64
-                prefs.setEphemeralPriv(chat.chatId, privKey)
-                // В БД пишем ТОЛЬКО публичный ключ; приватный — никогда.
-                db.chatDao().updateMyEphemeralKeys(chat.id, null, pubKeyB64)
-            }
-            // Подписываем свой эфемерный ключ долговременным identity-ключом (защита от MITM).
-            myEphemeralSig = computeEphemeralSig(myCurrentEphemeralPubKey, chat.chatId)
+            //
+            // ⛔ ГРУППОВЫЕ ЧАТЫ (ADR-001): ECDH forward-secrecy рукопожатие рассчитано
+            // строго на двух участников (X25519(мой_privkey, ОДИН_чужой_pubkey) → один
+            // общий секрет). Для группы это не имеет смысла и не запускается — группа
+            // навсегда остаётся на V5 (Argon2id + общий пароль чата), см. ADR_GROUP_CHATS.md.
+            if (!chat.isGroup) {
+                val storedEphPriv = prefs.getEphemeralPriv(chat.chatId)
+                if (storedEphPriv != null && chat.myEphemeralPubKeyB64 != null) {
+                    myEphemeralPrivKey = storedEphPriv
+                    myCurrentEphemeralPubKey = chat.myEphemeralPubKeyB64
+                } else if (chat.myEphemeralPrivKeyB64 != null && chat.myEphemeralPubKeyB64 != null) {
+                    // МИГРАЦИЯ старого чата: priv лежал в открытой БД — переносим в Keystore-Prefs
+                    // и СТИРАЕМ из БД (pub оставляем). Так старые чаты тоже становятся защищёнными.
+                    val migrated = Base64.decode(chat.myEphemeralPrivKeyB64, Base64.NO_WRAP)
+                    myEphemeralPrivKey = migrated
+                    myCurrentEphemeralPubKey = chat.myEphemeralPubKeyB64
+                    prefs.setEphemeralPriv(chat.chatId, migrated)
+                    db.chatDao().updateMyEphemeralKeys(chat.id, null, chat.myEphemeralPubKeyB64)
+                } else {
+                    val (privKey, pubKeyB64) = CryptoHelper.generateEphemeralKeyPair()
+                    myEphemeralPrivKey = privKey
+                    myCurrentEphemeralPubKey = pubKeyB64
+                    prefs.setEphemeralPriv(chat.chatId, privKey)
+                    // В БД пишем ТОЛЬКО публичный ключ; приватный — никогда.
+                    db.chatDao().updateMyEphemeralKeys(chat.id, null, pubKeyB64)
+                }
+                // Подписываем свой эфемерный ключ долговременным identity-ключом (защита от MITM).
+                myEphemeralSig = computeEphemeralSig(myCurrentEphemeralPubKey, chat.chatId)
 
-            // Если в БД уже был ключ партнёра — сразу устанавливаем сессионный ключ,
-            // чтобы первое же loadMessages() расшифровало V3-сообщения.
-            if (chat.partnerEphemeralPubKeyB64 != null) {
-                tryEstablishSessionKey(chat.partnerEphemeralPubKeyB64)
+                // Если в БД уже был ключ партнёра — сразу устанавливаем сессионный ключ,
+                // чтобы первое же loadMessages() расшифровало V3-сообщения.
+                if (chat.partnerEphemeralPubKeyB64 != null) {
+                    tryEstablishSessionKey(chat.partnerEphemeralPubKeyB64)
+                }
+                // FS: периодическая ротация эфемерного ключа (раз в сутки) — настоящий
+                // forward secrecy с окном; история сохраняется в локальном шифр-архиве.
+                maybeRotateEphemeral()
             }
-            // FS: периодическая ротация эфемерного ключа (раз в сутки) — настоящий
-            // forward secrecy с окном; история сохраняется в локальном шифр-архиве.
-            maybeRotateEphemeral()
             // Мгновенный показ из кэша прошлого захода (в этой сессии) — чат не грузится
             // с нуля; SyncEngine ниже обновит его в фоне.
             ChatSnapshotCache.get(chat.chatId)?.let { cached ->
@@ -547,6 +602,17 @@ class ChatActivity : SecureActivity() {
     }
 
     /**
+     * Tor(-preferring) Nostr-чат — не BT, не «Избранное», не прямой NOSTR_DIRECT_TOKEN.
+     * Тот же критерий, что уже используется в onResume()/registerNetworkMonitoring() для
+     * решения «поднимать ли Tor» — здесь используется, чтобы решить «взводить ли
+     * TorSyncWatchdog» (см. TorSyncWatchdog.kt).
+     */
+    private fun isTorChat(): Boolean =
+        !chat.isFavorites &&
+            chat.transportToken != BluetoothTransport.BT_TOKEN &&
+            chat.transportToken != com.atrum.chat.transport.NostrTransport.NOSTR_DIRECT_TOKEN
+
+    /**
      * Подтягивает профиль собеседника из канала и пушит свой профиль.
      * Если имя или аватарка собеседника изменились — обновляет UI и Room.
      */
@@ -556,11 +622,36 @@ class ChatActivity : SecureActivity() {
         // Раньше была одна попытка, после которой всё молча игнорировалось —
         // любая кратковременная сетевая ошибка приводила к тому, что ephemeral
         // ключ не доходил до партнёра и ECDH-рукопожатие не завершалось.
+        //
+        // БАГ (исправлено): doSyncProfilesOnce() раньше не бросал исключение,
+        // если партнёр просто ЕЩЁ не опубликовал свой профиль (например, автор
+        // приглашения publish'ит pushMyProfile в фоне и просто не успел к моменту,
+        // когда джойнер уже открыл чат) — это НЕ ошибка сети, поэтому catch-блок
+        // ниже не срабатывал, и цикл считал первую же (успешную, но пустую)
+        // попытку финалом, сразу выходя из repeat. Реальное появление авы/ника
+        // партнёра откладывалось до следующего тика фонового поллинга (SyncEngine,
+        // 10с), а через Tor — заметно дольше (джиттер + кворум реле), из-за чего
+        // выглядело как «синхронизация не происходит, но лечится само со временем».
+        // Теперь doSyncProfilesOnce() возвращает найден ли партнёр, и цикл ретраит
+        // ЭТУ попытку тоже — а не только сетевые исключения.
         repeat(SYNC_PROFILES_MAX_ATTEMPTS) { attempt ->
             try {
-                doSyncProfilesOnce()
-                return@launch   // успех — выходим
-            } catch (_: Exception) {
+                val partnerFound = doSyncProfilesOnce()
+                if (partnerFound || attempt == SYNC_PROFILES_MAX_ATTEMPTS - 1) return@launch
+                delay(SYNC_PROFILES_RETRY_BASE_MS * (attempt + 1))
+            } catch (e: Exception) {
+                if (isTorChat()) {
+                    TorSyncWatchdog.record(
+                        chat.chatId, "SYNC_PROFILES_FAIL",
+                        "попытка ${attempt + 1}/$SYNC_PROFILES_MAX_ATTEMPTS: ${e::class.simpleName}: ${e.message}"
+                    )
+                    if (attempt == SYNC_PROFILES_MAX_ATTEMPTS - 1) {
+                        // Не по сценарию: все попытки цикла profile-sync провалились подряд.
+                        TorSyncWatchdog.reportDeviation(
+                            applicationContext, chat.chatId, "syncProfiles исчерпал $SYNC_PROFILES_MAX_ATTEMPTS попытки", e
+                        )
+                    }
+                }
                 if (attempt < SYNC_PROFILES_MAX_ATTEMPTS - 1) {
                     delay(SYNC_PROFILES_RETRY_BASE_MS * (attempt + 1))
                 }
@@ -573,8 +664,12 @@ class ChatActivity : SecureActivity() {
     /**
      * Тело синхронизации профилей — suspend, вызывается с retry из syncProfiles().
      * Любое исключение пробрасывается наружу для обработки retry-цикла.
+     *
+     * @return true если профиль партнёра найден в этом опросе (и обработан),
+     *         false если партнёра пока нет в profiles.txt — вызывающий должен
+     *         повторить попытку, это НЕ ошибка.
      */
-    private suspend fun doSyncProfilesOnce() {
+    private suspend fun doSyncProfilesOnce(): Boolean {
         val allProfiles = ProfileSync.pullProfiles(transport, chat.chatPassword)
         val partner = ProfileSync.findPartner(allProfiles, prefs.myUserId, prefs.myName)
 
@@ -582,12 +677,32 @@ class ChatActivity : SecureActivity() {
         // Помечаем partnerJoined=true чтобы кнопка "Поделиться" стала disabled.
         val secondParticipantExists = partner != null ||
                 allProfiles.values.any { it.userId != prefs.myUserId }
-        if (secondParticipantExists && !chat.partnerJoined) {
+        // Групповой чат (ADR-001): баннер «X присоединился» для групп теперь считается
+        // в processChannelData() — на КАЖДОМ опросе (SyncEngine, 3с), а не только здесь,
+        // при открытии чата (с ограниченным числом retry). Раньше баннер был виден только
+        // если участник вступал в узкое окно сразу после открытия чата — если кто-то
+        // вступал позже (чат уже открыт и просто ждёшь) баннер никогда не появлялся
+        // (найдено по репорту пользователя). Логика перенесена туда же, откуда уже
+        // непрерывно читается ChatParticipant (то же состояние announcedJoinedUserIds/
+        // groupJoinAnnounceInitialized используется обеими — дублирования нет).
+        if (!chat.isGroup && secondParticipantExists && !chat.partnerJoined) {
             db.chatDao().markPartnerJoined(chat.id)
             chat = chat.copy(partnerJoined = true)
+            // Локальная плашка «X присоединился к чату» — только в этой сессии (см. §1.5
+            // и комментарий у ChatStore.systemMessages). Не шифруется, не публикуется —
+            // партнёр её не увидит, каждая сторона показывает её у себя независимо.
+            val joinedName = partner?.name?.takeIf { it.isNotBlank() }
+                ?: chat.partnerName.takeIf { it.isNotBlank() }
+                ?: getString(R.string.join_default_partner_name)
+            chatStore.addSystemMessage(
+                Message.system(getString(R.string.cc_system_partner_joined, joinedName))
+            )
         }
 
         if (partner != null) {
+            if (isTorChat()) {
+                TorSyncWatchdog.disarm(chat.chatId, "партнёр получен через profiles.txt (doSyncProfilesOnce)")
+            }
             val nameToSave = if (partner.name.isNotBlank()) partner.name else chat.partnerName
             val tagToSave = if (!partner.tag.isNullOrBlank()) partner.tag else chat.partnerTag
             val avatarToSave = if (!partner.avatarBase64.isNullOrBlank()) partner.avatarBase64 else chat.partnerAvatarBase64
@@ -619,6 +734,16 @@ class ChatActivity : SecureActivity() {
             }
         }
 
+        if (chat.isGroup) {
+            // Групповой чат (ADR-001): "прочитано" ✓✓ — когда ВСЕ остальные участники
+            // дочитали до сообщения (минимум lastReadIndex среди них), а не один
+            // произвольный "partner", которого findPartner() выше выбрал для группы
+            // (сам findPartner на группы не рассчитан — просто игнорируем его выбор здесь).
+            val others = allProfiles.values.filter { it.userId != prefs.myUserId }
+            val minReadIndex = others.minOfOrNull { it.lastReadIndex } ?: 0
+            adapter.setPartnerLastReadIndex(minReadIndex)
+        }
+
         // Устанавливаем сессионный ключ если партнёр опубликовал свой ephemeral pub key
         if (partner != null) {
             tryEstablishSessionKey(partner.ephemeralPubKey)
@@ -641,10 +766,27 @@ class ChatActivity : SecureActivity() {
             status = prefs.myStatus.takeIf { it.isNotBlank() }
         )
         ProfileSync.pushMyProfile(transport, chat.chatPassword, myProfile)
+
+        // Групповой чат (ADR-001), только у админа: свежий allProfiles уже под рукой
+        // (не зависит от того, менялся ли chat.txt) — самый быстрый путь заметить
+        // нового участника и добавить его в members.txt. Второй, подстраховочный
+        // вызов — в processChannelData() на lastKnownProfiles.
+        if (chat.isGroup) {
+            maybeAdminEnrollNewMembers(allProfiles)
+        }
+
+        return partner != null
     }
 
     /** Обновляет шапку чата с актуальными данными собеседника (имя + аватарка). */
     private fun applyPartnerToHeader() {
+        // ⛔ Групповые чаты (ADR-001): своя ветка — группового имени/аватара нет
+        // единого "собеседника". Один флаг здесь покрывает ВСЕ 8 точек вызова
+        // applyPartnerToHeader() по всему файлу — ничего в них менять не нужно.
+        if (chat.isGroup) {
+            applyGroupHeader()
+            return
+        }
         if (chat.isFavorites) {
             binding.tvDisplayName.text = getString(R.string.favorites_name)
             binding.ivPartnerAvatar.visibility = View.GONE
@@ -699,15 +841,50 @@ class ChatActivity : SecureActivity() {
         }
     }
 
+    /**
+     * Шапка группового чата (ADR-001): имя/аватар группы вместо одного собеседника,
+     * subtitle — число активных участников (заменяется presence-индикатором в
+     * applyGroupPresence()). Вызывается ТОЛЬКО из applyPartnerToHeader().
+     */
+    private fun applyGroupHeader() {
+        val name = chat.groupName?.takeIf { it.isNotBlank() } ?: chat.partnerName
+        binding.tvDisplayName.text = name
+
+        binding.tvPartnerAvatar.background =
+            androidx.core.content.ContextCompat.getDrawable(this, R.drawable.bg_avatar_placeholder)
+        val avatar = AvatarUtils.fromBase64(chat.groupAvatarBase64)
+        if (avatar != null) {
+            binding.ivPartnerAvatar.setImageBitmap(avatar)
+            binding.ivPartnerAvatar.visibility = View.VISIBLE
+            binding.tvPartnerAvatar.visibility = View.GONE
+        } else {
+            binding.ivPartnerAvatar.visibility = View.GONE
+            binding.tvPartnerAvatar.visibility = View.VISIBLE
+            binding.tvPartnerAvatar.text = name.trim().firstOrNull()?.uppercase() ?: "?"
+        }
+
+        // Начальное состояние subtitle — реальный presence-тикер (applyGroupPresence)
+        // перерисует его в течение секунды поверх этого значения.
+        updateGroupSubtitleParticipantCount()
+    }
+
+    /** Пишет "N участников" в subtitle шапки — используется когда никто не печатает/не в записи. */
+    private fun updateGroupSubtitleParticipantCount() {
+        binding.tvChatSubtitle.text = getString(R.string.group_members_count_fmt, groupActiveParticipantCount)
+        binding.tvChatSubtitle.setTextColor(ContextCompat.getColor(this, R.color.text_tertiary))
+        binding.tvChatSubtitle.setOnClickListener(null)
+    }
+
     private fun openPartnerProfile() {
         if (chat.isFavorites) return
         // Источник истины — объект chat, который синхронизирован с БД.
         // Не берем из lastKnownProfiles напрямую, чтобы избежать мигания/разных аватарок.
-        val name         = chat.partnerName
-        val tag          = chat.partnerTag
-        val avatarBase64 = chat.partnerAvatarBase64
+        // Групповой чат (ADR-001): имя/аватар — групповые, не одного собеседника.
+        val name         = if (chat.isGroup) (chat.groupName?.takeIf { it.isNotBlank() } ?: chat.partnerName) else chat.partnerName
+        val tag          = if (chat.isGroup) null else chat.partnerTag
+        val avatarBase64 = if (chat.isGroup) chat.groupAvatarBase64 else chat.partnerAvatarBase64
         val partner      = lastKnownProfiles.values.firstOrNull { it.userId != prefs.myUserId }
-        val status       = partner?.status
+        val status       = if (chat.isGroup) null else partner?.status
         // Выровненные массивы: каждый медиа-элемент знает своё сообщение (msgId) и
         // принадлежность (self) — нужно для перехода к сообщению и удаления из списка медиа.
         val refs = ArrayList<String>(); val refMsgIds = ArrayList<String>(); val refSelf = ArrayList<String>()
@@ -747,6 +924,7 @@ class ChatActivity : SecureActivity() {
             putExtra(PartnerProfileActivity.EXTRA_EPH_SIG, partner?.ephemeralSig)
             putExtra(PartnerProfileActivity.EXTRA_VERIFIED_PARTNER_IDK, partner?.verifiedPartnerIdk)
             putExtra(PartnerProfileActivity.EXTRA_CHAT_ID, chat.id)
+            putExtra(PartnerProfileActivity.EXTRA_IS_GROUP, chat.isGroup)
             putStringArrayListExtra(PartnerProfileActivity.EXTRA_IMAGE_REFS, refs)
             putStringArrayListExtra(PartnerProfileActivity.EXTRA_IMAGE_MSGIDS, refMsgIds)
             putStringArrayListExtra(PartnerProfileActivity.EXTRA_IMAGE_SELF, refSelf)
@@ -783,6 +961,10 @@ class ChatActivity : SecureActivity() {
         // Стартуем с Nostr напрямую (без проверки) — UI не ждёт
         transport = transportFactory.instant()
         btMode = chat.transportToken == BluetoothTransport.BT_TOKEN
+        // Взводим сторож синхронизации при открытии Tor-чата — см. TorSyncWatchdog.kt.
+        // Идемпотентно относительно arm(), уже выставленного JoinChatActivity.runConnect()
+        // при нажатии «Подключиться» (тот же chatId — второй arm() не сбрасывает отсчёт).
+        if (isTorChat()) TorSyncWatchdog.arm(applicationContext, chat.chatId)
         // В фоне проверяем реальную доступность — переключимся на Nostr если нужно
         lifecycleScope.launch { resolveTransport() }
 
@@ -833,7 +1015,8 @@ class ChatActivity : SecureActivity() {
         // ── Swipe-to-reply ────────────────────────────────────────────────────
         val swipeCallback = SwipeToReplyCallback(this) { position ->
             val msg = adapter.getItem(position)
-            if (msg != null) startReply(msg)
+            // Системные сообщения (isSystem, «X присоединился к чату») — не отвечаемы.
+            if (msg != null && !msg.isSystem) startReply(msg)
         }
         ItemTouchHelper(swipeCallback).attachToRecyclerView(binding.rvMessages)
 
@@ -948,6 +1131,9 @@ class ChatActivity : SecureActivity() {
                 // от реле (на публичных реле он ненадёжен). reconcile() позже заменит
                 // оптимистичную строку серверной копией, когда она вернётся.
                 chatStore.confirmSent(encrypted)
+                // Реальная публикация на реле прошла (appendLine не бросил) — живое
+                // подтверждение синхронизации Tor-чата, см. TorSyncWatchdog.kt.
+                if (isTorChat()) TorSyncWatchdog.disarm(chat.chatId, "сообщение опубликовано на реле (appendLine OK)")
                 if (chat.isFavorites) {
                     // Для локального чата имитируем мгновенную загрузку из "сети"
                     // сразу после appendLine, чтобы сообщение вышло из pending-статуса.
@@ -990,9 +1176,43 @@ class ChatActivity : SecureActivity() {
             },
             onSendFailed = { item, reason ->
                 runOnUiThread {
-                    // Если отправка провалилась — убираем из ChatStore, чтобы часы не висели вечно
-                    chatStore.dropPending(item.encrypted)
-                    
+                    // Раньше здесь был dropPending() — сообщение бесследно исчезало из чата
+                    // (нарушение правила «часики → ошибка», см. CLAUDE.md). failSend() держит
+                    // сообщение в ленте с явным значком ошибки — Message.isFailed, MessageAdapter,
+                    // мокап согласован с пользователем.
+                    chatStore.failSend(item.encrypted)
+                    // Подробный лог с вылетом при ЛЮБОМ окончательном провале отправки — по
+                    // прямой просьбе пользователя, без обобщений (класс/причина/транспорт).
+                    if (isTorChat()) {
+                        // TorSyncWatchdog уже даёт полный отчёт (класс исключения, цепочка cause,
+                        // стектрейс, статус Tor, журнал сессии) и корректно разоружает сторож —
+                        // второй отдельный краш-репорт здесь был бы дублем на одну и ту же причину.
+                        TorSyncWatchdog.reportDeviation(
+                            applicationContext, chat.chatId, "onSendFailed",
+                            RuntimeException("Сообщение не доставлено после всех ретраев MessageSendManager: $reason")
+                        )
+                    } else {
+                        // Прямой Nostr / Bluetooth / Избранное — TorSyncWatchdog тут ни при чём,
+                        // отчёт даём напрямую.
+                        val transportKind = when {
+                            chat.isFavorites -> "Избранное (локально)"
+                            chat.transportToken == BluetoothTransport.BT_TOKEN -> "Bluetooth"
+                            chat.transportToken == com.atrum.chat.transport.NostrTransport.NOSTR_DIRECT_TOKEN ->
+                                "Nostr (прямое подключение)"
+                            else -> "Nostr (неизвестный режим)"
+                        }
+                        runCatching {
+                            CrashHandler.report(
+                                this@ChatActivity, "ChatActivity: окончательный провал отправки сообщения",
+                                RuntimeException(
+                                    "Сообщение не доставлено после всех ретраев MessageSendManager.\n" +
+                                        "chatId=${chat.chatId.take(8)}…, транспорт=$transportKind\n" +
+                                        "причина: $reason"
+                                )
+                            )
+                        }
+                    }
+
                     val isNetworkError = reason.contains("Unable to resolve host", ignoreCase = true) ||
                         reason.contains("No address associated", ignoreCase = true) ||
                         reason.contains("Failed to connect", ignoreCase = true) ||
@@ -1254,10 +1474,11 @@ class ChatActivity : SecureActivity() {
         applyWallpaper()
         if (::chat.isInitialized) {
             // Re-ensure: при возврате в Tor-чат поднимаем Tor, если он «уснул» в фоне.
-            if (!chat.isFavorites &&
-                chat.transportToken != BluetoothTransport.BT_TOKEN &&
-                chat.transportToken != com.atrum.chat.transport.NostrTransport.NOSTR_DIRECT_TOKEN) {
+            if (isTorChat()) {
                 TorManager.start(this)
+                // Возврат в Tor-чат — тоже валидный момент «подключения» для сторожа
+                // синхронизации (см. TorSyncWatchdog.kt). Идемпотентно для уже идущей сессии.
+                TorSyncWatchdog.arm(applicationContext, chat.chatId)
             }
             registerNetworkMonitoring()
             // Сбрасываем кэши — при возврате в чат гарантируем:
@@ -1689,6 +1910,86 @@ class ChatActivity : SecureActivity() {
             }
         }
 
+        // ── members.txt: членство/бан группового чата (ADR-001) ──────────────
+        // data.membersContent транспорт УЖЕ отфильтровал по подписи админа
+        // (см. NostrTransport.latestVerifiedMembersFile) — здесь только расшифровка
+        // и применение к локальному кэшу ChatParticipant. Полная реакция на бан
+        // (счётчик участников в шапке, авто-удаление у забаненного) — отдельные шаги.
+        if (chat.isGroup) {
+            val membersRaw = data.membersContent
+            if (membersRaw.isNotBlank() && membersRaw != lastMembersRaw) {
+                lastMembersRaw = membersRaw
+                val applied = withContext(Dispatchers.IO) {
+                    try {
+                        MembersSync.applyIncoming(
+                            chat = chat,
+                            membersContentEncrypted = membersRaw,
+                            password = chat.chatPassword,
+                            participantDao = db.chatParticipantDao(),
+                            chatDao = db.chatDao()
+                        )
+                    } catch (_: Exception) {
+                        false
+                    }
+                }
+                if (applied) {
+                    // membersVersion уже обновлена в БД (анти-откат внутри applyIncoming) —
+                    // подтягиваем свежее значение в in-memory chat, чтобы повторные
+                    // проверки версии в этой же сессии видели актуальное число.
+                    withContext(Dispatchers.IO) { db.chatDao().getById(chat.id) }?.let { fresh ->
+                        chat = chat.copy(membersVersion = fresh.membersVersion)
+                    }
+                }
+            }
+
+            // Забанены? — локально удаляем чат и выходим (ADR-001, §Пропагация бана).
+            if (withContext(Dispatchers.IO) { checkSelfBanned() }) return
+
+            // Не забанен, но ещё не подтверждён (гонка джойна) — честный баннер вместо
+            // тихого зависания в неопределённом состоянии (ADR-001, §Известное ограничение).
+            withContext(Dispatchers.IO) { checkPendingGroupEnrollment() }
+
+            // Только у админа: заметили в profiles.txt участника, которого ещё нет
+            // в members.txt (и он не забанен) — добавляем, пока есть свободные слоты
+            // (честный FIFO-порядок — см. groupCandidateFirstSeenMs).
+            withContext(Dispatchers.IO) { maybeAdminEnrollNewMembers() }
+
+            // Кэш числа активных участников для presence-тикера (см. applyGroupPresence) —
+            // обновляем раз за опрос, а не на каждый тик (~1с), чтобы не дёргать Room. Тот
+            // же снимок переиспользуем ниже для баннера «X присоединился к чату».
+            val activeParticipants = withContext(Dispatchers.IO) {
+                db.chatParticipantDao().getForChat(chat.id).filter { !it.banned }
+            }
+            groupActiveParticipantCount = activeParticipants.size
+            withContext(Dispatchers.Main) { applyGroupPresence() }
+
+            // Баннер «X присоединился к чату» (найдено и исправлено по репорту
+            // пользователя: раньше объявление группового джойна считалось ТОЛЬКО при
+            // открытии чата — doSyncProfilesOnce, несколько retry и всё — если участник
+            // вступал позже, пока чат уже был открыт, баннер никогда не появлялся).
+            // Теперь считаем на КАЖДОМ опросе (SyncEngine, 3с) — ловит и поздних
+            // джойнеров. На первом тике в этой сессии только запоминаем, кто уже в
+            // чате — иначе при каждом открытии уже существующей группы посыпались бы
+            // объявления про всех, кто в ней уже состоит.
+            val othersNow = activeParticipants.filter { it.userId != prefs.myUserId }
+            if (!groupJoinAnnounceInitialized) {
+                groupJoinAnnounceInitialized = true
+                othersNow.forEach { announcedJoinedUserIds.add(it.userId) }
+            } else {
+                for (p in othersNow) {
+                    if (announcedJoinedUserIds.add(p.userId)) {
+                        val joinedName = lastKnownProfiles[p.userId]?.name?.takeIf { it.isNotBlank() }
+                            ?: getString(R.string.join_default_partner_name)
+                        withContext(Dispatchers.Main) {
+                            chatStore.addSystemMessage(
+                                Message.system(getString(R.string.cc_system_partner_joined, joinedName))
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // ETag content dedup: пропускаем парсинг сообщений если chat.txt не изменился
         // и read receipt уже был отправлен. lastPushedReadIndex = -1 форсирует
         // обработку даже при совпадении контента (первый запуск, onResume).
@@ -1732,19 +2033,35 @@ class ChatActivity : SecureActivity() {
             }
         }
 
+        // ── Групповой чат (ADR-001, §Пропагация бана): скрываем сообщения забаненных ──
+        // "Мягкий бан" (members.txt banned=true) не отзывает крипто-доступ — забаненный
+        // технически ещё может расшифровать общий пароль, если продолжит слушать реле
+        // (см. известное и задокументированное ограничение MVP в ADR_GROUP_CHATS.md).
+        // Но у ОСТАЛЬНЫХ участников такие сообщения не должны появляться в ленте —
+        // иначе бан выглядит сломанным, даже если крипто-доступ технически ещё жив.
+        // Сам чат у забаненного удаляется отдельно (см. checkSelfBanned() выше). Считаем
+        // ДО хвостовой оптимизации ниже — иначе сообщение забаненного мелькнёт в хвосте
+        // и тут же исчезнет при полном reconcile (нарушение §1.5 "всё на месте").
+        val bannedIds: Set<String> = if (!chat.isGroup) emptySet() else withContext(Dispatchers.IO) {
+            db.chatParticipantDao().getForChat(chat.id).filter { it.banned }.map { it.userId }.toSet()
+        }
+        fun List<Message>.withoutBanned(): List<Message> =
+            if (bannedIds.isEmpty()) this
+            else filterNot { it.senderUserId != null && it.senderUserId in bannedIds }
+
         // ── Оптимизация первой загрузки: "хвост" ─────────────────────────────
         // Если чат длинный (> 30 строк), сначала декодируем последние 30
         // сообщений и показываем сразу (снимая оверлей), остальную историю догружаем
         // следом. Argon2id по сообщению очень тяжёлый — убирает ожидание всей истории.
         if (!firstLoadComplete && allLines.size > TAIL_FIRST) {
-            val tailMsgs = decodeLines(allLines.takeLast(TAIL_FIRST))
+            val tailMsgs = decodeLines(allLines.takeLast(TAIL_FIRST)).withoutBanned()
             if (tailMsgs.isNotEmpty()) {
                 contentLoaded = true
                 chatStore.reconcile(tailMsgs)   // коллектор покажет хвост и снимет оверлей
             }
         }
 
-        val messages: List<Message> = decodeLines(allLines)
+        val messages: List<Message> = decodeLines(allLines).withoutBanned()
 
         // Forward secrecy баннер (V4-S/V3 сообщения без активного сессионного ключа).
         // ВАЖНО: это окно — НОРМА на старте, пока идёт ECDH-handshake (обмен ephemeral
@@ -1803,6 +2120,132 @@ class ChatActivity : SecureActivity() {
             processProfilesFromSlots(data.profileSlots)   // Фаза 1: union всех слотов
         } else if (profilesContent.isNotBlank()) {
             processProfilesFromContent(profilesContent)
+        }
+    }
+
+    /**
+     * Групповой чат (ADR-001): проверяет, не забанен ли я по локальному кэшу
+     * ChatParticipant (уже обновлён из members.txt на этом же тике). Если да —
+     * подчищает секреты/участников/саму запись чата и закрывает экран. Идемпотентно
+     * (groupBanHandled) — на случай если несколько тиков успеют наложиться.
+     * Возвращает true, если чат был удалён (вызывающий код обязан сразу return).
+     */
+    private suspend fun checkSelfBanned(): Boolean {
+        if (groupBanHandled) return true
+        val me = db.chatParticipantDao().getOne(chat.id, prefs.myUserId) ?: return false
+        if (!me.banned) return false
+        groupBanHandled = true
+        val chatIdForCleanup = chat.chatId
+        val roomIdForCleanup = chat.id
+        try {
+            db.chatParticipantDao().deleteForChat(roomIdForCleanup)
+            db.chatDao().delete(chat)
+            prefs.deleteChatSecrets(chatIdForCleanup)
+        } catch (_: Exception) {
+            // Даже если очистка частично не удалась — всё равно уходим с экрана
+            // ниже, чтобы не оставить пользователя в чате, где он забанен.
+        }
+        withContext(Dispatchers.Main) {
+            android.widget.Toast.makeText(this@ChatActivity, R.string.group_banned_toast, android.widget.Toast.LENGTH_LONG).show()
+            finish()
+        }
+        return true
+    }
+
+    /**
+     * Групповой чат (ADR-001, §Известное ограничение — гонка джойна): приём в группу
+     * неатомарен — JoinChatActivity проверяет ёмкость по (возможно устаревшему)
+     * members.txt/profiles.txt, а реальное добавление делает клиент админа фоном
+     * (см. [maybeAdminEnrollNewMembers]). Если лимит участников почти исчерпан и
+     * несколько человек джойнятся одновременно — кто-то из них может остаться
+     * локально «в чате» (запись Chat уже создана), но так и не попасть в members.txt.
+     *
+     * Эта проверка даёт ЧЕСТНЫЙ сигнал вместо тихого зависания: если я (не админ)
+     * подряд много тиков отсутствую в локальном ChatParticipant — показываем мягкий
+     * информационный баннер. Автоудаления НЕТ — офлайн-админ (а не переполненный чат)
+     * тоже даёт такую же картину, и агрессивное авто-исключение по таймауту рисковало
+     * бы выкинуть законного участника только из-за того, что админ временно не в сети.
+     * Если место реально не найдётся — участник может сам удалить чат из списка
+     * (существующее действие «Удалить чат», см. ChatsListActivity).
+     *
+     * Не блокирует использование чата (не return-guard как checkSelfBanned) — только
+     * управляет баннером-подсказкой.
+     */
+    private suspend fun checkPendingGroupEnrollment() {
+        if (chat.adminUserId == prefs.myUserId) return // админ — участник с момента создания
+        val me = db.chatParticipantDao().getOne(chat.id, prefs.myUserId)
+        if (me != null) {
+            // Подтверждён — сбрасываем счётчик и прячем баннер, если он был показан.
+            if (groupPendingTicks > 0) {
+                groupPendingTicks = 0
+                withContext(Dispatchers.Main) {
+                    if (activeWarning == WarningType.GROUP_PENDING) hideChatWarning()
+                }
+            }
+            return
+        }
+        groupPendingTicks++
+        if (groupPendingTicks >= GROUP_PENDING_BANNER_TICKS && activeWarning == null) {
+            withContext(Dispatchers.Main) { showChatWarning(WarningType.GROUP_PENDING) }
+        }
+    }
+
+    /**
+     * Только для админа группы (ADR-001): если в profiles.txt засветился участник,
+     * которого ещё нет в members.txt и который не забанен — добавляет его, пока есть
+     * свободные слоты (participantLimit), и публикует новую версию members.txt.
+     * Обычный (не-админ) участник тут не пишет НИЧЕГО — событие всё равно отбросят
+     * все остальные клиенты по несовпадению подписи (см. NostrTransport).
+     *
+     * Кандидаты сортируются по времени ПЕРВОГО наблюдения этим (админским) клиентом
+     * ([groupCandidateFirstSeenMs]) — честный, детерминированный FIFO вместо
+     * нестабильного порядка итерации `Map`. Это не защита от гонки (несколько
+     * джойнеров всё ещё могут одновременно пройти клиентскую проверку ёмкости в
+     * JoinChatActivity до того, как кто-либо из них попадёт сюда), а именно
+     * справедливость: кто раньше стал виден админу — тот раньше и получает
+     * свободный слот, вместо произвольного порядка на каждый тик.
+     *
+     * @param seenProfiles список известных профилей канала. По умолчанию — lastKnownProfiles
+     *   (кэш из processChannelData, может отставать на один тик, если chat.txt не менялся —
+     *   см. вызов из doSyncProfilesOnce() ниже, который передаёт СВЕЖИЙ снимок и не зависит
+     *   от изменений chat.txt, поэтому основной, быстрый путь enrollment'а — именно там).
+     */
+    private suspend fun maybeAdminEnrollNewMembers(seenProfiles: Map<String, Profile> = lastKnownProfiles) {
+        if (!chat.isGroup || chat.adminUserId != prefs.myUserId) return
+        val current = db.chatParticipantDao().getForChat(chat.id)
+        if (current.isEmpty()) return // наша собственная версия 1 ещё не долетела — подождём
+        val knownIds = current.map { it.userId }.toSet()
+        val bannedIds = current.filter { it.banned }.map { it.userId }.toSet()
+        val activeCount = current.count { !it.banned }
+
+        val candidates = seenProfiles.keys.filter { it !in knownIds && it !in bannedIds }
+        if (candidates.isEmpty()) return
+
+        // Запоминаем момент первого наблюдения — используется только для сортировки
+        // ниже (честный FIFO), не синхронизируется по сети и не переживает выход из чата.
+        val now = System.currentTimeMillis()
+        candidates.forEach { id -> groupCandidateFirstSeenMs.putIfAbsent(id, now) }
+
+        val limit = chat.participantLimit
+        val freeSlots = limit?.let { (it - activeCount).coerceAtLeast(0) } ?: candidates.size
+        if (freeSlots <= 0) return
+
+        val toAdd = candidates.sortedBy { groupCandidateFirstSeenMs[it] ?: Long.MAX_VALUE }.take(freeSlots)
+        val newVersion = chat.membersVersion + 1
+        val allEntries = current.map { MembersSync.Entry(it.userId, it.banned) } +
+            toAdd.map { MembersSync.Entry(it, false) }
+        try {
+            MembersSync.publish(
+                transport = transport,
+                password = chat.chatPassword,
+                chatId = chat.chatId,
+                adminUserId = prefs.myUserId,
+                newVersion = newVersion,
+                participants = allEntries
+            )
+        } catch (_: Exception) {
+            // Тихо игнорируем — следующий опрос (SyncEngine, единый цикл) повторит попытку,
+            // как только увидит тех же кандидатов снова в lastKnownProfiles.
         }
     }
 
@@ -1993,7 +2436,7 @@ class ChatActivity : SecureActivity() {
                     timestampMs = now
                 )
                 val encryptedMessage = withContext(Dispatchers.Default) {
-                    CryptoHelper.encrypt(plaintext, chat.chatPassword, transport.chatId)
+                    encryptChatLine(plaintext, transport.chatId)
                 }
 
                 // 4. Оптимистичное добавление в UI
@@ -2033,6 +2476,18 @@ class ChatActivity : SecureActivity() {
         }
     }
 
+    /**
+     * Шифрует строку-анонс сообщения (текст/подпись к медиа/правка) с учётом типа чата.
+     * Найдено по репорту пользователя: в группах «часики» долго висели на КАЖДОМ
+     * текстовом сообщении, хотя в 1:1 отправка мгновенная. Причина — обычный
+     * CryptoHelper.encrypt() для групп всегда падает на V5 (Argon2id со случайной
+     * солью на каждый вызов, несжимаемо), см. подробный докстринг
+     * CryptoHelper.encryptGroupMessage(). 1:1 не затронуты — там как раньше encrypt().
+     */
+    private fun encryptChatLine(plaintext: String, chatId: String): String =
+        if (chat.isGroup) CryptoHelper.encryptGroupMessage(plaintext, chat.chatPassword, chatId)
+        else CryptoHelper.encrypt(plaintext, chat.chatPassword, chatId)
+
     private fun sendMessage() {
         // Есть выбранные фото в баре → шлём их (с подписью из поля) и очищаем бар.
         if (stagedUris.isNotEmpty()) {
@@ -2061,7 +2516,7 @@ class ChatActivity : SecureActivity() {
                 timestampMs = now
             )
             val encrypted = withContext(Dispatchers.Default) {
-                CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.chatId)
+                encryptChatLine(plaintext, chat.chatId)
             }
 
             val pendingMsg = Message(
@@ -2385,7 +2840,7 @@ class ChatActivity : SecureActivity() {
                     timestampMs = now
                 )
                 val encryptedMessage = withContext(Dispatchers.Default) {
-                    CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.chatId)
+                    encryptChatLine(plaintext, chat.chatId)
                 }
                 pendingRaw = encryptedMessage
                 chatStore.addOptimistic(
@@ -2642,6 +3097,10 @@ class ChatActivity : SecureActivity() {
     }
 
     private fun tryEstablishSessionKey(partnerPubKey: String?) {
+        // ⛔ Групповые чаты (ADR-001): ECDH-сессия рассчитана строго на двух участников,
+        // для группы не устанавливается — см. комментарий в onCreate. myEphemeralPrivKey
+        // для группы и так остаётся null (см. ниже), но проверяем явно для ясности.
+        if (chat.isGroup) return
         if (partnerPubKey == null) return
         if (partnerPubKey == lastPartnerEphemeralPubKey) return   // ключ не изменился
         val privKey = myEphemeralPrivKey ?: return                // наш ключ ещё не готов
@@ -2896,6 +3355,12 @@ class ChatActivity : SecureActivity() {
      * данных (точность) и не «залипают». Приоритет подписи: запись > печать > обычная.
      */
     private fun applyPresence() {
+        // ⛔ Групповые чаты (ADR-001): presence — агрегат по ВСЕМ участникам, не по
+        // одному lastPartnerProfile. Отдельная ветка, единая точка вызова (presenceTickerJob).
+        if (chat.isGroup) {
+            applyGroupPresence()
+            return
+        }
         val p = lastPartnerProfile
         val now = System.currentTimeMillis()
         val alive = p != null && !p.deleted
@@ -2908,6 +3373,35 @@ class ChatActivity : SecureActivity() {
             binding.tvChatSubtitle.setOnClickListener(null)
         } else {
             updateTypingIndicator(isTyping)
+        }
+        updateOnlineIndicator(isOnline)
+    }
+
+    /**
+     * Presence для группового чата: печатает/записывает — если хотя бы ОДИН другой
+     * участник активен сейчас; иначе — "N участников". Онлайн-индикатор — если хотя
+     * бы один другой участник онлайн. lastKnownProfiles уже поддерживается в актуальном
+     * состоянии существующим profile-sync кодом (processProfilesFromContent/Slots) —
+     * эта функция только читает его, ничего не меняет.
+     */
+    private fun applyGroupPresence() {
+        val now = System.currentTimeMillis()
+        val others = lastKnownProfiles.values.filter { it.userId != prefs.myUserId && !it.deleted }
+        val isRecording = others.any { it.recordingTs > 0L && now - it.recordingTs < RECORDING_EXPIRY_MS }
+        val isTyping    = others.any { it.typingTs   > 0L && now - it.typingTs   < TYPING_EXPIRY_MS }
+        val isOnline    = others.any { it.onlineTs   > 0L && now - it.onlineTs   < ONLINE_EXPIRY_MS }
+        when {
+            isRecording -> {
+                binding.tvChatSubtitle.text = getString(R.string.recording_indicator)
+                binding.tvChatSubtitle.setTextColor(ContextCompat.getColor(this, R.color.accent))
+                binding.tvChatSubtitle.setOnClickListener(null)
+            }
+            isTyping -> {
+                binding.tvChatSubtitle.text = getString(R.string.typing_indicator)
+                binding.tvChatSubtitle.setTextColor(ContextCompat.getColor(this, R.color.accent))
+                binding.tvChatSubtitle.setOnClickListener(null)
+            }
+            else -> updateGroupSubtitleParticipantCount()
         }
         updateOnlineIndicator(isOnline)
     }
@@ -2979,7 +3473,7 @@ class ChatActivity : SecureActivity() {
                     timestampMs = now
                 )
                 val encryptedMessage = withContext(Dispatchers.Default) {
-                    CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.chatId)
+                    encryptChatLine(plaintext, chat.chatId)
                 }
                 tempEncrypted = encryptedMessage
 
@@ -3011,11 +3505,16 @@ class ChatActivity : SecureActivity() {
                     var lastPctSeen = 0
                     val uploadWatchdog = lifecycleScope.launch {
                         delay(UPLOAD_HANG_CRASH_MS)
-                        throw RuntimeException(
-                            "ATRUM_UPLOAD_HANG_DEBUG file=$imageFileName lastPct=$lastPctSeen " +
+                        // Зависла — переводим в ошибку МЯГКО (часики → крестик), не крашим
+                        // приложение (краш при сбое отправки запрещён, см. CLAUDE.md).
+                        android.util.Log.e("AtrumUpload",
+                            "UPLOAD_HANG file=$imageFileName lastPct=$lastPctSeen " +
                             "useTor=${transport.useTor} relays=${com.atrum.chat.transport.NostrTransport.relayCount()} " +
-                            "elapsedMs=$UPLOAD_HANG_CRASH_MS — заливка одиночного фото зависла"
-                        )
+                            "elapsedMs=$UPLOAD_HANG_CRASH_MS — заливка одиночного фото зависла")
+                        chatStore.failSend(encryptedMessage)
+                        Toast.makeText(this@ChatActivity,
+                            getString(R.string.error_send) + "\n" + getString(R.string.error_upload_timeout),
+                            Toast.LENGTH_LONG).show()
                     }
                     try {
                         val encryptedImage = withContext(Dispatchers.Default) {
@@ -3125,7 +3624,7 @@ class ChatActivity : SecureActivity() {
                     timestampMs    = now
                 )
                 val encryptedMessage = withContext(Dispatchers.Default) {
-                    CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.chatId)
+                    encryptChatLine(plaintext, chat.chatId)
                 }
                 tempEncrypted = encryptedMessage
 
@@ -3177,11 +3676,16 @@ class ChatActivity : SecureActivity() {
                 // не был проглочен catch(Exception) ниже.
                 uploadWatchdog = lifecycleScope.launch {
                     delay(UPLOAD_HANG_CRASH_MS)
-                    throw RuntimeException(
-                        "ATRUM_UPLOAD_HANG_DEBUG collage=${imageFileNames.size} lastPct=$lastPctSeen " +
+                    // Зависла — переводим в ошибку МЯГКО (часики → крестик), не крашим
+                    // приложение (краш при сбое отправки запрещён, см. CLAUDE.md).
+                    android.util.Log.e("AtrumUpload",
+                        "UPLOAD_HANG collage=${imageFileNames.size} lastPct=$lastPctSeen " +
                         "useTor=${transport.useTor} relays=${com.atrum.chat.transport.NostrTransport.relayCount()} " +
-                        "elapsedMs=$UPLOAD_HANG_CRASH_MS — заливка коллажа зависла"
-                    )
+                        "elapsedMs=$UPLOAD_HANG_CRASH_MS — заливка коллажа зависла")
+                    tempEncrypted?.let { chatStore.failSend(it) }
+                    Toast.makeText(this@ChatActivity,
+                        getString(R.string.error_send) + "\n" + getString(R.string.error_upload_timeout),
+                        Toast.LENGTH_LONG).show()
                 }
 
                 // 4. Отправляем сообщение и все изображения ОДНИМ запросом (Batch PATCH)
@@ -3520,36 +4024,42 @@ class ChatActivity : SecureActivity() {
             quotedText = msg.quotedText,
             timestampMs = msg.timestampMs
         )
-        val newEncrypted = CryptoHelper.encrypt(plaintext, chat.chatPassword, chat.chatId)
-
-        // Создаем "оптимистичную" версию сообщения для немедленного обновления в UI
-        val pendingEdit = msg.copy(
-            text = newText,
-            rawEncrypted = newEncrypted,
-            isPending = true,
-            replacingId = msg.msgId
-        )
-        chatStore.addOptimistic(pendingEdit)
-        // Мгновенно снимаем "часы" (как у обычной отправки, §1.5): НЕ ждём сетевой
-        // round-trip через Tor + кворум реле, иначе правка висит "в ожидании" секундами.
-        // reconcile позже бесшовно заменит pending серверной строкой (совпадение rawEncrypted).
-        chatStore.confirmSent(newEncrypted)
-
-        // PatchQueue.ReplaceLine: сериализуется с остальными PATCH-операциями. Сеть — в фоне.
-        patchQueue.enqueue(PatchQueue.Action.ReplaceLine(
-            oldLine  = msg.rawEncrypted,
-            newLine  = newEncrypted,
-            onResult = { ok ->
-                if (!ok) {
-                    // Ошибка отправки: откатываем правку — вернётся оригинал.
-                    chatStore.dropPending(newEncrypted)
-                    Toast.makeText(this@ChatActivity,
-                        getString(R.string.error_message_not_found), Toast.LENGTH_SHORT).show()
-                }
-                // Сбрасываем кэш для SyncEngine
-                lastContent = ""
+        // Argon2id (V5-фоллбэк до рукопожатия в 1:1) может быть тяжёлым — считаем ВНЕ
+        // главного потока (см. encryptChatLine), как и в sendMessage/sendVoice/sendImage.
+        lifecycleScope.launch {
+            val newEncrypted = withContext(Dispatchers.Default) {
+                encryptChatLine(plaintext, chat.chatId)
             }
-        ))
+
+            // Создаем "оптимистичную" версию сообщения для немедленного обновления в UI
+            val pendingEdit = msg.copy(
+                text = newText,
+                rawEncrypted = newEncrypted,
+                isPending = true,
+                replacingId = msg.msgId
+            )
+            chatStore.addOptimistic(pendingEdit)
+            // Мгновенно снимаем "часы" (как у обычной отправки, §1.5): НЕ ждём сетевой
+            // round-trip через Tor + кворум реле, иначе правка висит "в ожидании" секундами.
+            // reconcile позже бесшовно заменит pending серверной строкой (совпадение rawEncrypted).
+            chatStore.confirmSent(newEncrypted)
+
+            // PatchQueue.ReplaceLine: сериализуется с остальными PATCH-операциями. Сеть — в фоне.
+            patchQueue.enqueue(PatchQueue.Action.ReplaceLine(
+                oldLine  = msg.rawEncrypted,
+                newLine  = newEncrypted,
+                onResult = { ok ->
+                    if (!ok) {
+                        // Ошибка отправки: откатываем правку — вернётся оригинал.
+                        chatStore.dropPending(newEncrypted)
+                        Toast.makeText(this@ChatActivity,
+                            getString(R.string.error_message_not_found), Toast.LENGTH_SHORT).show()
+                    }
+                    // Сбрасываем кэш для SyncEngine
+                    lastContent = ""
+                }
+            ))
+        }
     }
 
     private fun confirmDelete(msg: Message) {
@@ -3701,6 +4211,7 @@ class ChatActivity : SecureActivity() {
             WarningType.FORWARD_SECRECY -> getString(R.string.warn_fs_title)        to getString(R.string.warn_fs_message)
             WarningType.TOR             -> getString(R.string.warn_tor_title)       to getString(R.string.warn_tor_message)
             WarningType.STICKER_ANIM    -> getString(R.string.warn_sticker_title)   to getString(R.string.warn_sticker_message)
+            WarningType.GROUP_PENDING   -> getString(R.string.warn_group_pending_title) to getString(R.string.warn_group_pending_message)
         }
         binding.tvWarningTitle.text = title
         binding.tvWarningMessage.text = message

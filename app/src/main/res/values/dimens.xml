@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Базовые (компактные) размеры — применяются на ЛЮБОМ экране по умолчанию,
+        включая маленькие/старые телефоны (720x1280 и меньше). Для экранов с
+        smallest-width >= 400dp есть более просторный вариант в values-sw400dp/dimens.xml
+        (обычные современные телефоны). Правило: узкий бакет — единственная гарантия
+        "поместится куда угодно" (см. CLAUDE.md, задача про адаптацию под старые телефоны).
+    -->
+
+    <!-- item_intro_page.xml — медальон-иконка онбординга -->
+    <dimen name="intro_medallion_size">104dp</dimen>
+    <dimen name="intro_medallion_icon_size">46dp</dimen>
+    <dimen name="intro_medallion_margin_bottom">20dp</dimen>
+    <dimen name="intro_title_size">21sp</dimen>
+    <dimen name="intro_subtitle_size">12sp</dimen>
+
+    <!-- activity_lock.xml -->
+    <dimen name="lock_icon_size">56dp</dimen>
+    <dimen name="lock_icon_margin_bottom">14dp</dimen>
+    <dimen name="lock_title_size">19sp</dimen>
+    <dimen name="lock_hint_margin_bottom">16dp</dimen>
+
+    <!-- activity_change_pin.xml (оба шага используют одни и те же имена) -->
+    <dimen name="pin_icon_size">56dp</dimen>
+    <dimen name="pin_icon_margin_bottom">14dp</dimen>
+    <dimen name="pin_title_size">20sp</dimen>
+    <dimen name="pin_hint_margin_bottom">16dp</dimen>
+    <dimen name="pin_field_gap">8dp</dimen>
+
+    <!-- activity_onboarding.xml (оба шага) -->
+    <dimen name="onboarding_title_size">21sp</dimen>
+    <dimen name="onboarding_hint_margin_bottom">18dp</dimen>
+    <dimen name="onboarding_field_gap">8dp</dimen>
+</resources>

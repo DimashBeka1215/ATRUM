@@ -44,6 +44,16 @@ object InviteCodec {
     /** Версия v1 — legacy plain base64 (только чтение). */
     private const val VERSION_LEGACY = "1"
 
+    /**
+     * Версия v4 — групповой чат (ADR-001, см. ADR_GROUP_CHATS.md). Тот же Argon2id-KDF,
+     * что и v3, дополнительно несёт userId администратора (нужен получателю ДО первого
+     * опроса реле, чтобы проверять подпись members.txt — см. NostrTransport.adminPubkeyHex)
+     * и лимит участников. groupNameSeed — начальное имя группы для мгновенного UI ДО
+     * первого members.txt (после первого опроса groupName/аватар синхронизируются из
+     * members.txt и становятся авторитетными — см. MembersSync).
+     */
+    private const val VERSION_GROUP = "4"
+
     /** Разделитель полей. Record Separator (0x1E) — в реальном тексте не встречается. */
     private const val SEP = ""
 
@@ -66,7 +76,15 @@ object InviteCodec {
     data class Decoded(
         val channelId: String,
         val transportToken: String,
-        val chatPassword: String
+        val chatPassword: String,
+        /** true — это приглашение в групповой чат (v4, ADR-001). */
+        val isGroup: Boolean = false,
+        /** userId администратора группы. Только для isGroup=true. */
+        val adminUserId: String? = null,
+        /** Лимит участников группы. null = без ограничений. Только для isGroup=true. */
+        val participantLimit: Int? = null,
+        /** Начальное имя группы (до первого members.txt). Только для isGroup=true. */
+        val groupNameSeed: String? = null
     )
 
     /**
@@ -87,6 +105,47 @@ object InviteCodec {
 
         val expiry = System.currentTimeMillis() + ttlMillis
         val payload = listOf(VERSION, channelId, transportToken, chatPassword, expiry.toString()).joinToString(SEP)
+        val salt = ByteArray(SALT_LEN).also { SecureRandom().nextBytes(it) }
+        val nonce = ByteArray(NONCE_LEN).also { SecureRandom().nextBytes(it) }
+        val key = deriveKeyArgon2(pin, salt)
+        try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
+            val ciphertext = cipher.doFinal(payload.toByteArray(Charsets.UTF_8))
+            val blob = salt + nonce + ciphertext
+            return "$PREFIX${Base64.encodeToString(blob, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)}"
+        } finally {
+            key.fill(0)
+        }
+    }
+
+    /**
+     * Кодирует данные ГРУППОВОГО чата в зашифрованную PIN-ом invite-строку (формат v4,
+     * ADR-001, см. ADR_GROUP_CHATS.md). Тот же Argon2id-KDF, что и [encode] — не меняет
+     * НИ БАЙТА в существующем 1:1-пути (см. VERSION_GROUP).
+     */
+    fun encodeGroup(
+        channelId: String,
+        transportToken: String,
+        chatPassword: String,
+        pin: String,
+        adminUserId: String,
+        participantLimit: Int?,
+        groupNameSeed: String,
+        ttlMillis: Long = DEFAULT_TTL_MS
+    ): String {
+        require(channelId.isNotBlank()) { "channelId is blank" }
+        require(transportToken.isNotBlank()) { "transportToken is blank" }
+        require(chatPassword.isNotBlank()) { "chatPassword is blank" }
+        require(pin.isNotBlank()) { "pin is blank" }
+        require(adminUserId.isNotBlank()) { "adminUserId is blank" }
+
+        val expiry = System.currentTimeMillis() + ttlMillis
+        val limitField = participantLimit?.toString() ?: "-1"
+        val payload = listOf(
+            VERSION_GROUP, channelId, transportToken, chatPassword, expiry.toString(),
+            adminUserId, limitField, groupNameSeed
+        ).joinToString(SEP)
         val salt = ByteArray(SALT_LEN).also { SecureRandom().nextBytes(it) }
         val nonce = ByteArray(NONCE_LEN).also { SecureRandom().nextBytes(it) }
         val key = deriveKeyArgon2(pin, salt)
@@ -133,14 +192,22 @@ object InviteCodec {
         for (candidate in pinCandidates) {
             if (candidate.isEmpty()) continue
 
-            // v3 — Argon2id
-            val v3 = tryGcmDecrypt(deriveKeyArgon2(candidate, salt), nonce, ciphertext)
-            if (v3 != null) {
-                val parts = v3.split(SEP)
+            // v3/v4 — один и тот же Argon2id-KDF, различаются по parts[0] уже ПОСЛЕ
+            // расшифровки (считаем ключ ОДИН раз на кандидата — Argon2id дорогой ~64МиБ,
+            // повторный вызов на v4 удвоил бы время подбора PIN без всякой пользы).
+            val argon2Decoded = tryGcmDecrypt(deriveKeyArgon2(candidate, salt), nonce, ciphertext)
+            if (argon2Decoded != null) {
+                val parts = argon2Decoded.split(SEP)
                 if (parts.size >= 5 && parts[0] == VERSION) {
                     val expiry = parts[4].toLongOrNull() ?: 0L
                     if (System.currentTimeMillis() > expiry) throw ExpiredException()
                     return validated(parts[1], parts[2], parts[3])
+                }
+                if (parts.size >= 8 && parts[0] == VERSION_GROUP) {
+                    val expiry = parts[4].toLongOrNull() ?: 0L
+                    if (System.currentTimeMillis() > expiry) throw ExpiredException()
+                    val limit = parts[6].toIntOrNull()?.takeIf { it > 0 }
+                    return validatedGroup(parts[1], parts[2], parts[3], parts[5], limit, parts[7])
                 }
             }
 
@@ -161,6 +228,26 @@ object InviteCodec {
     private fun validated(channelId: String, transportToken: String, chatPassword: String): Decoded? {
         if (channelId.isBlank() || transportToken.isBlank() || chatPassword.isBlank()) return null
         return Decoded(channelId, transportToken, chatPassword)
+    }
+
+    private fun validatedGroup(
+        channelId: String,
+        transportToken: String,
+        chatPassword: String,
+        adminUserId: String,
+        participantLimit: Int?,
+        groupNameSeed: String
+    ): Decoded? {
+        if (channelId.isBlank() || transportToken.isBlank() || chatPassword.isBlank() || adminUserId.isBlank()) return null
+        return Decoded(
+            channelId = channelId,
+            transportToken = transportToken,
+            chatPassword = chatPassword,
+            isGroup = true,
+            adminUserId = adminUserId,
+            participantLimit = participantLimit,
+            groupNameSeed = groupNameSeed.ifBlank { null }
+        )
     }
 
     /** GCM-дешифровка. Возвращает null если тег не сошёлся (неверный ключ). */

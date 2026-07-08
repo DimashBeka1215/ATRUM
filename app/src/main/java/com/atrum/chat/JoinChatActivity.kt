@@ -229,14 +229,141 @@ class JoinChatActivity : SecureActivity() {
 
             // 2. Подключение к транспорту: DHT (token=="dht") или legacy Gist.
             setProgress(getString(R.string.join_status_connecting))
+            val isTor = invite.transportToken != NostrTransport.NOSTR_DIRECT_TOKEN
             // Ленивый старт Tor, если путь чата — через Tor.
-            if (invite.transportToken != NostrTransport.NOSTR_DIRECT_TOKEN) TorManager.start(applicationContext)
+            if (isTor) {
+                TorManager.start(applicationContext)
+                // Взводим сторож синхронизации ПРЯМО в момент нажатия «Подключиться» — см.
+                // TorSyncWatchdog.kt. Отчёт (CrashActivity) придёт, если синхронизация этого
+                // чата не подтвердится ни разу за окно наблюдения, либо раньше — на любое
+                // отклонение от сценария (см. вызовы reportDeviation ниже).
+                TorSyncWatchdog.arm(applicationContext, invite.channelId)
+            }
             // Все чаты сейчас живут в Nostr. Путь (Tor/прямой) берём из токена приглашения.
+            // Групповой чат (ADR-001): передаём adminUserId — транспорту нужен ДО первого
+            // чтения, чтобы проверять подпись members.txt (см. NostrTransport.adminPubkeyHex).
             val transport: ChatTransport =
-                NostrTransport(
-                    invite.channelId, invite.chatPassword, prefs.myUserId,
-                    preferTor = invite.transportToken != NostrTransport.NOSTR_DIRECT_TOKEN
+                if (invite.isGroup) {
+                    NostrTransport(
+                        invite.channelId, invite.chatPassword, prefs.myUserId,
+                        preferTor = isTor, adminUserId = invite.adminUserId
+                    )
+                } else {
+                    NostrTransport(
+                        invite.channelId, invite.chatPassword, prefs.myUserId,
+                        preferTor = isTor
+                    )
+                }
+
+            // ── Групповой чат (ADR-001) — отдельная ветка, полностью решающая свою часть
+            // подключения (проверка бана/лимита, локальная запись, открытие чата) и
+            // возвращающая управление ДО существующего 1:1-пути ниже. Существующий 1:1-код
+            // (шаги 3-6) не тронут ни строкой — он рассчитан ровно на двух участников и
+            // не должен исполняться для групп.
+            if (invite.isGroup) {
+                val myUserId = prefs.myUserId
+
+                setProgress(getString(R.string.join_status_verifying))
+                val allData = withContext(Dispatchers.IO) {
+                    try {
+                        transport.loadAll()
+                    } catch (e: Throwable) {
+                        if (isTor) {
+                            TorSyncWatchdog.reportDeviation(
+                                applicationContext, invite.channelId, "JoinChatActivity.loadAll(group)", e
+                            )
+                        }
+                        null
+                    }
+                }
+                val membersParsed = allData?.membersContent
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { CryptoHelper.decrypt(it, invite.chatPassword, invite.channelId) }
+                    ?.let { MembersSync.parse(it) }
+
+                if (membersParsed != null) {
+                    // members.txt уже есть (админ его публиковал) — источник истины.
+                    val myEntry = membersParsed.participants.firstOrNull { it.userId == myUserId }
+                    if (myEntry?.banned == true) {
+                        showError(getString(R.string.join_err_banned))
+                        return
+                    }
+                    val activeCount = membersParsed.participants.count { !it.banned }
+                    val limit = invite.participantLimit
+                    if (myEntry == null && limit != null && activeCount >= limit) {
+                        showError(getString(R.string.join_err_group_full))
+                        return
+                    }
+                } else {
+                    // members.txt ещё не долетело (задержка реле) — приближённая проверка
+                    // по profiles.txt. Best-effort, не криптографическое принуждение —
+                    // см. ADR_GROUP_CHATS.md, тот же уровень доверия, что у самого инвайта.
+                    val profilesMap = withContext(Dispatchers.IO) {
+                        try {
+                            ProfileSync.pullProfiles(transport, invite.chatPassword)
+                        } catch (_: Throwable) {
+                            emptyMap()
+                        }
+                    }
+                    val limit = invite.participantLimit
+                    if (!profilesMap.containsKey(myUserId) && limit != null && profilesMap.size >= limit) {
+                        showError(getString(R.string.join_err_group_full))
+                        return
+                    }
+                }
+
+                setProgress(getString(R.string.join_status_saving))
+                @Suppress("DEPRECATION")
+                val groupChat = Chat(
+                    chatId = invite.channelId,
+                    transportToken = "",
+                    chatPassword = "",
+                    // partnerName — легаси-поле для экранов, ещё не переведённых на groupName.
+                    partnerName = invite.groupNameSeed?.takeIf { it.isNotBlank() }
+                        ?: getString(R.string.cc_group_default_name),
+                    lastMessage = "",
+                    lastTimeMs = System.currentTimeMillis(),
+                    isGroup = true,
+                    participantLimit = invite.participantLimit,
+                    adminUserId = invite.adminUserId,
+                    groupName = invite.groupNameSeed
                 )
+                prefs.saveChatSecrets(invite.channelId, invite.transportToken, invite.chatPassword)
+                val newGroupChatId = withContext(Dispatchers.IO) { db.chatDao().insert(groupChat) }
+
+                // Уже полученный members.txt применяем сразу — мгновенный список участников
+                // без ожидания следующего опроса (§1.5 CLAUDE.md — всё грузится на месте).
+                if (allData != null && allData.membersContent.isNotBlank()) {
+                    withContext(Dispatchers.IO) {
+                        try {
+                            val freshChat = db.chatDao().getById(newGroupChatId)
+                            if (freshChat != null) {
+                                MembersSync.applyIncoming(
+                                    freshChat, allData.membersContent, invite.chatPassword,
+                                    db.chatParticipantDao(), db.chatDao()
+                                )
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+
+                // Публикуем свой профиль в фоне — сигнал админу "я здесь". Само добавление
+                // в members.txt делает клиент админа при следующем опросе (см. ChatActivity).
+                val myGroupProfile = Profile(
+                    userId = prefs.myUserId,
+                    name = prefs.myName,
+                    tag = prefs.myTag,
+                    avatarBase64 = prefs.myAvatarBase64
+                )
+                AppScope.launch {
+                    try {
+                        ProfileSync.pushMyProfile(transport, invite.chatPassword, myGroupProfile)
+                    } catch (_: Exception) {}
+                }
+
+                openChat(newGroupChatId)
+                return
+            }
 
             // 3. Проверка "чат уже занят" — фетчим profiles.txt, если там 2+ профиля
             // и моего userId среди них нет, отказываем (чат рассчитан на двоих).
@@ -244,7 +371,12 @@ class JoinChatActivity : SecureActivity() {
             val profilesMap = withContext(Dispatchers.IO) {
                 try {
                     ProfileSync.pullProfiles(transport, invite.chatPassword)
-                } catch (_: Throwable) {
+                } catch (e: Throwable) {
+                    if (isTor) {
+                        TorSyncWatchdog.reportDeviation(
+                            applicationContext, invite.channelId, "JoinChatActivity.pullProfiles", e
+                        )
+                    }
                     emptyMap()
                 }
             }
@@ -254,6 +386,9 @@ class JoinChatActivity : SecureActivity() {
             // Показываем аватарку и имя собеседника, если нашли
             val partnerProfileFound = profilesMap.values.firstOrNull { it.userId != myUserId }
             if (partnerProfileFound != null) {
+                if (isTor) {
+                    TorSyncWatchdog.disarm(invite.channelId, "партнёр найден при первом pullProfiles (JoinChatActivity)")
+                }
                 withContext(Dispatchers.Main) {
                     showPartnerInfo(partnerProfileFound)
                 }
@@ -297,14 +432,29 @@ class JoinChatActivity : SecureActivity() {
             )
             AppScope.launch {
                 try {
-                    ProfileSync.pushMyProfile(transport, invite.chatPassword, myProfile)
-                } catch (_: Throwable) {}
+                    val ok = ProfileSync.pushMyProfile(transport, invite.chatPassword, myProfile)
+                    if (!ok && isTor) {
+                        // ProfileSync.lastError — реальная причина, проглоченная внутри
+                        // pushMyProfile (см. ProfileSync.kt). Читаем сразу после false —
+                        // безопасно, см. doc-comment lastError.
+                        val cause = ProfileSync.lastError
+                            ?: IllegalStateException("pushMyProfile вернул false, но lastError пуст")
+                        TorSyncWatchdog.reportDeviation(applicationContext, invite.channelId, "JoinChatActivity.pushMyProfile", cause)
+                    }
+                } catch (e: Throwable) {
+                    if (isTor) {
+                        TorSyncWatchdog.reportDeviation(applicationContext, invite.channelId, "JoinChatActivity.pushMyProfile", e)
+                    }
+                }
             }
 
             // 6. Открываем чат сразу
             openChat(newChatId)
         } catch (e: Throwable) {
             if (e is kotlinx.coroutines.CancellationException) return
+            if (invite.transportToken != NostrTransport.NOSTR_DIRECT_TOKEN) {
+                TorSyncWatchdog.reportDeviation(applicationContext, invite.channelId, "JoinChatActivity.runConnect", e)
+            }
             showError(mapError(e))
         }
     }

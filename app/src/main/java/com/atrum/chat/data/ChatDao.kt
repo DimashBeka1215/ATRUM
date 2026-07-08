@@ -71,4 +71,17 @@ interface ChatDao {
 
     @Query("UPDATE chats SET partnerEphemeralPubKeyB64 = :pub WHERE id = :id")
     suspend fun updatePartnerEphemeralKey(id: Long, pub: String?)
+
+    // ─── Групповые чаты (ADR-001) ───────────────────────────────────────────────
+
+    /** Поиск локальной записи чата по сетевому channelId (нужно в SyncEngine при разборе members.txt). */
+    @Query("SELECT * FROM chats WHERE channelId = :chatId LIMIT 1")
+    suspend fun getByChatId(chatId: String): Chat?
+
+    @Query("UPDATE chats SET groupName = :name, groupAvatarBase64 = :avatar, groupDescription = :description WHERE id = :id")
+    suspend fun updateGroupProfile(id: Long, name: String?, avatar: String?, description: String?)
+
+    /** Обновляет версию members.txt только если новая версия строго больше — анти-откат. */
+    @Query("UPDATE chats SET membersVersion = :version WHERE id = :id AND membersVersion < :version")
+    suspend fun updateMembersVersionIfNewer(id: Long, version: Int)
 }

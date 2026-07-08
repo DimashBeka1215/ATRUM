@@ -14,6 +14,21 @@ class ChatStore {
     var lastRemote: List<Message> = emptyList()
         private set
 
+    /**
+     * Локальные системные сообщения (Message.isSystem) — «X присоединился к чату» и т.п.
+     * НЕ проходят через pendingByRaw/reconcile (не шифруются, не синкаются, rawEncrypted
+     * пустой — не участвуют в дедупе по rawEncrypted). Живут только в памяти этой сессии;
+     * при следующем открытии чата (новый ChatStore) список пуст — событие уже случилось.
+     */
+    private val systemMessages = mutableListOf<Message>()
+
+    /** Добавляет локальное системное сообщение и сразу эмитит новое состояние (§1.5). */
+    fun addSystemMessage(msg: Message) {
+        require(msg.isSystem) { "addSystemMessage requires isSystem=true" }
+        systemMessages.add(msg)
+        emit()
+    }
+
     fun addOptimistic(msg: Message) {
         require(msg.isPending) { "addOptimistic requires isPending=true" }
         require(msg.rawEncrypted.isNotBlank()) { "addOptimistic requires non-blank rawEncrypted" }
@@ -78,15 +93,20 @@ class ChatStore {
         if (pendingByRaw.remove(encryptedLine) != null) emit()
     }
 
+    /**
+     * Помечает pending-сообщение как окончательно провалившееся: часики → значок ошибки,
+     * сообщение ОСТАЁТСЯ в ленте (см. Message.isFailed). Раньше вызывающий код в некоторых
+     * местах вызывал dropPending() вместо этого — сообщение бесследно исчезало, что
+     * противоречит правилу проекта («часики → ошибка», никогда не бесследно). Теперь это
+     * единственный правильный способ пометить провал отправки текста/фото/голоса.
+     */
     fun failSend(encryptedLine: String) {
         val m = pendingByRaw[encryptedLine] ?: return
         // ⚠️ ФИКС (тот же класс бага, что с !isConfirmed в MessageAdapter): при сбое
         // заливки кольцо прогресса иначе остаётся висеть на последнем % навсегда —
         // isPending остаётся true, а imageUploadPct никто не сбрасывает. index=-1 не
         // совпадает ни с одной ячейкой/фото → MessageAdapter скрывает кольцо.
-        if (m.imageUploadIndex != -1) {
-            pendingByRaw[encryptedLine] = m.copy(imageUploadIndex = -1)
-        }
+        pendingByRaw[encryptedLine] = m.copy(imageUploadIndex = -1, isFailed = true)
         emit()
     }
 
@@ -182,7 +202,10 @@ class ChatStore {
             }
         }
 
-        return result
+        if (systemMessages.isEmpty()) return result
+        // Системные сообщения вклиниваются по месту (timestamp) — не просто в хвост,
+        // иначе «присоединился» окажется под более новыми серверными сообщениями.
+        return (result + systemMessages).sortedBy { it.timestampMs }
     }
 
     private fun emit() {

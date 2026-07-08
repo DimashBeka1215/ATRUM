@@ -103,3 +103,25 @@
 # JNI-классы вызываются нативной либой по имени — сохраняем целиком.
 -keep class com.k2fsa.sherpa.onnx.** { *; }
 -dontwarn com.k2fsa.sherpa.onnx.**
+
+# ── tor-android (Guardian Project) — Фаза 1/2, TOR_BRIDGES_CONTINUE.md ───────
+# ⚠️ НАЙДЕНО НА УСТРОЙСТВЕ: без этого правила краш на реальном тесте —
+# java.lang.NoSuchFieldError: no "J" field "torConfiguration" in class
+# "Lorg/torproject/jni/TorService;". Причина: нативный код tor-android достаёт
+# поля/методы TorService по ИМЕНИ через JNI (как sherpa-onnx выше) — R8 не видит
+# эти строковые обращения из нативного кода и переименовывает/выпиливает поле
+# как "неиспользуемое". Сохраняем целиком, как kmp-tor/sherpa-onnx.
+-keep class org.torproject.jni.** { *; }
+-dontwarn org.torproject.jni.**
+
+# ── jtorctl (control-port клиент для tor-android) ────────────────────────────
+-keep class net.freehaven.tor.control.** { *; }
+-dontwarn net.freehaven.tor.control.**
+
+# ── IPtProxy (Фаза 2 — Snowflake/obfs4 через gomobile) ───────────────────────
+# Тот же класс проблемы: gomobile-сгенерированный нативный код (Go) обращается
+# к Java-классам биндинга по имени/сигнатуре — превентивно сохраняем целиком,
+# не дожидаясь такого же NoSuchFieldError/NoSuchMethodError при реальном тесте
+# Snowflake/obfs4.
+-keep class IPtProxy.** { *; }
+-dontwarn IPtProxy.**

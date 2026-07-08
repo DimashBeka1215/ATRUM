@@ -170,6 +170,8 @@ class MessageAdapter(
     companion object {
         private const val TYPE_SELF = 1
         private const val TYPE_OTHER = 2
+        /** Локальное системное сообщение (см. Message.isSystem) — без пузырька/медиа/реакций. */
+        private const val TYPE_SYSTEM = 3
 
         /** payload для точечного апдейта кольца прогресса заливки (без ребайнда фото). */
         val PAYLOAD_PROGRESS = Any()
@@ -309,11 +311,21 @@ class MessageAdapter(
         return if (w >= n) messages else messages.subList(n - w, n)
     }
 
-    override fun getItemViewType(position: Int): Int =
-        if (effectiveList()[position].isSelf) TYPE_SELF else TYPE_OTHER
+    override fun getItemViewType(position: Int): Int {
+        val msg = effectiveList()[position]
+        return when {
+            msg.isSystem -> TYPE_SYSTEM
+            msg.isSelf -> TYPE_SELF
+            else -> TYPE_OTHER
+        }
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-        val layoutId = if (viewType == TYPE_SELF) R.layout.item_message_self else R.layout.item_message_other
+        val layoutId = when (viewType) {
+            TYPE_SELF -> R.layout.item_message_self
+            TYPE_SYSTEM -> R.layout.item_message_system
+            else -> R.layout.item_message_other
+        }
         val view = LayoutInflater.from(parent.context).inflate(layoutId, parent, false)
         return VH(view, { imageLoader }, loadScope, onCollageImageClick)
     }
@@ -443,6 +455,18 @@ class MessageAdapter(
         /** The rounded bubble container — background changes between classic and glass modes. */
         private val bubbleContainer: View? = itemView.findViewById(R.id.bubble_container)
 
+        /**
+         * Локальное системное сообщение — облегчённый рендер без пузырька/медиа/реакций.
+         * itemView в этом случае инфлейтится из item_message_system.xml, где кроме
+         * tv_text/tv_time других id нет — остальные findViewById() в конструкторе VH
+         * (senderView, imageView, voiceContainer и т.д.) безопасно резолвятся в null.
+         */
+        private fun bindSystem(msg: Message) {
+            textView.text = msg.text
+            itemView.isClickable = false
+            itemView.isLongClickable = false
+        }
+
         fun resumeSticker() {
             lottieView?.takeIf { it.visibility == View.VISIBLE && !BatteryUtils.freezeStickers(itemView.context) }?.resumeAnimation()
             webmView?.takeIf { it.visibility == View.VISIBLE }?.resume()
@@ -477,6 +501,11 @@ class MessageAdapter(
             bubbleAlphaSelf: Float = 1.0f,
             bubbleAlphaOther: Float = 1.0f
         ) {
+            if (msg.isSystem) {
+                bindSystem(msg)
+                return
+            }
+
             senderView?.let {
                 if (msg.sender.isNotBlank()) {
                     it.text = msg.sender
@@ -835,11 +864,15 @@ class MessageAdapter(
             return "%d:%02d".format(s / 60, s % 60)
         }
 
-        private suspend fun loadVoiceFile(loader: ImageLoader, ref: String): File? {
+        private suspend fun loadVoiceFile(
+            loader: ImageLoader,
+            ref: String,
+            onChunkProgress: ((current: Int, total: Int) -> Unit)? = null
+        ): File? {
             val dir = File(itemView.context.cacheDir, "voice_play").apply { mkdirs() }
             val f = File(dir, "v_" + Integer.toHexString(ref.hashCode()) + ".m4a")
             if (f.exists() && f.length() > 0) return f
-            val bytes = loader.loadRawBytes(ref) ?: return null
+            val bytes = loader.loadRawBytes(ref, onChunkProgress) ?: return null
             return try { f.writeBytes(bytes); f } catch (_: Exception) { null }
         }
 
@@ -960,12 +993,18 @@ class MessageAdapter(
 
             // Цвета дорожки под свой/чужой пузырёк.
             if (msg.isSelf) {
-                voiceWaveform?.setColors(ContextCompat.getColor(ctx, R.color.white), 0x66FFFFFF)
+                // Пузырёк своего сообщения (msg_self) — тёмный в обеих темах (см. CLAUDE.md
+                // §5), поэтому статичные оттенки белого безопасны в любом режиме.
+                voiceWaveform?.setColors(ContextCompat.getColor(ctx, R.color.white), 0x66FFFFFF, 0xB3FFFFFF.toInt())
             } else {
-                voiceWaveform?.setColors(
-                    ContextCompat.getColor(ctx, R.color.accent),
-                    ContextCompat.getColor(ctx, R.color.text_tertiary)
-                )
+                // msg_other СВЕТЛЫЙ в светлой теме (#E5E5EA) и ТЁМНЫЙ в тёмной (#141414) —
+                // готовый accent_light/accent_dark не подходит НИ ОДИН из них сразу для обеих
+                // тем (accent_light сливается со светлым пузырьком, accent_dark — с тёмным).
+                // Смешиваем accent с уже теми-зависимым text_tertiary — контраст получается
+                // приемлемым в обоих режимах, без хардкода нового hex (см. CLAUDE.md §4/§5.1).
+                val accentColor = ContextCompat.getColor(ctx, R.color.accent)
+                val tertiaryColor = ContextCompat.getColor(ctx, R.color.text_tertiary)
+                voiceWaveform?.setColors(accentColor, tertiaryColor, blendColors(accentColor, tertiaryColor, 0.5f))
             }
             val rawLevels = msg.voiceWaveform?.takeIf { it.isNotEmpty() }?.let { Message.decodeWaveform(it) }
                 ?: IntArray(24) { 28 }
@@ -981,10 +1020,21 @@ class MessageAdapter(
                 wv.setSamples(downsampleWaveform(rawLevels, barCount))
             }
 
+            // Раньше на время загрузки дорожка целиком гасла до 40% альфы, а маленький
+            // спиннер крутился в углу — снаружи выглядело как «всё одинаково грузится»,
+            // не видно прогресса (жалоба пользователя). Теперь дорожка остаётся видимой
+            // и сама показывает, сколько уже скачано (buffered-цвет, см. WaveformView) —
+            // маленький спиннер в кружке play остаётся только как знак «ещё нельзя нажать».
             fun showLoading(loading: Boolean) {
                 voiceSpinner?.visibility = if (loading) View.VISIBLE else View.GONE
                 playBtn.visibility = if (loading) View.INVISIBLE else View.VISIBLE
-                voiceWaveform?.alpha = if (loading) 0.4f else 1f
+                if (loading) voiceWaveform?.setBufferProgress(0f) else voiceWaveform?.setBufferProgress(1f)
+            }
+
+            val bufferCb: (Int, Int) -> Unit = { cur, tot ->
+                if (playBtn.tag == key && tot > 0) {
+                    voiceWaveform?.setBufferProgress(cur.toFloat() / tot)
+                }
             }
 
             val progressCb: (String, Int, Int) -> Unit = { k, pos, dur ->
@@ -1039,7 +1089,7 @@ class MessageAdapter(
                 val scope = loadScope
                 if (loader != null && scope != null) {
                     scope.launch {
-                        val file = withContext(Dispatchers.IO) { loadVoiceFile(loader, ref) }
+                        val file = withContext(Dispatchers.IO) { loadVoiceFile(loader, ref, bufferCb) }
                         // НЕ зависаем в вечной загрузке: после фоновой попытки (loadVoiceFile
                         // сам ретраит ~5 раз) всегда убираем спиннер и показываем play. Если
                         // файл не загрузился (чанки временно/совсем недоступны на реле) — тап
@@ -1063,7 +1113,7 @@ class MessageAdapter(
                 loader.forget(ref)
                 showLoading(true)
                 scope.launch {
-                    val file = withContext(Dispatchers.IO) { loadVoiceFile(loader, ref) }
+                    val file = withContext(Dispatchers.IO) { loadVoiceFile(loader, ref, bufferCb) }
                     if (playBtn.tag != key) return@launch
                     showLoading(false)
                     if (file == null) {
@@ -1441,6 +1491,16 @@ class MessageAdapter(
 
 
 /** Прореживает огибающую до target столбиков (пик в каждой корзине) — для ширины дорожки ∝ длительности. */
+private fun blendColors(a: Int, b: Int, ratio: Float): Int {
+    val r = ratio.coerceIn(0f, 1f)
+    val ar = (a shr 16) and 0xFF; val ag = (a shr 8) and 0xFF; val ab = a and 0xFF
+    val br = (b shr 16) and 0xFF; val bg = (b shr 8) and 0xFF; val bb = b and 0xFF
+    val outR = (ar + (br - ar) * r).toInt().coerceIn(0, 255)
+    val outG = (ag + (bg - ag) * r).toInt().coerceIn(0, 255)
+    val outB = (ab + (bb - ab) * r).toInt().coerceIn(0, 255)
+    return (0xFF shl 24) or (outR shl 16) or (outG shl 8) or outB
+}
+
 private fun downsampleWaveform(src: IntArray, target: Int): IntArray {
     if (src.isEmpty() || target <= 0) return src
     if (src.size <= target) return src

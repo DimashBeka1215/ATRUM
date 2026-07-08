@@ -50,6 +50,14 @@ data class Message(
     /** true если транспорт подтвердил доставку, но мы еще не увидели сообщение в опросе. */
     val isConfirmed: Boolean = false,
     /**
+     * true = отправка окончательно провалилась (все ретраи MessageSendManager исчерпаны,
+     * либо заливка фото/голоса упала) — часики сменяются на значок ошибки, сообщение
+     * ОСТАЁТСЯ видимым (см. ChatStore.failSend). Раньше такие сообщения тихо удалялись
+     * (dropPending) — не по правилам проекта («часики → ошибка», не бесследное исчезновение).
+     * Как и isPending/isConfirmed — только в памяти, никогда не синкается/не сохраняется.
+     */
+    val isFailed: Boolean = false,
+    /**
      * Прогресс отправки голосового (только UI, не синкается, не сохраняется на реле):
      * VP_NONE — обычное состояние; VP_PROCESSING — идёт шумодав/кодек (неопредел. кольцо);
      * 0..100 — процент загрузки. Сбрасывается после подтверждения отправки.
@@ -63,7 +71,14 @@ data class Message(
      * ID сообщения, которое это (pending) сообщение должно заменить в UI.
      * Используется для редактирования «на месте» без мерцания.
      */
-    val replacingId: String? = null
+    val replacingId: String? = null,
+    /**
+     * true = локальное системное сообщение (например «X присоединился к чату»).
+     * Как и isPending/isFailed — ТОЛЬКО в памяти, никогда не шифруется, не синкается,
+     * не сохраняется в NostrMessageStore/на реле. Рендерится отдельной облегчённой
+     * веткой в MessageAdapter (без пузырька/реакций/медиа) — см. TYPE_SYSTEM.
+     */
+    val isSystem: Boolean = false
 ) {
     val isReply: Boolean get() = quotedSender != null
     /** Стабильный уникальный ключ сообщения для режима выбора. */
@@ -407,5 +422,18 @@ data class Message(
             val rand = java.util.UUID.randomUUID().toString().replace("-", "").take(8)
             return "${IMG_FILENAME_PREFIX}${now}_${rand}.txt"
         }
+
+        /**
+         * Локальное системное сообщение (например «X присоединился к чату»).
+         * Не шифруется, не публикуется — см. isSystem. msgId стабилен по timestamp+тексту,
+         * чтобы повторный вызов (например, при пересборке списка) не плодил дублей визуально.
+         */
+        fun system(text: String, timestampMs: Long = System.currentTimeMillis()): Message = Message(
+            sender = "",
+            text = text,
+            isSelf = false,
+            timestampMs = timestampMs,
+            isSystem = true
+        )
     }
 }

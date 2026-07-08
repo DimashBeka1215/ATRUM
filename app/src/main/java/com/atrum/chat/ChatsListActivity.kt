@@ -20,6 +20,7 @@ import com.atrum.chat.transport.BluetoothTransport
 import com.atrum.chat.transport.NostrTransport
 import com.atrum.chat.transport.TransportFactory
 import com.atrum.chat.data.Chat
+import com.atrum.chat.data.displayName
 import com.atrum.chat.databinding.ActivityChatsListBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -298,11 +299,18 @@ class ChatsListActivity : SecureActivity() {
         if (profileBusy.putIfAbsent(chatId, true) != null) return
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                val fresh = db.chatDao().getById(chatId)
+                // Групповой чат: у него нет одного "партнёра" — findPartner() ниже
+                // подобрал бы СЛУЧАЙНОГО участника и затёр бы partnerName/avatarBase64
+                // его личными данными (это и было причиной бага "не подхватывается
+                // переименование группы в списке чатов" — см. ChatsAdapter.displayName()
+                // и §16 CLAUDE.md). Для групп имя/аватар идут только через members.txt
+                // (см. MembersSync/ChatDao.updateGroupProfile), тут делать нечего.
+                if (fresh?.isGroup == true) return@launch
                 val parsed = ProfileSync.parseProfiles(content, password, api.chatId)
                 if (parsed.isNotEmpty()) {
                     val all = ProfileSync.unionAndRemember(api.chatId, parsed)
                     val partner = ProfileSync.findPartner(all, prefs.myUserId, prefs.myName)
-                    val fresh = db.chatDao().getById(chatId)
                     if (partner != null && fresh != null && partner.name.isNotBlank() &&
                         (partner.name != fresh.partnerName || partner.tag != fresh.partnerTag ||
                             partner.avatarBase64 != fresh.partnerAvatarBase64)) {
@@ -340,7 +348,7 @@ class ChatsListActivity : SecureActivity() {
     private fun applySearchFilter(query: String) {
         adapter.submitFiltered(allChats, query)
         val filtered = if (query.isBlank()) allChats
-                       else allChats.filter { it.partnerName.contains(query.trim(), ignoreCase = true) }
+                       else allChats.filter { it.displayName().contains(query.trim(), ignoreCase = true) }
         val noChats = allChats.isEmpty() && !isSearchActive
         val noResults = isSearchActive && filtered.isEmpty()
         binding.emptyState.visibility = if (noChats) View.VISIBLE else View.GONE
@@ -472,8 +480,17 @@ class ChatsListActivity : SecureActivity() {
                 val lines = content.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
                 val totalLines = lines.size
 
-                // В параллель: подтянуть профиль собеседника
-                val partnerEphPub = withContext(Dispatchers.IO) {
+                // В параллель: подтянуть профиль собеседника.
+                // ⚠️ ТОЛЬКО для 1:1 — у группового чата нет одного "партнёра".
+                // findPartner() подобрал бы СЛУЧАЙНОГО участника группы и затёр бы
+                // chat.partnerName/partnerAvatarBase64/partnerLastReadIndex/partnerDeleted
+                // его личными данными на каждом фоновом опросе — это и было причиной
+                // бага "переименование/смена авы группы не видны в списке чатов"
+                // (см. ChatsAdapter → Chat.displayName()/displayAvatarBase64(), §16 CLAUDE.md).
+                // Для групп имя/аватар идут только через members.txt, а FS-сессия не
+                // используется вовсе (см. ADR_GROUP_CHATS.md) — партнёрский блок тут
+                // просто пропускается.
+                val partnerEphPub = if (chat.isGroup) null else withContext(Dispatchers.IO) {
                     // Фаза 1: union всех слотов profiles.txt (за флагом) — надёжный аватар/ник.
                     val parsedProfiles = if (ChatActivity.SLOT_UNION_PROFILES && all.profileSlots.isNotEmpty())
                         ProfileSync.unionProfileSlots(all.profileSlots, chatPassword, api.chatId)
@@ -504,6 +521,29 @@ class ChatsListActivity : SecureActivity() {
                         if (!partner.ephemeralPubKey.isNullOrBlank()) ephPub = partner.ephemeralPubKey
                     }
                     ephPub
+                }
+
+                // Групповой чат: имя/аватар/описание/список участников идут ТОЛЬКО через
+                // members.txt (см. комментарий выше про findPartner). Баг, найденный
+                // пользователем: до этого фикса синхронизация members.txt была завязана
+                // ИСКЛЮЧИТЕЛЬНО на открытый ChatActivity + одноразовый best-effort в
+                // момент джойна (JoinChatActivity.kt) — если та попытка не успевала
+                // (админ ещё не опубликовал members.txt на момент джойна, гонка) и
+                // пользователь ни разу не открывал сам чат, имя/аватар оставались на
+                // seed-значении из инвайта (или пустыми), а ChatParticipant — пустой
+                // таблицей → счётчик участников 0 везде (шапка чата, профиль). Теперь
+                // список чатов тоже применяет members.txt на каждом фоновом опросе —
+                // данные уже приходят в том же all.loadAll() выше, без лишнего запроса.
+                if (chat.isGroup) {
+                    withContext(Dispatchers.IO) {
+                        MembersSync.applyIncoming(
+                            chat = chat,
+                            membersContentEncrypted = all.membersContent,
+                            password = chatPassword,
+                            participantDao = db.chatParticipantDao(),
+                            chatDao = db.chatDao()
+                        )
+                    }
                 }
 
                 // FS: устанавливаем сессионный ключ, чтобы список мог расшифровать V4-S
@@ -566,8 +606,13 @@ class ChatsListActivity : SecureActivity() {
     }
 
     private fun showChatMenu(chat: Chat) {
-        // Если чат уже занят (partnerJoined) — share превращается в disabled-пункт
-        val shareLabel = if (chat.partnerJoined) {
+        // Если чат уже занят (partnerJoined) — share превращается в disabled-пункт.
+        // ⚠️ Только для 1:1 — partnerJoined рассчитан на ровно ОДНОГО собеседника.
+        // Для групп это НЕ должно блокировать инвайт уже после второго участника:
+        // лимит участников проверяется на джойне (см. JoinChatActivity, ADR-001),
+        // а не гейтится здесь по факту "кто-то уже пришёл".
+        val locked = !chat.isGroup && chat.partnerJoined
+        val shareLabel = if (locked) {
             getString(R.string.invite_share_action_locked)
         } else {
             getString(R.string.invite_share_action)
@@ -576,7 +621,7 @@ class ChatsListActivity : SecureActivity() {
 
         NeonDialog.showMenu(
             ctx = this,
-            title = if (chat.isFavorites) getString(R.string.favorites_name) else chat.partnerName,
+            title = if (chat.isFavorites) getString(R.string.favorites_name) else chat.displayName(),
             items = mutableListOf<NeonDialog.Item>().apply {
                 add(NeonDialog.Item(pinLabel) {
                     togglePin(chat)
@@ -586,8 +631,8 @@ class ChatsListActivity : SecureActivity() {
                 // пункт «Поделиться приглашением» не показываем вовсе.
                 val isBtChat = prefs.getChatToken(chat.chatId) == BluetoothTransport.BT_TOKEN
                 if (!chat.isFavorites && !isBtChat) {
-                    add(NeonDialog.Item(shareLabel, isDisabled = chat.partnerJoined) {
-                        if (chat.partnerJoined) {
+                    add(NeonDialog.Item(shareLabel, isDisabled = locked) {
+                        if (locked) {
                             android.widget.Toast.makeText(
                                 this@ChatsListActivity, R.string.chat_locked_toast,
                                 android.widget.Toast.LENGTH_SHORT
@@ -637,6 +682,57 @@ class ChatsListActivity : SecureActivity() {
         etPin.setText(generateInviteCode())
         etPin.setSelection(etPin.text.length)
 
+        // Степпер срока действия приглашения — только для групп (см. ADR-001,
+        // dialog_invite_pin.xml). Для 1:1 остаётся дефолт InviteCodec.DEFAULT_TTL_MS.
+        val ttlRow = view.findViewById<View>(R.id.ttl_group_row)
+        val tvTtlValue = view.findViewById<android.widget.TextView>(R.id.tv_ttl_value)
+        val tvTtlSub = view.findViewById<android.widget.TextView>(R.id.tv_ttl_sub)
+        val btnTtlMinus = view.findViewById<android.widget.ImageButton>(R.id.btn_ttl_minus)
+        val btnTtlPlus = view.findViewById<android.widget.ImageButton>(R.id.btn_ttl_plus)
+        // 1..24 = часы, 25 = "без ограничений" (см. TTL_STEP_INFINITE).
+        var ttlStep = TTL_STEP_DEFAULT
+
+        fun renderTtl() {
+            val infinite = ttlStep >= TTL_STEP_INFINITE
+            if (infinite) {
+                tvTtlValue.text = getString(R.string.invite_ttl_unlimited)
+                tvTtlValue.setTextColor(ContextCompat.getColor(this, R.color.warning))
+                tvTtlSub.text = getString(R.string.invite_ttl_unlimited_sub)
+                ttlRow.setBackgroundResource(R.drawable.bg_ttl_card_infinite)
+            } else {
+                tvTtlValue.text = resources.getQuantityString(R.plurals.invite_ttl_hours, ttlStep, ttlStep)
+                tvTtlValue.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
+                val expiryAt = System.currentTimeMillis() + ttlStep * 3_600_000L
+                val fmt = java.text.SimpleDateFormat("dd.MM.yy, HH:mm", java.util.Locale.getDefault())
+                tvTtlSub.text = getString(R.string.invite_ttl_expiry_sub, fmt.format(java.util.Date(expiryAt)))
+                ttlRow.setBackgroundResource(R.drawable.bg_ttl_card)
+            }
+            btnTtlMinus.isEnabled = ttlStep > 1
+            btnTtlMinus.alpha = if (btnTtlMinus.isEnabled) 1f else 0.35f
+            btnTtlPlus.isEnabled = ttlStep < TTL_STEP_INFINITE
+            btnTtlPlus.alpha = if (btnTtlPlus.isEnabled) 1f else 0.35f
+        }
+
+        if (chat.isGroup) {
+            ttlRow.visibility = View.VISIBLE
+            renderTtl()
+        } else {
+            ttlRow.visibility = View.GONE
+        }
+
+        btnTtlMinus.setOnClickListener {
+            if (ttlStep > 1) {
+                ttlStep--
+                renderTtl()
+            }
+        }
+        btnTtlPlus.setOnClickListener {
+            if (ttlStep < TTL_STEP_INFINITE) {
+                ttlStep++
+                renderTtl()
+            }
+        }
+
         val dialog = AlertDialog.Builder(this, R.style.Theme_AtrumChat_Dialog)
             .setView(view)
             .create()
@@ -658,7 +754,8 @@ class ChatsListActivity : SecureActivity() {
                 return@setOnClickListener
             }
             dialog.dismiss()
-            doShareInvite(chat, pin)
+            val ttlMillis = if (ttlStep >= TTL_STEP_INFINITE) TTL_INFINITE_MS else ttlStep * 3_600_000L
+            doShareInvite(chat, pin, ttlMillis)
         }
         dialog.show()
     }
@@ -670,7 +767,7 @@ class ChatsListActivity : SecureActivity() {
         return (1..6).map { alphabet[rnd.nextInt(alphabet.length)] }.joinToString("")
     }
 
-    private fun doShareInvite(chat: Chat, pin: String) {
+    private fun doShareInvite(chat: Chat, pin: String, groupTtlMillis: Long = InviteCodec.DEFAULT_TTL_MS) {
         try {
             val token = prefs.getChatToken(chat.chatId)
                 .takeIf { it.isNotEmpty() }
@@ -679,19 +776,43 @@ class ChatsListActivity : SecureActivity() {
                 .takeIf { it.isNotEmpty() }
                 ?: @Suppress("DEPRECATION") chat.chatPassword
 
-            val invite = InviteCodec.encode(
-                channelId = chat.chatId,
-                transportToken = token,
-                chatPassword = password,
-                pin = pin
-            )
+            // Групповой чат (ADR-001) — invite v4 несёт userId админа и лимит участников,
+            // получателю нужны ДО первого опроса реле (проверка подписи members.txt).
+            val invite = if (chat.isGroup) {
+                val adminId = chat.adminUserId
+                if (adminId.isNullOrBlank()) {
+                    // Не должно случиться (adminUserId ставится при создании группы) —
+                    // защитная проверка, чтобы не выпустить invite без админа.
+                    android.widget.Toast.makeText(
+                        this, getString(R.string.invite_create_failed), android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                    return
+                }
+                InviteCodec.encodeGroup(
+                    channelId = chat.chatId,
+                    transportToken = token,
+                    chatPassword = password,
+                    pin = pin,
+                    adminUserId = adminId,
+                    participantLimit = chat.participantLimit,
+                    groupNameSeed = chat.groupName ?: chat.partnerName,
+                    ttlMillis = groupTtlMillis
+                )
+            } else {
+                InviteCodec.encode(
+                    channelId = chat.chatId,
+                    transportToken = token,
+                    chatPassword = password,
+                    pin = pin
+                )
+            }
 
             // Открываем экран QR-приглашения: там выбор «поделиться QR» или «текстом».
             startActivity(Intent(this, InviteQrActivity::class.java).apply {
                 putExtra(InviteQrActivity.EXTRA_INVITE, invite)
                 putExtra(InviteQrActivity.EXTRA_PIN, pin)
-                putExtra(InviteQrActivity.EXTRA_NAME, chat.partnerName)
-                putExtra(InviteQrActivity.EXTRA_AVATAR, prefs.myAvatarBase64)
+                putExtra(InviteQrActivity.EXTRA_NAME, chat.groupName ?: chat.partnerName)
+                putExtra(InviteQrActivity.EXTRA_AVATAR, if (chat.isGroup) chat.groupAvatarBase64 else prefs.myAvatarBase64)
             })
         } catch (e: Throwable) {
             android.widget.Toast.makeText(
@@ -733,5 +854,18 @@ class ChatsListActivity : SecureActivity() {
                 ).show()
             }
         }
+    }
+
+    companion object {
+        /** Степпер срока действия group-инвайта (dialog_invite_pin.xml): 1..24 часа шагом в час. */
+        private const val TTL_STEP_DEFAULT = 24
+        /** Значение шага, обозначающее "без ограничений" (см. shareInvite). */
+        private const val TTL_STEP_INFINITE = 25
+        /**
+         * "Без ограничений" технически не бесконечность (Long.MAX_VALUE переполнил бы
+         * System.currentTimeMillis() + ttlMillis в InviteCodec.encodeGroup) — 100 лет
+         * практически неотличимо от "никогда не истечёт".
+         */
+        private const val TTL_INFINITE_MS = 100L * 365 * 24 * 60 * 60 * 1000
     }
 }

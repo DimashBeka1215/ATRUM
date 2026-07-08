@@ -23,9 +23,14 @@ class WelcomeActivity : SecureActivity() {
 
         // Уже онбордился — пропускаем заставку
         if (prefs.isOnboarded) {
-            val next = if (prefs.hasLocalPassword()) LockActivity::class.java
-            else ChatsListActivity::class.java
-            startActivity(Intent(this, next))
+            val locked = prefs.hasLocalPassword()
+            val next = if (locked) LockActivity::class.java else ChatsListActivity::class.java
+            startActivity(Intent(this, next).apply {
+                // Холодный старт: мы сейчас сами сделаем finish() — под LockActivity в
+                // стеке будет пусто, поэтому она обязана явно открыть ChatsListActivity
+                // после разблокировки (см. LockActivity.EXTRA_COLD_START).
+                if (locked) putExtra(LockActivity.EXTRA_COLD_START, true)
+            })
             finish()
             return
         }

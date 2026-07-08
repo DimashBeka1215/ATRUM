@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Системное/сервисное сообщение в ленте чата (например «X присоединился к чату»).
+    Локальное — не приходит с реле, см. Message.isSystem. Центрированная плашка,
+    без пузырька/реакций/медиа. tv_text/tv_time — обязательные id для MessageAdapter.VH
+    (bindSystem находит их через ту же ViewHolder, что и обычные сообщения).
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center"
+    android:orientation="horizontal"
+    android:paddingVertical="6dp">
+
+    <TextView
+        android:id="@+id/tv_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_chip_default"
+        android:fontFamily="sans-serif"
+        android:gravity="center"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="7dp"
+        android:textColor="@color/text_tertiary"
+        android:textSize="11.5sp" />
+
+    <!-- Не показывается — существует только чтобы VH.timeView (non-null) не упал. -->
+    <TextView
+        android:id="@+id/tv_time"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone" />
+
+</LinearLayout>

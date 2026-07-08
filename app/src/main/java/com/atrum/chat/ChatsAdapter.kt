@@ -12,6 +12,8 @@ import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import com.atrum.chat.data.Chat
+import com.atrum.chat.data.displayAvatarBase64
+import com.atrum.chat.data.displayName
 import com.google.android.material.imageview.ShapeableImageView
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -42,7 +44,7 @@ class ChatsAdapter(
     fun submitFiltered(allChats: List<Chat>, query: String) {
         searchQuery = query.trim()
         val filtered = if (searchQuery.isBlank()) allChats
-        else allChats.filter { it.partnerName.contains(searchQuery, ignoreCase = true) }
+        else allChats.filter { it.displayName().contains(searchQuery, ignoreCase = true) }
         val oldList = chats
         chats = filtered
         DiffUtil.calculateDiff(object : DiffUtil.Callback() {
@@ -107,8 +109,9 @@ class ChatsAdapter(
                 }
                 name.setTextColor(itemView.context.getColor(R.color.text_primary))
                 lastMessage.setTextColor(itemView.context.getColor(R.color.text_secondary))
-            } else if (chat.partnerDeleted) {
-                // ── Удалённый профиль ────────────────────────────────────────
+            } else if (!chat.isGroup && chat.partnerDeleted) {
+                // ── Удалённый профиль (только 1:1 — у групп нет одного "собеседника",
+                //    чей профиль мог бы удалиться и погасить весь чат) ───────────
                 // Показываем серую заглушку вместо аватарки
                 avatar.visibility = View.GONE
                 initial.visibility = View.VISIBLE
@@ -130,17 +133,23 @@ class ChatsAdapter(
                     itemView.context.getColor(android.R.color.holo_red_light)
                 )
             } else {
-                // ── Обычный активный профиль ─────────────────────────────────
+                // ── Обычный активный профиль (1:1) или групповой чат ─────────
+                // Для группы источник имени/авы — groupName/groupAvatarBase64
+                // (актуальны, приходят через members.txt), НЕ partnerName/
+                // partnerAvatarBase64 — те для группы не поддерживаются
+                // автоматически и остаются на creation-time значении.
                 initial.setBackgroundResource(R.drawable.bg_avatar_placeholder)
                 name.setTextColor(
                     itemView.context.getColor(R.color.text_primary)
                 )
-                val displayName = if (!chat.partnerTag.isNullOrBlank()) {
+                val effectiveName = if (chat.isGroup) {
+                    chat.displayName()
+                } else if (!chat.partnerTag.isNullOrBlank()) {
                     "${chat.partnerName} ${chat.partnerTag}"
                 } else {
                     chat.partnerName
                 }
-                val displayText = displayName.ifBlank { "?" }
+                val displayText = effectiveName.ifBlank { "?" }
                 name.text = highlightQuery(displayText, query,
                     ContextCompat.getColor(itemView.context, R.color.accent_light))
                 lastMessage.text = chat.lastMessage.ifBlank { "—" }
@@ -148,7 +157,8 @@ class ChatsAdapter(
                     itemView.context.getColor(R.color.text_secondary)
                 )
 
-                val avatarBitmap = AvatarUtils.fromBase64(chat.partnerAvatarBase64)
+                val effectiveAvatarBase64 = if (chat.isGroup) chat.displayAvatarBase64() else chat.partnerAvatarBase64
+                val avatarBitmap = AvatarUtils.fromBase64(effectiveAvatarBase64)
                 if (avatarBitmap != null) {
                     avatar.setImageBitmap(avatarBitmap)
                     avatar.visibility = View.VISIBLE
@@ -158,7 +168,7 @@ class ChatsAdapter(
                     avatar.visibility = View.GONE
                     initial.visibility = View.VISIBLE
                     avatarIcon.visibility = View.GONE
-                    initial.text = chat.partnerName.trim().firstOrNull()?.uppercase() ?: "?"
+                    initial.text = effectiveName.trim().firstOrNull()?.uppercase() ?: "?"
                 }
             }
 

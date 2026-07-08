@@ -12,6 +12,13 @@ import androidx.lifecycle.lifecycleScope
 import com.atrum.chat.databinding.ActivityConnectionBinding
 import com.atrum.chat.nostr.ConnectionStats
 import com.atrum.chat.transport.NostrTransport
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -19,9 +26,17 @@ import kotlinx.coroutines.launch
  *
  * Показывает живую телеметрию реле (только фиолетовые тона статуса, БЕЗ адресов —
  * см. ConnectionStats.kt) и позволяет настроить пользовательский SOCKS5-прокси для
- * прямого (не-Tor) пути. Никакого нового сетевого polling-цикла тут нет — данные
- * приходят из уже идущего опроса SyncEngine/NostrTransport.queryAllRelays() через
- * ConnectionStats.version (см. CLAUDE.md §1).
+ * прямого (не-Tor) пути. Часть данных приходит из уже идущего опроса
+ * SyncEngine/NostrTransport.queryAllRelays() через ConnectionStats.version (см.
+ * CLAUDE.md §1). ⚠️ Дополнительно, ПОКА ЭТОТ ЭКРАН ОТКРЫТ, идёт свой лёгкий
+ * live-пинг всех реле (см. startLivePing/stopLivePing ниже) — специально, чтобы
+ * реле, не успевающие в боевой хедж-таймаут доставки (READ_GRACE_MS), тоже
+ * получали шанс отчитаться и не висели вечно с «нет данных». Это НЕ отдельный
+ * фоновый polling-цикл: запускается строго в onResume и останавливается в
+ * onPause — при закрытии экрана никакого анализа не происходит. Использует уже
+ * существующий NostrRelayPool (то же персистентное соединение, что и боевой
+ * sync) через NostrTransport.pingRelayForConnectionScreen — новых сетевых
+ * клиентов не создаёт, SyncEngine/PatchQueue/тайминги доставки не трогает.
  *
  * Прокси действует ТОЛЬКО когда чат подключается напрямую (preferTor=false). Для
  * Tor-чатов это ничего не меняет — см. doc-comment NostrTransport.useTor.
@@ -30,6 +45,12 @@ class ConnectionActivity : SecureActivity() {
 
     private lateinit var binding: ActivityConnectionBinding
     private lateinit var prefs: Prefs
+
+    /** Job живого пинга — активен строго между onResume и onPause. */
+    private var livePingJob: Job? = null
+
+    /** Интервал живого пинга, пока экран открыт. Не связан с интервалами SyncEngine. */
+    private val livePingIntervalMs = 3_000L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,10 +95,13 @@ class ConnectionActivity : SecureActivity() {
         rebuildRelayRows()
         refreshLiveStatus()
 
-        // Реактивно обновляемся на КАЖДЫЙ новый сэмпл из уже идущего опроса реле —
-        // никакого собственного таймера/цикла (см. doc-comment класса).
+        // Реактивно обновляемся на новые сэмплы (из боевого sync И из своего live-пинга
+        // ниже — оба пишут в один ConnectionStats, см. doc-comment класса). ⚠️ debounce:
+        // live-пинг бьёт по 12 реле ПАРАЛЛЕЛЬНО, каждое завершение инкрементит version —
+        // без debounce это давало бы до 12 полных removeAllViews()+reinflate подряд за
+        // один цикл (видимое мерцание списка). 150мс схлопывает пачку в один rebuild.
         lifecycleScope.launch {
-            ConnectionStats.version.collect {
+            ConnectionStats.version.debounce(150).collect {
                 rebuildRelayRows()
                 refreshLiveStatus()
             }
@@ -88,6 +112,43 @@ class ConnectionActivity : SecureActivity() {
         super.onResume()
         rebuildRelayRows()
         refreshLiveStatus()
+        startLivePing()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        stopLivePing()
+    }
+
+    /**
+     * Живой пинг ВСЕХ реле, пока экран открыт. В отличие от боевого хеджа
+     * ([NostrTransport.queryAllRelays]) каждое реле пингуется независимо и ждёт
+     * СВОЙ полный таймаут — медленное реле не отменяется из-за того, что другое
+     * ответило быстрее, поэтому телеметрия набегает даже для «медленных» узлов.
+     * Строго foreground: висит в lifecycleScope, но реально бегает только пока
+     * job жив (стартует в onResume, отменяется в onPause) — никакого анализа,
+     * когда экран не на экране.
+     */
+    private fun startLivePing() {
+        if (livePingJob?.isActive == true) return
+        livePingJob = lifecycleScope.launch {
+            while (isActive) {
+                val urls = NostrTransport.activeRelays()
+                urls.map { url ->
+                    async(Dispatchers.IO) {
+                        val latencyMs = NostrTransport.pingRelayForConnectionScreen(url)
+                        ConnectionStats.record(url, latencyMs)
+                    }
+                }.awaitAll()
+                delay(livePingIntervalMs)
+            }
+        }
+    }
+
+    /** Останавливает live-пинг — вызывается из onPause, экран закрыт → тишина. */
+    private fun stopLivePing() {
+        livePingJob?.cancel()
+        livePingJob = null
     }
 
     private fun saveProxyConfig() {
