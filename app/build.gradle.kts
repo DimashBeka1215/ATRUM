@@ -254,7 +254,7 @@ dependencies {
     // IPtProxy — pluggable transports (Lyrebird=obfs4/meek/webtunnel + Snowflake) для
     // обхода блокировки Tor. Нативные бинари под все ABI уже внутри AAR. Используется
     // в TorManager для запуска мостов, когда обычный Tor не поднимается (цензура).
-    implementation("com.netzarchitekten:IPtProxy:5.5.0")
+    implementation("com.netzarchitekten:IPtProxy:5.5.1")
 
     // CameraX — превью камеры + анализ кадров для QR-сканера (Bluetooth-подключение по QR).
     val cameraX = "1.3.4"
