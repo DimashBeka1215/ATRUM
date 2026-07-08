@@ -124,6 +124,19 @@ object MembersSync {
         val decrypted = CryptoHelper.decrypt(membersContentEncrypted, password, chat.chatId) ?: return false
         val parsed = parse(decrypted) ?: return false
         if (parsed.version <= chat.membersVersion) return false // анти-откат — версия не новее уже применённой
+        // ⚠️ Защита (найдено при аудите): валидная по подписи, но ВЫРОЖДЕННАЯ версия
+        // members.txt с пустым participants НЕ должна применяться. У группы всегда есть
+        // минимум админ — пустой список означает баг публикующей стороны (например, гонка,
+        // где admin-клиент опубликовал новую версию до того, как сам прочитал свою же
+        // ChatParticipantDao), а НЕ легитимное "все вышли". Раньше здесь не было проверки:
+        // ChatParticipantDao.pruneRemoved(ownerId, keepUserIds=emptyList()) в SQL транслируется
+        // в "userId NOT IN ()" — это истинно для ЛЮБОЙ строки, т.е. пустой participants
+        // стёр бы ВСЕХ локальных участников у КАЖДОГО клиента, который применил эту версию
+        // (и цепочка могла повториться — следующий ban/rename/unban тоже читает уже
+        // опустошённую таблицу и republish'ит снова пустой список). Версия анти-отката
+        // (membersVersion) уже увеличена не будет — return false здесь НЕ считается
+        // "применённой", следующая нормальная версия от админа применится как обычно.
+        if (parsed.participants.isEmpty()) return false
 
         val existing = participantDao.getForChat(chat.id).associateBy { it.userId }
         val now = System.currentTimeMillis()

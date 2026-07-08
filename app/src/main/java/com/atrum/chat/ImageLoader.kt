@@ -270,7 +270,23 @@ class ImageLoader(
         onChunkProgress: ((current: Int, total: Int) -> Unit)? = null
     ): String? {
         val mainContent = loadFileRetry(fileName)
-        val decrypted = CryptoHelper.decrypt(mainContent, password, cryptoChatId) ?: return null
+        var decrypted = CryptoHelper.decrypt(mainContent, password, cryptoChatId)
+        if (decrypted == null) {
+            // ⚠️ Фикс (репорт: голосовое — "найден, не расшифр", GCM auth tag не сходится).
+            // Одиночный (не chunked) файл, в отличие от chunked-пути (verifyAndFixChunks +
+            // отдельный файл хешей), никак не проверяется на целостность. Реальная причина:
+            // союз-чтение union-читает со ВСЕХ реле, и порядок ответов недетерминирован —
+            // если хотя бы одно реле однажды отдало обрезанную/повреждённую копию крупного
+            // события (мягкий лимит на размер у части публичных реле) и она осела в
+            // mediaCache (NostrTransport.cacheMediaFrom), дальше отдаётся именно она.
+            // NostrTransport теперь сам предпочитает более ДЛИННУЮ копию при свежем сетевом
+            // чтении, но если плохая копия уже закэширована — нужен явный сброс. Сбрасываем
+            // кэш и повторяем сетевой запрос РОВНО один раз, тем же паттерном, что и чанки.
+            (api as? com.atrum.chat.transport.NostrTransport)?.evictCachedFile(fileName)
+            val retried = try { loadFileRetry(fileName, attempts = 3) } catch (_: Exception) { null }
+            if (retried != null) decrypted = CryptoHelper.decrypt(retried, password, cryptoChatId)
+            if (decrypted == null) return null
+        }
         return if (decrypted.startsWith(ImageChunker.CHUNKED_MARKER)) {
             assembleChunkedImage(fileName, decrypted, onChunkProgress)
         } else {

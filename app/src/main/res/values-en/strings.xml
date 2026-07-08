@@ -976,4 +976,47 @@
     <string name="warn_sticker_message">Saving battery (≤15%). Stickers show the first frame.</string>
     <string name="btn_enable_anim">Enable</string>
     <string name="remember_choice">Remember</string>
+
+    <!-- Member activity stats (admin) -->
+    <string name="group_stats_entry_label">Activity stats</string>
+    <string name="group_stats_title">Group stats</string>
+    <string name="group_stats_sort_label">By activity</string>
+    <plurals name="group_stats_participants_count">
+        <item quantity="one">%1$d member</item>
+        <item quantity="other">%1$d members</item>
+    </plurals>
+    <string name="group_stats_name_with_admin">%1$s · admin</string>
+    <string name="group_stats_last_active">last active %1$s</string>
+    <string name="group_stats_no_messages">no messages</string>
+
+    <string name="stats_period_day">Days</string>
+    <string name="stats_period_week">Weeks</string>
+    <string name="stats_period_month">Months</string>
+    <string name="stats_period_year">Years</string>
+    <string name="stats_activity_title">Activity</string>
+    <string name="stats_activity_hint_day">Messages per day (last 14)</string>
+    <string name="stats_activity_hint_week">Messages per week (last 8)</string>
+    <string name="stats_activity_hint_month">Messages per month (last 12)</string>
+    <string name="stats_activity_hint_year">Messages per year (last 5)</string>
+    <string name="stats_hourly_title">By hour of day</string>
+    <string name="stats_peak_hint">Peak activity: %1$s</string>
+    <string name="stats_no_data">No data yet</string>
+    <string name="stats_stat_total">total</string>
+    <string name="stats_stat_per_day">avg / day</string>
+    <string name="stats_stat_peak_hour">peak hour</string>
+    <string name="stats_stat_active_days">active days</string>
+    <string name="stats_gesture_hint">Swipe left to delete for everyone. Long-press to jump to the message in chat.</string>
+    <string name="stats_section_all">All messages</string>
+    <string name="stats_section_deleted">Deleted messages</string>
+    <string name="stats_deleted_tag">deleted</string>
+    <string name="stats_deleted_by_admin">by admin</string>
+    <string name="stats_deleted_by_author">by author</string>
+    <string name="stats_deleted_by_unknown">by unknown</string>
+    <string name="stats_deleted_meta">deleted %1$s · %2$s</string>
+    <string name="stats_time_today">Today, %1$s</string>
+    <string name="stats_time_yesterday">Yesterday, %1$s</string>
+    <string name="stats_time_this_year">%1$s, %2$s</string>
+    <string name="stats_time_other">%1$s, %2$s</string>
+
+    <string name="action_delete_for_all_admin">Delete for everyone</string>
 </resources>

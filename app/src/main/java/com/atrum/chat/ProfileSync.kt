@@ -87,6 +87,39 @@ object ProfileSync {
     }
 
     /**
+     * МЕЖЧАТОВЫЙ (глобальный) кэш «последний известный профиль» по userId — БЕЗ привязки
+     * к конкретному чату. `Prefs.myUserId` — это один и тот же UUID для одного и того же
+     * человека во ВСЕХ чатах (личных и групповых), поэтому если имя/аватар этого userId уже
+     * увидены в одном чате (например, в личной переписке), их можно использовать как
+     * fallback в другом чате (например, в группе), пока СВОЙ profiles.txt этой группы ещё
+     * не догрузился — не нужно ждать отдельной синхронизации с нуля для каждого чата.
+     *
+     * ТОЛЬКО fallback для отображения (имя/тег/аватар) — presence (onlineTs/typingTs/
+     * recordingTs/lastReadIndex) сюда не подмешивается и не читается из этого кэша: онлайн-
+     * статус легитимно относится к конкретному чату/сессии и не должен «одалживаться» из
+     * другого чата (иначе человек будет ошибочно показан «в сети», если он активен в другом
+     * чате, но не открывал этот).
+     */
+    private val globalKnownProfiles = ConcurrentHashMap<String, Profile>()
+
+    /** Пополняет глобальный кэш всем, что реально прочитано (по любому чату), по большему updatedAt. */
+    private fun rememberGlobal(profiles: Map<String, Profile>) {
+        for ((uid, p) in profiles) {
+            if (p.name.isBlank() && p.avatarBase64.isNullOrBlank()) continue // нечего запоминать
+            val existing = globalKnownProfiles[uid]
+            if (existing == null || p.updatedAt >= existing.updatedAt) {
+                globalKnownProfiles[uid] = p
+            }
+        }
+    }
+
+    /**
+     * Публичный доступ к межчатовому fallback-профилю по userId (см. [globalKnownProfiles]).
+     * Использовать ТОЛЬКО для имени/тега/аватара — presence из результата не читать.
+     */
+    fun getGlobalKnown(userId: String): Profile? = globalKnownProfiles[userId]
+
+    /**
      * Для ЧТЕНИЯ/отображения: возвращает union(известные ∪ parsed) и пополняет кэш.
      * Делает партнёра «липким» — если отдельное чтение profiles.txt на миг вернуло
      * только мой профиль (гонка перезаписи replaceable-файла / флаки-Tor), партнёр
@@ -111,11 +144,6 @@ object ProfileSync {
         return parsed
     }
 
-    /**
-     * Дешифрует и парсит уже загруженный зашифрованный контент profiles.txt.
-     * Используется в doRefreshPartnerReadIndex когда сырой контент уже есть
-     * (загружен для hash-проверки) — избегаем повторного сетевого запроса.
-     */
     /**
      * UNION-чтение (Фаза 1): объединяет ВСЕ слоты profiles.txt (по одному событию на
      * участника). Для каждого uid берёт запись с наибольшим updatedAt (имя/аватар/ключи),
@@ -142,6 +170,7 @@ object ProfileSync {
         return best
     }
 
+    /** Дешифрует и парсит ОДИН уже загруженный блоб profiles.txt (без сетевого вызова). */
     fun parseProfiles(rawEncrypted: String, password: String, chatId: String): Map<String, Profile> {
         if (rawEncrypted.isBlank()) return emptyMap()
         val decrypted = CryptoHelper.decrypt(rawEncrypted, password, chatId) ?: return emptyMap()
@@ -152,6 +181,10 @@ object ProfileSync {
                 val obj = json.optJSONObject(key) ?: continue
                 result[key] = Profile.fromJsonObject(key, obj)
             }
+            // Любой успешно распарсенный профиль (из ЛЮБОГО чата — личного или группового)
+            // пополняет межчатовый fallback-кэш (см. globalKnownProfiles) — единая точка,
+            // через которую проходят и pullProfiles(), и unionProfileSlots().
+            if (result.isNotEmpty()) rememberGlobal(result)
             result
         } catch (e: Exception) {
             emptyMap()
@@ -263,151 +296,29 @@ object ProfileSync {
         }
     }
 
-    /**
-     * Обновляет presence (typingTs + onlineTs) БЕЗ GET-запроса.
-     *
-     * Использует переданный кэш как базу. Партнёрские данные (включая ephemeralPubKey)
-     * остаются нетронутыми — записываем весь снимок профилей обратно с обновлёнными
-     * полями только своего профиля.
-     *
-     * @return true если PATCH отправлен успешно,
-     *         false если нашего профиля нет в кэше (нужен fallback на полный GET+PATCH).
-     */
-    suspend fun pushPresenceWriteOnly(
-        api: ChatTransport,
-        password: String,
-        cachedProfiles: Map<String, Profile>,
-        myUserId: String,
-        typingTs: Long,
-        onlineTs: Long,
-        myEphemeralPubKey: String? = null,
-        myIdentityPubKey: String? = null,
-        myEphemeralSig: String? = null,
-        myVerifiedPartnerIdk: String? = null
-    ): Boolean {
-        val myProfile = cachedProfiles[myUserId] ?: return false
-        return try {
-            val updated = cachedProfiles.toMutableMap()
-            updated[myUserId] = myProfile.copy(
-                typingTs           = typingTs,
-                onlineTs           = onlineTs,
-                ephemeralPubKey    = myEphemeralPubKey ?: myProfile.ephemeralPubKey,
-                // identity-поля всегда заново вставляем — иначе write-only пуш из
-                // устаревшего кэша затирает identityPubKey, и партнёр не видит щит.
-                identityPubKey     = myIdentityPubKey ?: myProfile.identityPubKey,
-                ephemeralSig       = myEphemeralSig ?: myProfile.ephemeralSig,
-                verifiedPartnerIdk = myVerifiedPartnerIdk ?: myProfile.verifiedPartnerIdk
-            )
-            val json = JSONObject().apply {
-                for ((uid, p) in updated) put(uid, p.toJsonObject())
-            }
-            val encrypted = CryptoHelper.encryptMetadata(json.toString(), password, api.chatId)
-            api.saveFile(FILE_NAME, encrypted)
-            true
-        } catch (_: Exception) {
-            false
-        }
-    }
+    // ⚠️ Удалена pushPresenceWriteOnly() (мёртвый код — ни одного вызывающего по всему
+    // проекту не найдено, см. аудит по репорту пользователя "авы/ники везде"). Писала
+    // typingTs/onlineTs поверх ПЕРЕДАННОГО кэша партнёрских данных без свежего чтения —
+    // именно этот паттерн ниже прямо назван причиной бага "onlineTs партнёра зависает"
+    // (см. комментарий pushPresenceCached), из-за которого от него уже отказались в
+    // пользу pushPresence (полный GET+PATCH). Саму функцию тогда забыли удалить —
+    // теперь удалена, чтобы её нельзя было случайно снова подключить.
 
-    /**
-     * Алиас для совместимости — делегирует в [pushPresence] с полным GET+PATCH.
-     *
-     * Кэш-версия (write-only на основе снимка) была удалена: она записывала устаревшие
-     * данные партнёра обратно в источник, из-за чего onlineTs партнёра «зависал» даже после
-     * того как собеседник покинул чат. Любая запись profiles.txt должна основываться на
-     * свежем чтении (GET), иначе мы перезаписываем изменения партнёра.
-     *
-     * Доп. расход: +1 GET/3 сек = +20 GET/мин. При квоте Nostr и суммарных
-     * ~60 GET/мин (poll профилей + сообщения + sync) — хорошо в пределах лимита.
-     */
-    suspend fun pushPresenceCached(
-        api: ChatTransport,
-        password: String,
-        cachedProfiles: Map<String, Profile>,   // больше не используется для записи
-        myUserId: String,
-        typingTs: Long,
-        onlineTs: Long,
-        myEphemeralPubKey: String? = null,
-        myName: String = "",
-        myTag: String? = null,
-        myAvatarBase64: String? = null
-    ): Boolean = pushPresence(
-        api               = api,
-        password          = password,
-        myUserId          = myUserId,
-        typingTs          = typingTs,
-        onlineTs          = onlineTs,
-        myEphemeralPubKey = myEphemeralPubKey,
-        myName            = myName,
-        myTag             = myTag,
-        myAvatarBase64    = myAvatarBase64
-    )
+    // ⚠️ Удалена pushPresenceCached() (мёртвый код — тоже ни одного вызывающего по всему
+    // проекту не найдено). Была оставлена как "алиас для совместимости", делегирующий в
+    // pushPresence(), но раз вызывающих не осталось вообще — алиас ничему не совместим,
+    // это просто ещё один хвост той же незавершённой уборки после отказа от write-only
+    // presence-пушей (см. удаление pushPresenceWriteOnly выше). Если понадобится дешёвый
+    // (без GET) presence-пуш — писать заново с нуля поверх текущей per-слотовой архитектуры
+    // (см. unionProfileSlots), а не реанимировать этот путь: он основан на общем блобе.
 
-    /**
-     * Обновляет typingTs в profiles.txt — write-only на основе кэша Activity.
-     *
-     * Используем кэш (последний успешно прочитанный снимок профилей) вместо
-     * read-modify-write, чтобы обойтись одним PATCH вместо двух (GET + PATCH).
-     * Это снижает задержку typing-индикатора с ~1.5 сек до ~0.5 сек.
-     *
-     * Кэш обновляется каждые ~1.5 сек в doRefreshPartnerReadIndex, поэтому
-     * максимальное «протухание» данных партнёра — 1.5 сек. При этом pushMyProfile
-     * (read receipts) всегда делает read-modify-write, что гарантирует корректность
-     * галочек прочтения.
-     *
-     * @param cachedProfiles  последний снимок из doRefreshPartnerReadIndex
-     * @param typingTs        текущий timestamp или 0 (перестал печатать)
-     */
-    suspend fun pushTypingTs(
-        api: ChatTransport,
-        password: String,
-        cachedProfiles: Map<String, Profile>,
-        myUserId: String,
-        typingTs: Long
-    ): Boolean {
-        val myProfile = cachedProfiles[myUserId] ?: return false
-        return try {
-            val updated = cachedProfiles.toMutableMap()
-            updated[myUserId] = myProfile.copy(typingTs = typingTs)
-            val json = JSONObject().apply {
-                for ((uid, p) in updated) put(uid, p.toJsonObject())
-            }
-            val encrypted = CryptoHelper.encryptMetadata(json.toString(), password, api.chatId)
-            api.saveFile(FILE_NAME, encrypted)
-            true
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    /**
-     * Обновляет onlineTs в profiles.txt — write-only на основе кэша Activity.
-     * Та же логика что и pushTypingTs: 1 PATCH вместо GET+PATCH для скорости.
-     *
-     * @param cachedProfiles  последний снимок из doRefreshPartnerReadIndex
-     * @param onlineTs        текущий timestamp или 0 (ушли в фон)
-     */
-    suspend fun pushOnlineTs(
-        api: ChatTransport,
-        password: String,
-        cachedProfiles: Map<String, Profile>,
-        myUserId: String,
-        onlineTs: Long
-    ): Boolean {
-        val myProfile = cachedProfiles[myUserId] ?: return false
-        return try {
-            val updated = cachedProfiles.toMutableMap()
-            updated[myUserId] = myProfile.copy(onlineTs = onlineTs)
-            val json = JSONObject().apply {
-                for ((uid, p) in updated) put(uid, p.toJsonObject())
-            }
-            val encrypted = CryptoHelper.encryptMetadata(json.toString(), password, api.chatId)
-            api.saveFile(FILE_NAME, encrypted)
-            true
-        } catch (_: Exception) {
-            false
-        }
-    }
+    // ⚠️ Удалены pushTypingTs()/pushOnlineTs() (мёртвый код — ни одного вызывающего по
+    // всему проекту не найдено, см. аудит по репорту пользователя "авы/ники везде").
+    // Были задуманы как write-only PATCH поверх кэша из уже удалённой doRefreshPartnerReadIndex()
+    // (см. её же удаление в ChatActivity.kt), и писали ОДИН общий блоб profiles.txt
+    // (api.saveFile(FILE_NAME, ...) поверх всей карты участников) — несовместимо с текущей
+    // архитектурой per-участника слотов (см. unionProfileSlots выше): реактивация сейчас
+    // не просто не нужна, а вредна — переписала бы общий блоб поверх чужих слотов.
 
     /**
      * Помечает наш профиль как удалённый (deleted=true) в источнике.

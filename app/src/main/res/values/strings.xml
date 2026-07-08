@@ -996,4 +996,49 @@
     <string name="warn_sticker_message">Экономия заряда (≤15%). Стикеры показаны первым кадром.</string>
     <string name="btn_enable_anim">Включить</string>
     <string name="remember_choice">Запомнить</string>
+
+    <!-- Статистика активности участников (админ) -->
+    <string name="group_stats_entry_label">Статистика активности</string>
+    <string name="group_stats_title">Статистика группы</string>
+    <string name="group_stats_sort_label">По активности</string>
+    <plurals name="group_stats_participants_count">
+        <item quantity="one">%1$d участник</item>
+        <item quantity="few">%1$d участника</item>
+        <item quantity="many">%1$d участников</item>
+        <item quantity="other">%1$d участников</item>
+    </plurals>
+    <string name="group_stats_name_with_admin">%1$s · админ</string>
+    <string name="group_stats_last_active">последнее %1$s</string>
+    <string name="group_stats_no_messages">нет сообщений</string>
+
+    <string name="stats_period_day">Дни</string>
+    <string name="stats_period_week">Недели</string>
+    <string name="stats_period_month">Месяцы</string>
+    <string name="stats_period_year">Годы</string>
+    <string name="stats_activity_title">Активность</string>
+    <string name="stats_activity_hint_day">Сообщений по дням (последние 14)</string>
+    <string name="stats_activity_hint_week">Сообщений по неделям (последние 8)</string>
+    <string name="stats_activity_hint_month">Сообщений по месяцам (последние 12)</string>
+    <string name="stats_activity_hint_year">Сообщений по годам (последние 5)</string>
+    <string name="stats_hourly_title">По часам суток</string>
+    <string name="stats_peak_hint">Пик активности: %1$s</string>
+    <string name="stats_no_data">Пока нет данных</string>
+    <string name="stats_stat_total">всего</string>
+    <string name="stats_stat_per_day">в среднем/день</string>
+    <string name="stats_stat_peak_hour">пиковый час</string>
+    <string name="stats_stat_active_days">активных дней</string>
+    <string name="stats_gesture_hint">Свайп влево — удалить у всех. Долгое нажатие — перейти к сообщению в чате.</string>
+    <string name="stats_section_all">Все сообщения</string>
+    <string name="stats_section_deleted">Удалённые сообщения</string>
+    <string name="stats_deleted_tag">удалено</string>
+    <string name="stats_deleted_by_admin">админом</string>
+    <string name="stats_deleted_by_author">автором</string>
+    <string name="stats_deleted_by_unknown">неизвестно кем</string>
+    <string name="stats_deleted_meta">удалено %1$s · %2$s</string>
+    <string name="stats_time_today">Сегодня, %1$s</string>
+    <string name="stats_time_yesterday">Вчера, %1$s</string>
+    <string name="stats_time_this_year">%1$s, %2$s</string>
+    <string name="stats_time_other">%1$s, %2$s</string>
+
+    <string name="action_delete_for_all_admin">Удалить у всех</string>
 </resources>

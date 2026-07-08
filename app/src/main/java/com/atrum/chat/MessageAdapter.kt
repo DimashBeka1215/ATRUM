@@ -114,6 +114,47 @@ class MessageAdapter(
         notifyDataSetChanged()
     }
 
+    /**
+     * userId → avatarBase64 (null/пусто = нет фото, показываем букву). Живая карта:
+     * ChatActivity зовёт [updateAvatars] на каждом обновлении профилей — свой аватар
+     * берётся из prefs.myAvatarBase64 (локально, мгновенно, без сети), аватары остальных
+     * участников — из lastKnownProfiles (обновляется тем же поллингом, что и всё
+     * остальное в открытом чате, см. CLAUDE.md §1).
+     */
+    private var avatarsByUserId: Map<String, String?> = emptyMap()
+
+    /**
+     * Точечно обновляет аватарки отправителей — критично для "мгновенной" синхронизации
+     * (CLAUDE.md §1.5): НЕ делаем notifyDataSetChanged на весь список (весь чат мигнул бы
+     * при каждом тике), а перебиндиваем PAYLOAD_AVATAR только те строки, чей отправитель
+     * реально сменил аватарку.
+     */
+    fun updateAvatars(newMap: Map<String, String?>) {
+        if (newMap == avatarsByUserId) return
+        val changedUsers = HashSet<String>()
+        for (uid in newMap.keys + avatarsByUserId.keys) {
+            if (newMap[uid] != avatarsByUserId[uid]) changedUsers.add(uid)
+        }
+        avatarsByUserId = newMap
+        if (changedUsers.isEmpty()) return
+        val eff = effectiveList()
+        for (i in eff.indices) {
+            val uid = eff[i].senderUserId ?: continue
+            if (uid in changedUsers) notifyItemChanged(i, PAYLOAD_AVATAR)
+        }
+    }
+
+    private fun avatarFor(msg: Message): String? = msg.senderUserId?.let { avatarsByUserId[it] }
+
+    /** true — сообщение первое в подряд идущей серии от одного отправителя (см. §0 мокапа). */
+    private fun isFirstOfRun(position: Int): Boolean {
+        val eff = effectiveList()
+        val msg = eff.getOrNull(position) ?: return true
+        val prev = eff.getOrNull(position - 1) ?: return true
+        if (prev.isSystem) return true
+        return prev.senderUserId != msg.senderUserId || prev.isSelf != msg.isSelf
+    }
+
     // ── Selection mode ────────────────────────────────────────────────────────
     /** true когда активен режим множественного выбора */
     var isSelectionMode: Boolean = false
@@ -175,6 +216,9 @@ class MessageAdapter(
 
         /** payload для точечного апдейта кольца прогресса заливки (без ребайнда фото). */
         val PAYLOAD_PROGRESS = Any()
+
+        /** payload для точечного апдейта ТОЛЬКО аватарки отправителя (см. updateAvatars). */
+        val PAYLOAD_AVATAR = Any()
 
         // ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА (не для релиза): падаем с полным логом причины при
         // первом же "пустом" фото/коллаже (bitmap == null после загрузки+расшифровки).
@@ -337,6 +381,11 @@ class MessageAdapter(
             holder.bindProgressOnly(effectiveList()[position])
             return
         }
+        if (payloads.isNotEmpty() && payloads.all { it === PAYLOAD_AVATAR }) {
+            val msg = effectiveList()[position]
+            holder.bindAvatarOnly(msg, avatarFor(msg), isFirstOfRun(position))
+            return
+        }
         super.onBindViewHolder(holder, position, payloads)
     }
 
@@ -361,7 +410,9 @@ class MessageAdapter(
             onReactionClick   = { emoji -> onReactionClick?.invoke(msg.msgId, emoji) },
             glassMode         = glassMode,
             bubbleAlphaSelf   = bubbleAlphaSelf,
-            bubbleAlphaOther  = bubbleAlphaOther
+            bubbleAlphaOther  = bubbleAlphaOther,
+            avatarBase64      = avatarFor(msg),
+            showAvatar        = isFirstOfRun(position)
         )
     }
 
@@ -455,6 +506,41 @@ class MessageAdapter(
         /** The rounded bubble container — background changes between classic and glass modes. */
         private val bubbleContainer: View? = itemView.findViewById(R.id.bubble_container)
 
+        // ── Аватарка отправителя (только у первого сообщения в подряд идущей серии) ──
+        private val avatarFrame: View? = itemView.findViewById(R.id.msg_avatar_frame)
+        private val avatarImage: ShapeableImageView? = itemView.findViewById(R.id.iv_msg_avatar)
+        private val avatarInitial: TextView? = itemView.findViewById(R.id.tv_msg_avatar_initial)
+
+        /**
+         * [show] = false → INVISIBLE (не GONE!) — гуттер остаётся зарезервирован, чтобы
+         * пузырьки соседних сообщений серии не сдвигались по X при появлении/скрытии
+         * аватарки. Буква-плейсхолдер берётся из msg.sender — работает даже для очень
+         * старых сообщений без senderUserId (тогда просто avatarBase64 == null).
+         */
+        private fun bindAvatar(msg: Message, avatarBase64: String?, show: Boolean) {
+            val frame = avatarFrame ?: return
+            if (!show) {
+                frame.visibility = View.INVISIBLE
+                return
+            }
+            frame.visibility = View.VISIBLE
+            val bmp = AvatarUtils.fromBase64(avatarBase64)
+            if (bmp != null) {
+                avatarImage?.setImageBitmap(bmp)
+                avatarImage?.visibility = View.VISIBLE
+                avatarInitial?.visibility = View.GONE
+            } else {
+                avatarImage?.visibility = View.GONE
+                avatarInitial?.visibility = View.VISIBLE
+                avatarInitial?.text = (msg.sender.trim().firstOrNull()?.uppercase()?.toString() ?: "?")
+            }
+        }
+
+        /** Точечный апдейт ТОЛЬКО аватарки (PAYLOAD_AVATAR) — без ребайнда текста/фото/реакций. */
+        fun bindAvatarOnly(msg: Message, avatarBase64: String?, show: Boolean) {
+            bindAvatar(msg, avatarBase64, show)
+        }
+
         /**
          * Локальное системное сообщение — облегчённый рендер без пузырька/медиа/реакций.
          * itemView в этом случае инфлейтится из item_message_system.xml, где кроме
@@ -499,12 +585,16 @@ class MessageAdapter(
             onReactionClick: ((String) -> Unit)? = null,
             glassMode: Boolean = false,
             bubbleAlphaSelf: Float = 1.0f,
-            bubbleAlphaOther: Float = 1.0f
+            bubbleAlphaOther: Float = 1.0f,
+            avatarBase64: String? = null,
+            showAvatar: Boolean = false
         ) {
             if (msg.isSystem) {
                 bindSystem(msg)
                 return
             }
+
+            bindAvatar(msg, avatarBase64, showAvatar)
 
             senderView?.let {
                 if (msg.sender.isNotBlank()) {

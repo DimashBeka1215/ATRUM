@@ -17,7 +17,16 @@ class TransportFactory(
     private val isFavorites: Boolean = false,
     private val chatIdLong: Long = -1L,
     private val chatDao: com.atrum.chat.data.ChatDao? = null,
-    private val context: Context? = null
+    private val context: Context? = null,
+    /**
+     * userId администратора ГРУППОВОГО чата (ADR-001, Chat.adminUserId). null для
+     * 1:1-чатов — путь 1:1 не меняется ни на бит (см. NostrTransport.adminUserId).
+     * Без этого поля NostrTransport.adminPubkeyHex всегда null → members.txt никогда
+     * не проходит проверку подписи → MembersSync.applyIncoming всегда no-op даже в
+     * открытом чате/списке чатов (баг: счётчик участников и имя/аватар группы не
+     * обновляются после джойна собеседника).
+     */
+    private val adminUserId: String? = null
 ) {
     @Volatile
     private var cached: ChatTransport? = null
@@ -48,22 +57,27 @@ class TransportFactory(
         val preferTor = transportToken != NostrTransport.NOSTR_DIRECT_TOKEN
         // Ленивый старт Tor: поднимаем демон только когда реально открыт чат через Tor.
         if (preferTor) context?.let { com.atrum.chat.TorManager.start(it) }
-        return NostrTransport(chatId, chatPassword, myUserId, preferTor = preferTor)
+        return NostrTransport(chatId, chatPassword, myUserId, preferTor = preferTor, adminUserId = adminUserId)
     }
 
     private fun resolve(): ChatTransport = instant()
 
     companion object {
-        /** Быстрый транспорт для разовых операций экранов (профиль, верификация и т.п.). */
+        /**
+         * Быстрый транспорт для разовых операций экранов (профиль, верификация и т.п.).
+         * [adminUserId] — передавать chat.adminUserId, если известно, что чат групповой
+         * и нужно читать members.txt (по умолчанию null — как было раньше, 1:1 не тронуты).
+         */
         fun forChat(
             context: Context,
             chatId: String,
             token: String,
             password: String,
-            myUserId: String
+            myUserId: String,
+            adminUserId: String? = null
         ): ChatTransport = TransportFactory(
             chatId = chatId, transportToken = token, chatPassword = password,
-            myUserId = myUserId, context = context
+            myUserId = myUserId, context = context, adminUserId = adminUserId
         ).instant()
     }
 }

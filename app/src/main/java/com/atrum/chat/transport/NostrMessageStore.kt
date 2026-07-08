@@ -19,8 +19,15 @@ import java.util.concurrent.Executors
  */
 object NostrMessageStore {
 
-    // type: 'm' message, 'c' clear marker, 'd' del tombstone (content = хеш удалённого)
-    private class Entry(val id: String, val createdAt: Long, val content: String, val type: Char)
+    // type: 'm' message, 'c' clear marker, 'd' del tombstone (content = хеш удалённого).
+    // pubkey — автор ИМЕННО ЭТОГО события (для 'd' — кто выполнил удаление: автор
+    // сообщения или админ группы, см. deletedMessagesFor/UserStatsActivity). "" для
+    // строк, загруженных со старого (до этого поля) формата диска — атрибуция для
+    // них просто не показывается, это не баг, а разовый переходный период.
+    private class Entry(val id: String, val createdAt: Long, val content: String, val type: Char, val pubkey: String = "")
+
+    /** Удалённое сообщение для экрана статистики: исходный контент + когда/кем удалено. */
+    data class DeletedMessage(val encryptedContent: String, val deletedAtMs: Long, val deleterPubkey: String)
 
     private val mem = ConcurrentHashMap<String, MutableMap<String, Entry>>()
     @Volatile private var dir: File? = null
@@ -104,7 +111,7 @@ object NostrMessageStore {
             // подделки очистки/удаления тем, кто знает лишь channelId (напр. реле).
             if ((type == 'c' || type == 'd') && !verifyCtrl(channelId, type, content, ev)) continue
             if (!map.containsKey(ev.id)) {
-                map[ev.id] = Entry(ev.id, ev.created_at, content, type)
+                map[ev.id] = Entry(ev.id, ev.created_at, content, type, ev.pubkey)
                 changed = true
             }
         }
@@ -129,6 +136,26 @@ object NostrMessageStore {
             .joinToString("\n")
     }
 
+    /**
+     * Удалённые сообщения этого канала для экрана статистики (админ-модерация):
+     * исходный (ещё зашифрованный, как и всё в этом сторе) контент + когда и кем
+     * опубликовано "надгробие". Не влияет на обычный рендер чата (render() их
+     * по-прежнему исключает) — это ОТДЕЛЬНАЯ точка чтения только для UI статистики.
+     * Ограничение: если это устройство никогда не видело исходное 'm'-событие ДО
+     * удаления (например, сообщение стёрто быстрее, чем успел дойти опрос) —
+     * восстановить контент неоткуда, такая запись просто не попадёт в список.
+     */
+    @Synchronized
+    fun deletedMessagesFor(channelId: String): List<DeletedMessage> {
+        val map = mem.getOrPut(channelId) { loadDisk(channelId) }
+        val byHash = HashMap<String, Entry>()
+        for (e in map.values) if (e.type == 'm') byHash[delHash(e.content)] = e
+        return map.values
+            .filter { it.type == 'd' }
+            .mapNotNull { d -> byHash[d.content]?.let { orig -> DeletedMessage(orig.content, d.createdAt, d.pubkey) } }
+            .sortedByDescending { it.deletedAtMs }
+    }
+
     private fun delHash(content: String): String = sha256("atrum_del_$content").take(32)
 
     private fun sha256(s: String): String {
@@ -141,12 +168,17 @@ object NostrMessageStore {
 
     private fun fileName(channelId: String) = "msgs_" + Integer.toHexString(channelId.hashCode()) + ".tsv"
 
+    /**
+     * Формат TSV: id \t createdAt \t type \t pubkey \t content (5 полей, pubkey добавлен
+     * для атрибуции удаления — см. DeletedMessage). Content — ПОСЛЕДНИМ полем, т.к. это
+     * base64+префикс без \t/\n, безопасно как "хвост" строки.
+     */
     private fun writeFile(f: File, entries: List<Entry>) {
         f.bufferedWriter().use { w ->
             for (e in entries) {
-                // content — base64+префикс (без \t и \n), безопасно для TSV.
                 w.write(e.id); w.write("\t"); w.write(e.createdAt.toString()); w.write("\t")
-                w.write(e.type.toString()); w.write("\t"); w.write(e.content); w.write("\n")
+                w.write(e.type.toString()); w.write("\t"); w.write(e.pubkey); w.write("\t")
+                w.write(e.content); w.write("\n")
             }
         }
     }
@@ -159,10 +191,19 @@ object NostrMessageStore {
         runCatching {
             f.bufferedReader().useLines { lines ->
                 for (ln in lines) {
-                    val p = ln.split("\t", limit = 4)
-                    if (p.size < 4) continue
-                    val ca = p[1].toLongOrNull() ?: continue
-                    out[p[0]] = Entry(p[0], ca, p[3], p[2].firstOrNull() ?: 'm')
+                    // Новый формат — 5 полей (с pubkey). Старый файл (до этого поля) —
+                    // 4 поля, читаем как раньше с pubkey="" (просто нет атрибуции удаления
+                    // для сообщений, увиденных до апгрейда — не крашимся, не теряем историю).
+                    val p5 = ln.split("\t", limit = 5)
+                    if (p5.size == 5) {
+                        val ca = p5[1].toLongOrNull() ?: continue
+                        out[p5[0]] = Entry(p5[0], ca, p5[4], p5[2].firstOrNull() ?: 'm', p5[3])
+                    } else {
+                        val p4 = ln.split("\t", limit = 4)
+                        if (p4.size < 4) continue
+                        val ca = p4[1].toLongOrNull() ?: continue
+                        out[p4[0]] = Entry(p4[0], ca, p4[3], p4[2].firstOrNull() ?: 'm')
+                    }
                 }
             }
         }

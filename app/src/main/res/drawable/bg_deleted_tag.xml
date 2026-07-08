@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Форма чипа "удалено" на экране статистики. Цвет заливки НЕ хардкодится здесь —
+     ставится программно как @color/error с пониженной альфой (см. UserStatsActivity,
+     тот же приём ColorUtils.setAlphaComponent, что уже используется в MediaListActivity
+     для подсветки выбранной строки) — так фон корректно виден в обеих темах без
+     хардкода hex (см. CLAUDE.md §4/§5.1). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@android:color/transparent"/>
+    <corners android:radius="5dp"/>
+</shape>

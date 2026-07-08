@@ -17,7 +17,9 @@ import com.google.android.material.imageview.ShapeableImageView
 import com.yalantis.ucrop.UCrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -75,6 +77,24 @@ class PartnerProfileActivity : AppCompatActivity() {
     private var groupChatRoomId: Long = -1L
     private var groupIsAdmin: Boolean = false
     private var groupChatCached: com.atrum.chat.data.Chat? = null
+
+    /**
+     * Последние подтянутые живые профили участников группы (имя/аватар/онлайн),
+     * кэш для перерисовки списка при живых апдейтах ChatParticipantDao (см.
+     * loadAndRenderGroupMembers) — чтобы не делать сетевой pullProfiles на КАЖДОЕ
+     * изменение таблицы участников, а переиспользовать уже известные профили.
+     */
+    private var lastGroupProfiles: Map<String, Profile> = emptyMap()
+
+    /**
+     * Сигнатура последнего отрисованного состояния списка участников группы (см.
+     * renderGroupMembersRows) — нужна, чтобы новый периодический опрос профилей
+     * (раз в 3с, см. loadAndRenderGroupMembers) не пересобирал весь container с нуля
+     * (removeAllViews + заново все View), когда по факту ничего видимого не изменилось.
+     * Без этого список "мигал" бы каждые 3с даже когда все данные те же самые —
+     * нарушение CLAUDE.md §14 п.1 (лишние полные ребайнды/мигание).
+     */
+    private var lastRenderedMembersSignature: String? = null
     private var groupAvatarPendingBitmap: Bitmap? = null
     private var lastBothConfirmed = false     // чтобы pop-анимацию проигрывать только при переходе
 
@@ -1005,6 +1025,20 @@ class PartnerProfileActivity : AppCompatActivity() {
 
             findViewById<View>(R.id.section_members).visibility = View.VISIBLE
             loadAndRenderGroupMembers(chat, networkChatId, password, database)
+
+            // Статистика активности участников — доступна ТОЛЬКО админу (см. §12/§0:
+            // мокап был показан и одобрен пользователем перед реализацией).
+            val statsEntry = findViewById<View>(R.id.card_group_stats_entry)
+            if (groupIsAdmin) {
+                statsEntry.visibility = View.VISIBLE
+                statsEntry.setOnClickListener {
+                    startActivity(android.content.Intent(this@PartnerProfileActivity, GroupStatsActivity::class.java).apply {
+                        putExtra(GroupStatsActivity.EXTRA_CHAT_ID, chatRoomId)
+                    })
+                }
+            } else {
+                statsEntry.visibility = View.GONE
+            }
         }
     }
 
@@ -1112,25 +1146,132 @@ class PartnerProfileActivity : AppCompatActivity() {
         password: String,
         database: com.atrum.chat.data.AppDatabase
     ) {
-        val participants = withContext(Dispatchers.IO) {
+        var latestParticipants = withContext(Dispatchers.IO) {
             database.chatParticipantDao().getForChat(chat.id)
         }
-        renderGroupMembersRows(participants, emptyMap(), chat)
+        renderGroupMembersRows(latestParticipants, emptyMap(), chat)
+
+        // ⚠️ Фикс (репорт: "общий чат медленно грузит, держи их немного в фоне как и
+        // обычные чаты"). Пока ChatActivity открыт, он и так постоянно опрашивает этот
+        // же канал (SyncEngine, ~3с) и кладёт свежий снимок в ChatSnapshotCache — тем
+        // же способом, каким 1:1-чаты мгновенно показываются из кэша при заходе
+        // (см. ChatActivity.loadMessages(), "Попытка загрузить из кэша для мгновенного
+        // отображения"). У этого экрана такого мгновенного старта не было вообще —
+        // каждое открытие профиля группы поднимало ОТДЕЛЬНОЕ сетевое соединение с нуля
+        // и ждало полный relay round-trip, прежде чем показать реальные имена/аватары/
+        // онлайн — отсюда и ощущение "медленно грузит". Теперь сначала пробуем уже
+        // тёплый снимок (почти всегда есть — сюда переходят ИЗ уже открытого чата).
+        // ChatActivity.onPause() полностью останавливает SyncEngine (см. тот файл),
+        // так что кэш сам по себе больше не обновляется, пока этот экран открыт —
+        // поэтому ниже всё равно остаются и сетевой pullAndRenderProfiles(), и
+        // периодический опрос: кэш только для мгновенного первого кадра, а не взамен
+        // живого обновления.
+        ChatSnapshotCache.get(networkChatId)?.let { cached ->
+            val cachedProfiles = when {
+                ChatActivity.SLOT_UNION_PROFILES && cached.profileSlots.isNotEmpty() ->
+                    ProfileSync.unionProfileSlots(cached.profileSlots, password, networkChatId)
+                cached.profilesContent.isNotBlank() ->
+                    ProfileSync.parseProfiles(cached.profilesContent, password, networkChatId)
+                else -> emptyMap()
+            }
+            if (cachedProfiles.isNotEmpty()) {
+                lastGroupProfiles = cachedProfiles
+                renderGroupMembersRows(latestParticipants, cachedProfiles, chat)
+            }
+        }
 
         // Живые профили — подтягиваем в фоне и перерисовываем, когда придут (без сети
         // список участников/банов уже виден выше — только имена/аватары/онлайн донагружаются).
-        try {
-            val transport = com.atrum.chat.transport.NostrTransport(
-                sourceId = networkChatId,
-                chatPassword = password,
-                myUserId = prefs.myUserId,
-                preferTor = true,
-                adminUserId = chat.adminUserId
-            )
-            val profiles = withContext(Dispatchers.IO) { ProfileSync.pullProfiles(transport, password) }
-            renderGroupMembersRows(participants, profiles, chat)
-        } catch (_: Exception) {
-            // Офлайн/сеть не ответила — остаёмся с уже отрисованным локальным кэшем.
+        //
+        // ⚠️ Фикс (репорт: "у админа ник участника неправильный, статус в сети не точен",
+        // не проходит даже после периодического опроса). Причина — ProfileSync.pullProfiles()
+        // читает ОДИН общий блоб profiles.txt (api.loadFileOrNull, последний записавший
+        // "выигрывает"). Для ГРУППЫ несколько участников независимо публикуют СВОИ профили
+        // в СВОИ отдельные слоты (Nostr-события) именно чтобы избежать lost-update — см.
+        // ProfileSync.unionProfileSlots и ChatActivity.SLOT_UNION_PROFILES (тот же принцип,
+        // уже применяется в ChatsListActivity для превью чатов). pullProfiles() эту
+        // per-слотовую унию не делает вообще — если админ и второй участник почти одновременно
+        // публикуют профили, чей-то профиль просто теряется в общем блобе НАВСЕГДА, сколько бы
+        // раз ни опрашивали. Читаем теперь через transport.loadAll().profileSlots + union —
+        // тем же способом, каким это уже надёжно работает в ChatActivity/ChatsListActivity.
+        // ⚠️ Второй кусок того же фикса ("не грузить их постоянно заново"): раньше
+        // pullAndRenderProfiles() поднимал НОВЫЙ NostrTransport на КАЖДЫЙ вызов —
+        // при начальной загрузке, при появлении нового участника И на каждом тике
+        // периодического опроса (см. ниже, раз в 3с). Один и тот же держащийся
+        // "тёплым" транспорт (как у ChatActivity — там он один на весь сеанс экрана)
+        // дешевле переиспользовать, чем поднимать заново каждые несколько секунд.
+        val profilesTransport = com.atrum.chat.transport.NostrTransport(
+            sourceId = networkChatId,
+            chatPassword = password,
+            myUserId = prefs.myUserId,
+            preferTor = true,
+            adminUserId = chat.adminUserId
+        )
+        suspend fun pullAndRenderProfiles(current: List<com.atrum.chat.data.ChatParticipant>) {
+            try {
+                val rawParsed = withContext(Dispatchers.IO) {
+                    val all = profilesTransport.loadAll()
+                    if (ChatActivity.SLOT_UNION_PROFILES && all.profileSlots.isNotEmpty()) {
+                        ProfileSync.unionProfileSlots(all.profileSlots, password, networkChatId)
+                    } else {
+                        ProfileSync.parseProfiles(all.profilesContent, password, networkChatId)
+                    }
+                }
+                // ⚠️ Фикс (тот же класс бага, что и "мигающие аватарки" в ChatActivity —
+                // см. ChatActivity.refreshMessageAvatars): рендерим из "липкого" union
+                // (ProfileSync.unionAndRemember), а НЕ из сырого снимка ЭТОГО конкретного
+                // тика. Один флаки-Tor-тик, вернувший профиль без чьего-то аватара, иначе
+                // на миг гасит уже показанную картинку в списке участников, и она тут же
+                // возвращается на следующем 3с-тике — видимое мерцание.
+                val profiles = ProfileSync.unionAndRemember(networkChatId, rawParsed)
+                lastGroupProfiles = profiles
+                renderGroupMembersRows(current, profiles, chat)
+            } catch (_: Exception) {
+                // Офлайн/сеть не ответила — остаёмся с уже отрисованным локальным кэшем.
+            }
+        }
+
+        pullAndRenderProfiles(latestParticipants)
+
+        // ⚠️ Фикс (аудит групповых чатов, см. отчёт пользователя: у админа список
+        // участников/число не обновлялись без переоткрытия экрана). Раньше список
+        // читался ОДИН РАЗ при открытии экрана — если ChatParticipantDao менялась уже
+        // ПОСЛЕ этого (новый участник добавлен через MembersSync.applyIncoming, бан/анбан
+        // с другого устройства, самолечение админ-энролла и т.п.), экран оставался со
+        // старым списком до повторного захода. Прямое нарушение §1.5 CLAUDE.md
+        // ("всё грузится на месте", без "перезайди, чтобы применилось"). Теперь список —
+        // живой Flow, перерисовывается сразу на любое изменение локального кэша, откуда
+        // бы оно ни пришло.
+        //
+        // ⚠️ Второй фикс (репорт: "ава пользователя подхватывается поздно после входа",
+        // "статус в сети/ники отображаются неправильно"). Раньше pullAndRenderProfiles()
+        // вызывался ТОЛЬКО при открытии экрана и один раз при появлении нового участника
+        // в ChatParticipantDao — если в этот самый момент новый участник ещё не успел
+        // опубликовать/протолкнуть свой profiles.txt на реле (обычная задержка сети/Tor),
+        // повторной попытки уже не было ВООБЩЕ — аватар/имя/онлайн так и оставались
+        // пустыми/устаревшими до переоткрытия экрана. Теперь профили ещё и опрашиваются
+        // периодически (раз в 3с — тот же интервал, что и активный Nostr-поллинг
+        // SyncEngine, см. CLAUDE.md §1), пока этот экран открыт — тот же принцип "всё
+        // подхватывается само", что и в ChatActivity.
+        //
+        // coroutineScope { } — оба child-а (тикер и Flow.collect) структурно привязаны
+        // к этому suspend-вызову: при отмене родительской корутины (см. lifecycleScope
+        // в setupRealGroupExtras, отменяется при уничтожении экрана) оба гарантированно
+        // останавливаются, включая тикер, даже если бы collect не отменился первым.
+        coroutineScope {
+            launch {
+                while (isActive) {
+                    delay(3000L)
+                    pullAndRenderProfiles(latestParticipants)
+                }
+            }
+            database.chatParticipantDao().observeForChat(chat.id).collect { fresh ->
+                latestParticipants = fresh
+                renderGroupMembersRows(fresh, lastGroupProfiles, chat)
+                // Новый участник, чьего профиля (имя/аватар) ещё нет в кэше — подтянуть
+                // профили немедленно, не дожидаясь следующего тика 3с-опроса выше.
+                if (fresh.any { it.userId !in lastGroupProfiles }) pullAndRenderProfiles(fresh)
+            }
         }
     }
 
@@ -1139,21 +1280,64 @@ class PartnerProfileActivity : AppCompatActivity() {
         profiles: Map<String, Profile>,
         chat: com.atrum.chat.data.Chat
     ) {
+        val now = System.currentTimeMillis()
+        val sorted = participants.sortedBy { it.joinedAtMs }
+
+        // ⚠️ Ранний выход по сигнатуре (см. поле lastRenderedMembersSignature) — считаем
+        // ТОЛЬКО из того, что реально видно на экране (не сырой profile.onlineTs,
+        // который меняется почти на каждый тик даже когда бакет "онлайн/офлайн" тот
+        // же самый), иначе периодический 3с-опрос профилей заново перестраивал бы
+        // весь container и создавал видимое мигание без единого реального изменения.
+        val signature = buildString {
+            sorted.forEach { member ->
+                val profile = profiles[member.userId]
+                // Межчатовый fallback (см. ProfileSync.getGlobalKnown) — ТОЛЬКО для имени/
+                // аватара, если в ЭТОМ чате профиль участника ещё не пришёл. Presence
+                // (isOnline) из него намеренно не берём — см. комментарий у globalKnownProfiles.
+                val globalFallback = if (profile == null) ProfileSync.getGlobalKnown(member.userId) else null
+                val isMe = member.userId == prefs.myUserId
+                val displayName = when {
+                    isMe -> profile?.name?.takeIf { it.isNotBlank() } ?: prefs.myName
+                    else -> profile?.name?.takeIf { it.isNotBlank() }
+                        ?: globalFallback?.name?.takeIf { it.isNotBlank() }
+                        ?: member.userId.take(8)
+                }
+                val isOnline = isMe || (profile != null && profile.onlineTs > 0L && now - profile.onlineTs < ONLINE_EXPIRY_MS_LOCAL)
+                val avatarSrc = profile?.avatarBase64 ?: globalFallback?.avatarBase64 ?: (if (isMe) prefs.myAvatarBase64 else null)
+                append(member.userId).append(':').append(member.banned).append(':')
+                append(displayName).append(':').append(isOnline).append(':')
+                append(avatarSrc?.length ?: -1).append('|')
+            }
+            append("admin=").append(chat.adminUserId).append(",meAdmin=").append(groupIsAdmin)
+        }
+        if (signature == lastRenderedMembersSignature) return
+        lastRenderedMembersSignature = signature
+
         val container = findViewById<LinearLayout>(R.id.ll_members_container)
         container.removeAllViews()
         val density = resources.displayMetrics.density
         fun dp(v: Int) = (v * density).toInt()
-        val now = System.currentTimeMillis()
 
-        participants.sortedBy { it.joinedAtMs }.forEach { member ->
+        sorted.forEach { member ->
             val profile = profiles[member.userId]
+            // Тот же межчатовый fallback, что и в сигнатуре выше — если участник ещё не
+            // прислал профиль в ЭТОТ чат, но уже известен по другому (личному) чату,
+            // используем его имя/аватар вместо голого userId, пока свежие данные не придут.
+            val globalFallback = if (profile == null) ProfileSync.getGlobalKnown(member.userId) else null
             val isMe = member.userId == prefs.myUserId
             val displayName = when {
                 isMe -> profile?.name?.takeIf { it.isNotBlank() } ?: prefs.myName
-                else -> profile?.name?.takeIf { it.isNotBlank() } ?: member.userId.take(8)
+                else -> profile?.name?.takeIf { it.isNotBlank() }
+                    ?: globalFallback?.name?.takeIf { it.isNotBlank() }
+                    ?: member.userId.take(8)
             }
             val isAdminRow = member.userId == chat.adminUserId
-            val isOnline = profile != null && profile.onlineTs > 0L && now - profile.onlineTs < ONLINE_EXPIRY_MS_LOCAL
+            // ⚠️ Фикс (репорт: "у админа статус в сети отображается неправильно" —
+            // сам админ видел себя "не в сети"). "Онлайн" для СЕБЯ считается по тому
+            // же profiles.txt/сети, что и для остальных — но раз я прямо сейчас смотрю
+            // этот экран, я точно онлайн, ждать собственный round-trip через сеть
+            // бессмысленно и даёт заведомо неверную картину.
+            val isOnline = isMe || (profile != null && profile.onlineTs > 0L && now - profile.onlineTs < ONLINE_EXPIRY_MS_LOCAL)
 
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -1162,7 +1346,14 @@ class PartnerProfileActivity : AppCompatActivity() {
                 alpha = if (member.banned) 0.4f else 1f
             }
 
-            val avatarBmp = AvatarUtils.fromBase64(profile?.avatarBase64)
+            // ⚠️ Фикс (репорт: "у админа не отображается ава" — своя собственная).
+            // Имя ниже уже давно падает назад на prefs.myName для "себя" — для аватара
+            // такого фолбэка не было, поэтому свой аватар молча ждал round-trip через
+            // pullProfiles(), хотя он и так уже есть локально (prefs.myAvatarBase64),
+            // офлайн, без сети (§1.5 CLAUDE.md).
+            val avatarBmp = AvatarUtils.fromBase64(
+                profile?.avatarBase64 ?: globalFallback?.avatarBase64 ?: (if (isMe) prefs.myAvatarBase64 else null)
+            )
             val avatarView: View = if (avatarBmp != null) {
                 ShapeableImageView(this).apply {
                     setImageBitmap(avatarBmp)

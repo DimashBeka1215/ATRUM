@@ -3,9 +3,49 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:gravity="start"
+    android:orientation="horizontal"
+    android:gravity="top|start"
     android:paddingVertical="2dp">
+
+    <!-- Аватарка отправителя: видна только у ПЕРВОГО сообщения в подряд идущей серии
+         от одного отправителя (см. MessageAdapter.isFirstOfRun/bindAvatar). У остальных
+         сообщений серии остаётся INVISIBLE (не GONE) — место зарезервировано, чтобы
+         пузырьки не «прыгали» по X при появлении/исчезновении аватарки. -->
+    <FrameLayout
+        android:id="@+id/msg_avatar_frame"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:layout_marginEnd="6dp">
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_avatar_placeholder"/>
+
+        <TextView
+            android:id="@+id/tv_msg_avatar_initial"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:textColor="@color/white"
+            android:textSize="12sp"
+            android:textStyle="bold"/>
+
+        <com.google.android.material.imageview.ShapeableImageView
+            android:id="@+id/iv_msg_avatar"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:contentDescription="@null"
+            android:visibility="gone"
+            app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.Circle"/>
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="start">
 
     <!-- Чипы реакций: появляются под пузырьком, выровнены по левому краю -->
     <LinearLayout
@@ -322,5 +362,6 @@
             android:fontFamily="sans-serif"
             android:layout_marginTop="2dp"
             android:paddingHorizontal="2dp"/>
+    </LinearLayout>
     </LinearLayout>
 </LinearLayout>

@@ -187,6 +187,18 @@
             android:exported="false"
             android:theme="@style/Theme.AtrumChat" />
 
+        <!-- Статистика активности участников группы — только для админа -->
+        <activity
+            android:name=".GroupStatsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AtrumChat" />
+
+        <!-- Детальная статистика одного участника (диаграммы, список сообщений) -->
+        <activity
+            android:name=".UserStatsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AtrumChat" />
+
         <!-- Экран QR-приглашения (стилизованный QR + поделиться/сканировать) -->
         <activity
             android:name=".InviteQrActivity"

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_settings_card_dashed"
+    android:layout_marginHorizontal="12dp"
+    android:layout_marginBottom="8dp"
+    android:paddingHorizontal="14dp"
+    android:paddingVertical="9dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/tv_del_time"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="@color/text_tertiary"
+            android:textSize="10.5sp" />
+
+        <TextView
+            android:id="@+id/tv_del_tag"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_deleted_tag"
+            android:paddingHorizontal="6dp"
+            android:paddingVertical="1dp"
+            android:text="@string/stats_deleted_tag"
+            android:textColor="@color/error"
+            android:textSize="9.5sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tv_del_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textColor="@color/text_tertiary"
+        android:textSize="13sp" />
+
+    <TextView
+        android:id="@+id/tv_del_meta"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:textColor="@color/text_quaternary"
+        android:textSize="10sp" />
+
+</LinearLayout>

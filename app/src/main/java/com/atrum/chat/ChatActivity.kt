@@ -47,6 +47,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -246,6 +247,22 @@ class ChatActivity : SecureActivity() {
     /** Локальные метки первого наблюдения кандидата в profiles.txt (для админа, честный FIFO-порядок enrollment'а). */
     private val groupCandidateFirstSeenMs = mutableMapOf<String, Long>()
 
+    /**
+     * ⚠️ Сериализация maybeAdminEnrollNewMembers() (найдено по репорту пользователя: у админа
+     * список участников не совпадал с тем, что видели остальные — счётчик расходился на 1).
+     * Функция вызывается из ДВУХ независимых мест — doSyncProfilesOnce() (при открытии чата,
+     * с retry) и processChannelData() (на каждом тике SyncEngine) — оба suspend, оба могут
+     * выполняться ПАРАЛЛЕЛЬНО (разные корутины). Без сериализации оба читают current/candidates
+     * НЕЗАВИСИМЫМИ снимками и публикуют СВОИ версии members.txt с одним и тем же newVersion
+     * (chat.membersVersion+1 из ещё не обновлённого in-memory chat) — выигрывает та, что реле
+     * вернёт с более поздним created_at (см. NostrTransport.latestVerifiedMembersFile), а не
+     * более полная. Именно так админ мог локально самовылечиться и увидеть себя+кандидатов,
+     * а "победившая" по таймингу публикация от ВТОРОГО (параллельного) вызова — со СТАРЫМ,
+     * ещё не долеченным snapshot'ом — стереть админа у всех остальных. Mutex гарантирует не
+     * более одного одновременного цикла чтения-публикации на сессию чата.
+     */
+    private val memberEnrollMutex = kotlinx.coroutines.sync.Mutex()
+
     /** Менеджер отправки: token bucket + очередь + прогрессивные блокировки. */
     private lateinit var sendManager: MessageSendManager
 
@@ -316,7 +333,10 @@ class ChatActivity : SecureActivity() {
     @Volatile private var isRecordingVoice = false
 
     /**
-     * Последний снимок профилей из канала (обновляется в doRefreshPartnerReadIndex).
+     * Последний снимок профилей из канала (обновляется в processParsedProfiles —
+     * из processProfilesFromSlots/processProfilesFromContent, вызывается из
+     * processChannelData() на КАЖДОМ тике SyncEngine, см. фикс "вошёл только после
+     * первого сообщения" — раньше зависело от изменения chat.txt).
      * Используется для write-only typing/online пушей — 1 запрос вместо 2.
      * Максимальное «протухание» = ~4 сек (один цикл опроса).
      */
@@ -327,6 +347,40 @@ class ChatActivity : SecureActivity() {
      * Снижает CPU-нагрузку при частом опросе (профили меняются только при presence-пуше).
      */
     private var lastProfilesHash: Int = 0
+
+    /**
+     * Живая карта userId → аватарка для аватарок в пузырьках сообщений (MessageAdapter).
+     * Свой аватар — ВСЕГДА из prefs.myAvatarBase64: локально, без сети, поэтому меняется
+     * мгновенно (включая случай "поменял аву в Настройках и вернулся в открытый чат" —
+     * см. вызов в onResume()). Аватары остальных участников — из lastKnownProfiles, той
+     * же карты, что уже питает шапку/presence/typing (единая точка правды, никакого
+     * отдельного пути синхронизации — см. CLAUDE.md §11 и §1.5: обновление должно быть
+     * видно сразу, без выхода-входа). adapter.updateAvatars() сам сравнивает старое/новое
+     * значение и точечно перебиндивает только реально изменившиеся строки.
+     */
+    /**
+     * @param source Карта профилей для аватарок. По умолчанию — [lastKnownProfiles] (для
+     *   вызовов вне сетевого чтения — seed своей аватарки в onCreate/onResume). При вызове
+     *   ИЗ обработки сетевого чтения (см. processParsedProfiles) ОБЯЗАН передаваться "липкий"
+     *   union (ProfileSync.unionAndRemember), а НЕ сырой parsed-снимок текущего тика — иначе
+     *   один флаки-Tor-тик, вернувший профиль без аватара (см. известный класс багов
+     *   "гонка перезаписи / устаревшее чтение", ProfileSync.unionWithKnown), на миг стирает
+     *   аватарку участника из пузырьков, и она тут же возвращается на следующем тике —
+     *   ⚠️ Фикс (репорт: "аватарки собеседников мигают и исчезают и появляются периодически").
+     */
+    private fun refreshMessageAvatars(source: Map<String, Profile> = lastKnownProfiles) {
+        val map = HashMap<String, String?>(source.size + 1)
+        for ((uid, profile) in source) {
+            // Межчатовый fallback (ProfileSync.getGlobalKnown): если в ЭТОМ чате у участника
+            // ещё нет своего аватара (например, только что зашёл, profiles.txt этого чата
+            // ещё не долетел), но он уже известен по ДРУГОМУ чату (тот же userId стабилен
+            // для человека везде — см. Prefs.myUserId), используем его аватар как временный,
+            // а не пустую заглушку до собственного round-trip этого чата.
+            map[uid] = profile.avatarBase64 ?: ProfileSync.getGlobalKnown(uid)?.avatarBase64
+        }
+        map[prefs.myUserId] = prefs.myAvatarBase64
+        adapter.updateAvatars(map)
+    }
 
     /** Контроллер панели стикеров. */
     private var stickerPanel: StickerPanelController? = null
@@ -670,7 +724,24 @@ class ChatActivity : SecureActivity() {
      *         повторить попытку, это НЕ ошибка.
      */
     private suspend fun doSyncProfilesOnce(): Boolean {
-        val allProfiles = ProfileSync.pullProfiles(transport, chat.chatPassword)
+        // ⚠️ Фикс (тот же класс бага, что уже чинили в PartnerProfileActivity): раньше
+        // здесь стоял ProfileSync.pullProfiles() — читает ОДИН общий блоб profiles.txt
+        // (последний записавший "выигрывает"), а несколько участников группы пишут
+        // профили в СВОИ отдельные слоты именно чтобы не терять чужие правки при
+        // одновременной записи. При почти одновременной публикации (например, сразу
+        // после джойна) чей-то профиль мог просто потеряться в общем блобе — и у
+        // группы "быстрый путь" энролла (maybeAdminEnrollNewMembers(allProfiles) ниже)
+        // не видел нового участника, пока подстраховочный путь в processChannelData()
+        // не подхватит его отдельным тиком. transport.loadAll() — тот же самый запрос,
+        // что и обычный поллинг SyncEngine (не новая/более дорогая операция), и уже
+        // отдаёт profileSlots для честного union-чтения (см. ChatActivity.SLOT_UNION_PROFILES,
+        // тот же принцип, что в ChatsListActivity/PartnerProfileActivity).
+        val allData = transport.loadAll()
+        val allProfiles = if (SLOT_UNION_PROFILES && allData.profileSlots.isNotEmpty()) {
+            ProfileSync.unionProfileSlots(allData.profileSlots, chat.chatPassword, chat.chatId)
+        } else {
+            ProfileSync.parseProfiles(allData.profilesContent, chat.chatPassword, chat.chatId)
+        }
         val partner = ProfileSync.findPartner(allProfiles, prefs.myUserId, prefs.myName)
 
         // Если кроме меня появился кто-то ещё (или partner найден) — чат "занят".
@@ -956,7 +1027,11 @@ class ChatActivity : SecureActivity() {
             isFavorites = chat.isFavorites,
             chatIdLong = chat.id,
             chatDao = db.chatDao(),
-            context = applicationContext
+            context = applicationContext,
+            // Групповой чат: без этого members.txt никогда не проходит проверку подписи
+            // в NostrTransport (adminPubkeyHex был бы всегда null) — участники/имя/аватар
+            // группы не обновлялись даже в открытом чате. 1:1 не тронуты (adminUserId = null).
+            adminUserId = chat.adminUserId
         )
         // Стартуем с Nostr напрямую (без проверки) — UI не ждёт
         transport = transportFactory.instant()
@@ -988,6 +1063,9 @@ class ChatActivity : SecureActivity() {
         // Начальные значения непрозрачности пузырьков (могут быть обновлены в applyWallpaper)
         adapter.bubbleAlphaSelf  = prefs.bubbleAlphaSelf  / 100f
         adapter.bubbleAlphaOther = prefs.bubbleAlphaOther / 100f
+        // Сидируем свой аватар сразу (локально, без сети) — не ждём первого поллинга,
+        // чтобы своя аватарка в пузырьках была видна с первого кадра (см. §1.5).
+        refreshMessageAvatars()
 
         binding.rvMessages.layoutManager = LinearLayoutManager(this).apply {
             stackFromEnd = true
@@ -1473,6 +1551,11 @@ class ChatActivity : SecureActivity() {
         resumeVisibleStickers()
         applyWallpaper()
         if (::chat.isInitialized) {
+            // Своя аватарка — сразу и без сети (могла поменяться в Настройках, пока мы
+            // были на другом экране). Остальные участники подтянутся чуть ниже через
+            // syncProfiles() (сеть) — это уже мгновенно по локальным меркам (§1.5), но
+            // своя аватарка не должна ждать даже одного сетевого тика.
+            if (::adapter.isInitialized) refreshMessageAvatars()
             // Re-ensure: при возврате в Tor-чат поднимаем Tor, если он «уснул» в фоне.
             if (isTorChat()) {
                 TorManager.start(this)
@@ -1685,73 +1768,19 @@ class ChatActivity : SecureActivity() {
     }
 
     /**
-     * Suspend-версия опроса профилей — вызывается из polling-цикла (sequential)
-     * и напрямую из syncProfiles/refreshPartnerReadIndex для разовых вызовов.
-     * Обновляет: галочки прочтения, индикатор «печатает».
-     */
-    private suspend fun doRefreshPartnerReadIndex() {
-        // Загружаем сырой зашифрованный файл и проверяем хеш ДО дешифровки.
-        // Если profiles.txt не изменился — пропускаем парсинг (экономим CPU).
-        // Сам GET всё равно происходит — это нужно для обнаружения изменений.
-        val rawEncrypted = transport.loadFileOrNull("profiles.txt")?.trim()
-        val newHash = rawEncrypted.hashCode()
-        if (newHash == lastProfilesHash && lastKnownProfiles.isNotEmpty()) return
-        lastProfilesHash = newHash
-
-        val allProfiles = if (rawEncrypted.isNullOrEmpty()) emptyMap()
-            else ProfileSync.parseProfiles(rawEncrypted, chat.chatPassword, transport.chatId)
-        // Обновляем кэш — используется для write-only typing/online пушей
-        lastKnownProfiles.clear()
-        lastKnownProfiles.putAll(allProfiles)
-
-        val partner = ProfileSync.findPartner(allProfiles, prefs.myUserId, prefs.myName)
-            ?: run { updateTypingIndicator(false); updateOnlineIndicator(false); return }
-
-        // Проверяем появился ли у партнёра новый ephemeral pub key — если да, устанавливаем V3
-        tryEstablishSessionKey(partner.ephemeralPubKey)
-        verifyPartnerIdentity(partner)
-
-        // Синхронизируем имя и аватарку партнёра при каждом опросе профилей.
-        val nameToSave = if (partner.name.isNotBlank()) partner.name else chat.partnerName
-        val tagToSave = if (!partner.tag.isNullOrBlank()) partner.tag else chat.partnerTag
-        val avatarToSave = if (!partner.avatarBase64.isNullOrBlank()) partner.avatarBase64 else chat.partnerAvatarBase64
-
-        if (nameToSave != chat.partnerName || tagToSave != chat.partnerTag || avatarToSave != chat.partnerAvatarBase64) {
-            db.chatDao().updatePartnerProfile(chat.id, nameToSave, tagToSave, avatarToSave)
-            chat = chat.copy(partnerName = nameToSave, partnerTag = tagToSave, partnerAvatarBase64 = avatarToSave)
-            applyPartnerToHeader()
-        }
-
-        // Флаг удалённого профиля — обновляем в DB и UI если изменился
-        if (partner.deleted != chat.partnerDeleted) {
-            db.chatDao().updatePartnerDeleted(chat.id, partner.deleted)
-            chat = chat.copy(partnerDeleted = partner.deleted)
-            applyPartnerToHeader()
-        }
-
-        if (partner.lastReadIndex != chat.partnerLastReadIndex) {
-            db.chatDao().updatePartnerLastRead(chat.id, partner.lastReadIndex)
-            chat = chat.copy(partnerLastReadIndex = partner.lastReadIndex)
-            adapter.setPartnerLastReadIndex(partner.lastReadIndex)
-        }
-
-        lastPartnerProfile = partner
-        applyPresence()
-
-        // Пока партнёр онлайн — держим быстрый интервал поллинга сообщений (BASE_MS).
-    }
-
-    /** Разовый вызов для ручного обновления (кнопка обновить, onResume). */
-    private fun refreshPartnerReadIndex() = lifecycleScope.launch {
-        try { doRefreshPartnerReadIndex() } catch (_: Exception) {}
-    }
-
-    /**
      * Обрабатывает уже загруженный зашифрованный контент profiles.txt — без сетевого вызова.
      *
      * Вызывается из loadMessages() когда данные пришли вместе с chat.txt в одном GET
-     * (preloadedData.profilesContent или результат transport.loadAll()). Содержит ту же
-     * логику что и doRefreshPartnerReadIndex(), но не делает собственный network-запрос.
+     * (preloadedData.profilesContent или результат transport.loadAll()).
+     *
+     * ⚠️ Удалены doRefreshPartnerReadIndex()/refreshPartnerReadIndex() (мёртвый код —
+     * ни один вызывающий по всему проекту не найден, см. аудит по репорту пользователя
+     * "авы/ники везде"). Дублировали ровно эту же логику, но читали profiles.txt старым
+     * lossy-способом — ОДИН общий блоб вместо union слотов (см. ProfileSync.unionProfileSlots),
+     * из-за чего при одновременной публикации профиля несколькими участниками группы
+     * чей-то профиль мог потеряться. Судя по всему остались от архитектуры до перехода
+     * на единый SyncEngine (§1 CLAUDE.md — весь polling в одном месте); заново подключать
+     * их нельзя — это был бы отдельный, второй polling-цикл, что прямо запрещено §1.
      *
      * Результат: обновлены lastKnownProfiles, typing/online индикаторы, галочки прочтения,
      * имя/аватар партнёра, ephemeral ключ (V3 forward secrecy).
@@ -1779,6 +1808,14 @@ class ChatActivity : SecureActivity() {
         lastKnownProfiles.putAll(parsed)
         // Для отображения и сессионного ключа — «липкий» партнёр (флаки-чтение не теряет его).
         val allProfiles = ProfileSync.unionAndRemember(transport.chatId, parsed)
+        // ⚠️ Фикс (репорт: "аватарки собеседников мигают и исчезают и появляются
+        // периодически"): аватарки в пузырьках сообщений ОБЯЗАНЫ строиться из "липкого"
+        // allProfiles, а НЕ из сырого lastKnownProfiles/parsed этого конкретного тика —
+        // иначе один флаки-Tor-тик без аватара в ответе на миг гасит уже показанную
+        // картинку, и она тут же возвращается на следующем тике (мерцание). Считается
+        // ДО ветвления по partner (для групп partner может быть null, а аватарки
+        // участников всё равно должны обновиться).
+        refreshMessageAvatars(allProfiles)
 
         val partner = ProfileSync.findPartner(allProfiles, prefs.myUserId, prefs.myName)
         if (partner == null) {
@@ -1908,6 +1945,26 @@ class ChatActivity : SecureActivity() {
             withContext(Dispatchers.Main) {
                 adapter.setReactions(currentReactions, prefs.myUserId)
             }
+        }
+
+        // ── Profiles (typing / online / partner data) ─────────────────────────
+        // ⚠️ ПЕРЕНЕСЕНО СЮДА (было ниже, после декодирования сообщений) — найдено по
+        // репорту пользователя: "человек считается вошедшим только после первого его
+        // сообщения". Раньше этот блок стоял ПОСЛЕ раннего return по "chatContent ==
+        // lastContent" (см. ниже) — точно та же ловушка, что уже описана в комментарии
+        // у блока реакций выше: если новый участник только опубликовал profiles.txt
+        // (вступил, прислал свой профиль), но ещё не написал ни одного сообщения,
+        // chatContent не менялся → ранний return срабатывал ДО того, как lastKnownProfiles
+        // успевал обновиться → maybeAdminEnrollNewMembers() ниже видел СТАРЫЙ снимок
+        // lastKnownProfiles без нового участника и не мог его добавить. Только когда
+        // кто-то (неважно кто) отправлял сообщение — chatContent менялся, early return
+        // не срабатывал, профили наконец обновлялись, и УЖЕ НА СЛЕДУЮЩЕМ тике админ
+        // видел кандидата. Теперь профили читаются ДО early return и ДО enrollment —
+        // тот же тик подхватывает и профиль, и добавление в members.txt.
+        if (SLOT_UNION_PROFILES && data.profileSlots.isNotEmpty()) {
+            processProfilesFromSlots(data.profileSlots)   // Фаза 1: union всех слотов
+        } else if (profilesContent.isNotBlank()) {
+            processProfilesFromContent(profilesContent)
         }
 
         // ── members.txt: членство/бан группового чата (ADR-001) ──────────────
@@ -2114,13 +2171,8 @@ class ChatActivity : SecureActivity() {
 
         // ── Read receipt ──────────────────────────────────────────────────────
         scheduleMarkAsRead(allLines.size)
-
-        // ── Profiles (typing / online / partner data) ─────────────────────────
-        if (SLOT_UNION_PROFILES && data.profileSlots.isNotEmpty()) {
-            processProfilesFromSlots(data.profileSlots)   // Фаза 1: union всех слотов
-        } else if (profilesContent.isNotBlank()) {
-            processProfilesFromContent(profilesContent)
-        }
+        // Профили (typing/online/partner data) теперь читаются ВЫШЕ, до early return
+        // по chatContent — см. комментарий там же (фикс "вошёл только после сообщения").
     }
 
     /**
@@ -2212,14 +2264,47 @@ class ChatActivity : SecureActivity() {
      */
     private suspend fun maybeAdminEnrollNewMembers(seenProfiles: Map<String, Profile> = lastKnownProfiles) {
         if (!chat.isGroup || chat.adminUserId != prefs.myUserId) return
-        val current = db.chatParticipantDao().getForChat(chat.id)
-        if (current.isEmpty()) return // наша собственная версия 1 ещё не долетела — подождём
+        // Сериализация против гонки двух параллельных вызывающих (см. memberEnrollMutex).
+        // ⚠️ withLock — inline-функция: голый return внутри лямбды ниже — non-local return
+        // из ВСЕЙ maybeAdminEnrollNewMembers (а не только из лямбды), но это безопасно —
+        // try/finally внутри withLock корректно вызовет unlock() даже при таком возврате.
+        memberEnrollMutex.withLock {
+        var current = db.chatParticipantDao().getForChat(chat.id)
+        var selfHealed = false
+        if (current.isEmpty()) {
+            // ⚠️ Самолечение для ГРУПП, СОЗДАННЫХ ДО ФИКСА membersVersion (см.
+            // CreateChatActivity.createGroupChat): у них локально уже стоит
+            // Chat.membersVersion = 1, из-за чего наш собственный v1 members.txt
+            // отбрасывался анти-откатом в MembersSync.applyIncoming НАВСЕГДА (parsed.version
+            // 1 <= chat.membersVersion 1). Раньше здесь стоял простой return — админ
+            // вечно ждал "версию 1", а ChatParticipantDao никогда не заполнялась → счётчик
+            // участников не рос, ни один новый участник не подтверждался (баннер "Ожидаем
+            // подтверждения" висел бесконечно). Чинить прошлые версии members.txt задним
+            // числом смысла нет — вместо этого раз это МОЙ (админский) чат и я администратор,
+            // я по определению первый гарантированный участник. Заводим себя локально ПРЯМО
+            // СЕЙЧАС и продолжаем в этом же тике — следующий maybeAdminEnrollNewMembers()
+            // (или этот же вызов чуть ниже) увидит непустой current и опубликует версию > 1,
+            // которая уже нормально пройдёт анти-откат у всех клиентов.
+            db.chatParticipantDao().upsert(
+                com.atrum.chat.data.ChatParticipant(
+                    ownerId = chat.id,
+                    userId = prefs.myUserId,
+                    banned = false
+                )
+            )
+            current = db.chatParticipantDao().getForChat(chat.id)
+            selfHealed = true
+        }
         val knownIds = current.map { it.userId }.toSet()
         val bannedIds = current.filter { it.banned }.map { it.userId }.toSet()
         val activeCount = current.count { !it.banned }
 
         val candidates = seenProfiles.keys.filter { it !in knownIds && it !in bannedIds }
-        if (candidates.isEmpty()) return
+        // Если только что самовылечились (см. выше) — публикуем исправленную версию ДАЖЕ
+        // без новых кандидатов, иначе локальный фикс останется только у меня: остальные
+        // участники (и я сам при следующей переустановке) так и не увидят membersVersion,
+        // который реально проходит анти-откат.
+        if (candidates.isEmpty() && !selfHealed) return
 
         // Запоминаем момент первого наблюдения — используется только для сортировки
         // ниже (честный FIFO), не синхронизируется по сети и не переживает выход из чата.
@@ -2228,7 +2313,11 @@ class ChatActivity : SecureActivity() {
 
         val limit = chat.participantLimit
         val freeSlots = limit?.let { (it - activeCount).coerceAtLeast(0) } ?: candidates.size
-        if (freeSlots <= 0) return
+        // ⚠️ freeSlots <= 0 значит "некого добавить" — НЕ значит "нечего публиковать".
+        // Если candidates пуст (freeSlots вычислится в 0 и без лимита) но мы только что
+        // selfHealed — всё равно идём публиковать версию с самим собой, иначе фикс
+        // останется только локальным (см. комментарий выше).
+        if (freeSlots <= 0 && candidates.isNotEmpty()) return
 
         val toAdd = candidates.sortedBy { groupCandidateFirstSeenMs[it] ?: Long.MAX_VALUE }.take(freeSlots)
         val newVersion = chat.membersVersion + 1
@@ -2247,6 +2336,7 @@ class ChatActivity : SecureActivity() {
             // Тихо игнорируем — следующий опрос (SyncEngine, единый цикл) повторит попытку,
             // как только увидит тех же кандидатов снова в lastKnownProfiles.
         }
+        } // конец memberEnrollMutex.withLock
     }
 
     /**
@@ -3002,14 +3092,6 @@ class ChatActivity : SecureActivity() {
     // ── Forward secrecy ──────────────────────────────────────────────────────
 
     /**
-     * Устанавливает сессионный ключ (V3) если партнёр опубликовал новый ephemeral pub key.
-     *
-     * Вызывается из syncProfiles() и doRefreshPartnerReadIndex() при каждом получении
-     * профиля партнёра. Пересчёт происходит только при смене ключа.
-     *
-     * После setSessionKey() все новые encrypt() автоматически используют V3 (forward secrecy).
-     */
-    /**
      * Проверяет identity партнёра (пункт 7, аддитивно — НЕ блокирует сессию).
      * Сверяет подпись эфемерного ключа и сравнивает identity-ключ с запомненным (TOFU).
      */
@@ -3096,6 +3178,19 @@ class ChatActivity : SecureActivity() {
         } catch (_: Exception) {}
     }
 
+    /**
+     * Устанавливает сессионный ключ (V3) если партнёр опубликовал новый ephemeral pub key.
+     *
+     * Вызывается из doSyncProfilesOnce() и processParsedProfiles() при каждом получении
+     * профиля партнёра. Пересчёт происходит только при смене ключа.
+     *
+     * ⚠️ Комментарий раньше был оторван от этой функции (стоял на ~90 строк выше, сразу
+     * после НЕсвязанного unlockAfterSend-блока, перед доккомментарием verifyPartnerIdentity —
+     * похоже, остался на месте после переноса самой функции при более раннем рефакторинге).
+     * Перенесён обратно вплотную к функции, которую описывает.
+     *
+     * После setSessionKey() все новые encrypt() автоматически используют V3 (forward secrecy).
+     */
     private fun tryEstablishSessionKey(partnerPubKey: String?) {
         // ⛔ Групповые чаты (ADR-001): ECDH-сессия рассчитана строго на двух участников,
         // для группы не устанавливается — см. комментарий в onCreate. myEphemeralPrivKey
@@ -3907,6 +4002,18 @@ class ChatActivity : SecureActivity() {
 
     // ====== МЕНЮ ДЕЙСТВИЙ НАД СООБЩЕНИЕМ ======
 
+    /**
+     * true — я админ ЭТОЙ группы (тот же принцип, что PartnerProfileActivity.groupIsAdmin).
+     * Используется для пункта «Удалить у всех» на ЧУЖИХ сообщениях в обычном чате (см.
+     * showMessageMenu) — протокол это уже поддерживал ДО этой правки: «надгробие»
+     * (transport.deleteLine) подтверждается знанием ПАРОЛЯ чата, а не подписью автора
+     * (см. NostrMessageStore.verifyCtrl/ctrlToken), так что расширение видимости пункта
+     * меню — чисто клиентское изменение, без единой правки формата/протокола.
+     */
+    private val chatIsAdmin: Boolean
+        get() = ::chat.isInitialized && chat.isGroup &&
+            !chat.adminUserId.isNullOrBlank() && chat.adminUserId == prefs.myUserId
+
     private fun showMessageMenu(msg: Message, anchor: View) {
         TelegramMenu.show(
             ctx      = this,
@@ -3918,6 +4025,9 @@ class ChatActivity : SecureActivity() {
                 if (msg.isSelf) {
                     add(TelegramMenu.Item(getString(R.string.action_edit),   R.drawable.ic_edit_menu)  { showEditDialog(msg) })
                     add(TelegramMenu.Item(getString(R.string.action_delete), R.drawable.ic_trash_menu, isDestructive = true) { confirmDelete(msg) })
+                } else if (chatIsAdmin) {
+                    // Модерация: админ может удалить ЧУЖОЕ сообщение у всех участников.
+                    add(TelegramMenu.Item(getString(R.string.action_delete_for_all_admin), R.drawable.ic_trash_menu, isDestructive = true) { confirmDelete(msg) })
                 }
             },
             onReaction = { emoji -> handleReactionToggle(msg.msgId, emoji) }
@@ -4352,7 +4462,8 @@ class ChatActivity : SecureActivity() {
                     transportToken  = trimmed,
                     chatPassword = chat.chatPassword,
                     myUserId   = prefs.myUserId,
-                    context    = applicationContext
+                    context    = applicationContext,
+                    adminUserId = chat.adminUserId
                 )
                 transport = transportFactory.instant()
                 // В фоне проверяем доступность и, если нужно, переключаемся на Nostr

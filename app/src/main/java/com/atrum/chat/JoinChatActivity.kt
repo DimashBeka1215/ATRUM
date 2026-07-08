@@ -5,9 +5,14 @@ import com.atrum.chat.transport.BluetoothTransport
 import com.atrum.chat.transport.NostrTransport
 import com.atrum.chat.nostr.NostrRelayPool
 
+import android.animation.Keyframe
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
+import android.animation.ValueAnimator
 import android.content.Intent
 import android.os.Bundle
 import android.text.InputType
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.animation.Animation
 import android.view.animation.LinearInterpolator
@@ -65,6 +70,15 @@ class JoinChatActivity : SecureActivity() {
     private enum class UiState { IDLE, LOADING, ERROR, WARNING }
     private var state: UiState = UiState.IDLE
 
+    /**
+     * Пульс портала "в такт сердцу" (мокап одобрен пользователем, см. запрос —
+     * спокойное дыхание в режиме ожидания, активнее и быстрее когда чат/группа
+     * реально подтверждены сетью, с виброоткликом в такт). Смотри startPortalHeartbeat/
+     * triggerFoundPulse ниже.
+     */
+    private var heartbeatAnimator: ValueAnimator? = null
+    private var portalFoundPulseActive = false
+
     private val scanLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { res ->
@@ -98,6 +112,7 @@ class JoinChatActivity : SecureActivity() {
         }
 
         startPortalAnimation()
+        startPortalHeartbeat(fast = false)
 
         // Приглашение могло прийти из штатной камеры (deep-link atrum://join#…)
         // или быть передано явным extra (например, со сканера на экране приглашения).
@@ -132,6 +147,7 @@ class JoinChatActivity : SecureActivity() {
     override fun onDestroy() {
         super.onDestroy()
         connectJob?.cancel()
+        heartbeatAnimator?.cancel()
     }
 
     // ═══ Основной flow ═══
@@ -263,6 +279,23 @@ class JoinChatActivity : SecureActivity() {
             if (invite.isGroup) {
                 val myUserId = prefs.myUserId
 
+                // ⚠️ Фикс (найдено по репорту пользователя: в портале не показывались
+                // название и аватар группы). Причина — showPartnerInfo() вызывался ТОЛЬКО
+                // в 1:1-пути ниже по коду; групповая ветка всегда завершается через
+                // return (см. конец этой ветки) и до него никогда не доходила. Название
+                // группы известно СРАЗУ из инвайта (groupNameSeed, зашито без сети) —
+                // показываем не дожидаясь сети (§1.5 CLAUDE.md). Аватар группы в инвайт
+                // не зашит (раздул бы код в разы) — подтянем его чуть ниже, как только
+                // получим members.txt/сеть.
+                withContext(Dispatchers.Main) {
+                    showFoundInfo(
+                        name = invite.groupNameSeed?.takeIf { it.isNotBlank() }
+                            ?: getString(R.string.cc_group_default_name),
+                        tag = null,
+                        avatarBase64 = null
+                    )
+                }
+
                 setProgress(getString(R.string.join_status_verifying))
                 val allData = withContext(Dispatchers.IO) {
                     try {
@@ -309,6 +342,25 @@ class JoinChatActivity : SecureActivity() {
                     if (!profilesMap.containsKey(myUserId) && limit != null && profilesMap.size >= limit) {
                         showError(getString(R.string.join_err_group_full))
                         return
+                    }
+                }
+
+                // Название/аватар группы, подтверждённые СЕТЬЮ (members.txt реально
+                // получен) — обновляем превью в портале И переводим пульс в "активный"
+                // режим (мокап одобрен пользователем). Специально ПОСЛЕ бан/лимит-
+                // проверок выше: если группа забанила/переполнена, мы уже вышли по
+                // return и не показываем "нашли" + не запускаем радостный пульс для
+                // чата, в который на самом деле не попали.
+                if (membersParsed?.groupName != null || membersParsed?.groupAvatarBase64 != null) {
+                    withContext(Dispatchers.Main) {
+                        showFoundInfo(
+                            name = membersParsed.groupName?.takeIf { it.isNotBlank() }
+                                ?: invite.groupNameSeed?.takeIf { it.isNotBlank() }
+                                ?: getString(R.string.cc_group_default_name),
+                            tag = null,
+                            avatarBase64 = membersParsed.groupAvatarBase64
+                        )
+                        triggerFoundPulse()
                     }
                 }
 
@@ -390,7 +442,12 @@ class JoinChatActivity : SecureActivity() {
                     TorSyncWatchdog.disarm(invite.channelId, "партнёр найден при первом pullProfiles (JoinChatActivity)")
                 }
                 withContext(Dispatchers.Main) {
-                    showPartnerInfo(partnerProfileFound)
+                    showFoundInfo(
+                        name = partnerProfileFound.name,
+                        tag = partnerProfileFound.tag,
+                        avatarBase64 = partnerProfileFound.avatarBase64
+                    )
+                    triggerFoundPulse()
                 }
             }
 
@@ -506,6 +563,13 @@ class JoinChatActivity : SecureActivity() {
         binding.tvStatus.visibility = View.VISIBLE
         setInteractive(true)
         binding.btnConnect.text = getString(R.string.join_chat_connect)
+        // Ошибка ПОСЛЕ того, как уже показали "нашли" (см. triggerFoundPulse) — например,
+        // группа оказалась переполнена уже после показа превью. Возвращаем портал в
+        // спокойный пульс, а не оставляем его "радостно" биться рядом с ошибкой.
+        if (portalFoundPulseActive) {
+            portalFoundPulseActive = false
+            startPortalHeartbeat(fast = false)
+        }
     }
 
     private fun showWarning(text: String) {
@@ -556,39 +620,132 @@ class JoinChatActivity : SecureActivity() {
         binding.ivDoor.startAnimation(rotate)
     }
 
-    private fun showPartnerInfo(profile: Profile) {
-        val bitmap = AvatarUtils.fromBase64(profile.avatarBase64)
+    /**
+     * Пульс портала "в такт сердцу" (мокап одобрен пользователем). Спокойный режим
+     * (fast=false) — мягкое двойное биение раз ~1.8с, слабый виброотклик на каждый
+     * удар (как в покое). Активный (fast=true) — чаще и сильнее (~0.9с), запускается
+     * ТОЛЬКО из triggerFoundPulse() при реально подтверждённом сетью "нашли" (см.
+     * вызовы в runConnect — НЕ на мгновенном локальном groupNameSeed, это ещё не сеть).
+     *
+     * Крутится параллельно с startPortalAnimation() (медленное вращение) — ObjectAnimator
+     * (scale/alpha, свойства View) и старый Animation (rotate, canvas-матрица при
+     * отрисовке) используют разные механизмы и корректно комбинируются на одной вью.
+     */
+    private fun startPortalHeartbeat(fast: Boolean) {
+        heartbeatAnimator?.cancel()
+        val view = binding.ivDoor
+        val duration = if (fast) 900L else 1800L
+        val peakA = if (fast) 1.12f else 1.05f
+        val peakB = if (fast) 1.08f else 1.03f
+        val alphaBase = if (fast) 0.88f else 0.78f
+        val alphaPeak = 1f
+
+        fun kf(fraction: Float, value: Float) = Keyframe.ofFloat(fraction, value)
+        val scaleXHolder = PropertyValuesHolder.ofKeyframe(
+            View.SCALE_X,
+            kf(0f, 1f), kf(0.15f, peakA), kf(0.30f, 1f), kf(0.45f, peakB), kf(0.60f, 1f), kf(1f, 1f)
+        )
+        val scaleYHolder = PropertyValuesHolder.ofKeyframe(
+            View.SCALE_Y,
+            kf(0f, 1f), kf(0.15f, peakA), kf(0.30f, 1f), kf(0.45f, peakB), kf(0.60f, 1f), kf(1f, 1f)
+        )
+        val alphaHolder = PropertyValuesHolder.ofKeyframe(
+            View.ALPHA,
+            kf(0f, alphaBase), kf(0.15f, alphaPeak), kf(0.30f, alphaBase),
+            kf(0.45f, alphaPeak), kf(0.60f, alphaBase), kf(1f, alphaBase)
+        )
+
+        // Виброудар РОВНО в момент двух "ударов" анимации (15% и 45% цикла) — читаем
+        // ту же animatedFraction, что двигает scale/alpha, поэтому вибро и визуальный
+        // пульс не могут разъехаться по времени (единый источник времени — один аниматор).
+        var firedFirstBeat = false
+        var firedSecondBeat = false
+        val animator = ObjectAnimator.ofPropertyValuesHolder(view, scaleXHolder, scaleYHolder, alphaHolder).apply {
+            this.duration = duration
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = LinearInterpolator()
+            addUpdateListener { anim ->
+                val f = anim.animatedFraction
+                if (!firedFirstBeat && f >= 0.15f) {
+                    firedFirstBeat = true
+                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                }
+                if (!firedSecondBeat && f >= 0.45f) {
+                    firedSecondBeat = true
+                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                }
+                if (f < 0.05f) {
+                    firedFirstBeat = false
+                    firedSecondBeat = false
+                }
+            }
+        }
+        animator.start()
+        heartbeatAnimator = animator
+    }
+
+    /**
+     * Переход в "активный" пульс — вызывать РОВНО ОДИН РАЗ на реально подтверждённое
+     * сетью "нашли" (см. класс-докстринг startPortalHeartbeat). Повторные вызовы
+     * (например, второй showFoundInfo в групповой ветке — уточнение аватара уже
+     * после первого показа) не должны переигрывать акцентный удар заново — эффект
+     * "заело" вместо однократного приятного акцента.
+     */
+    private fun triggerFoundPulse() {
+        if (portalFoundPulseActive) return
+        portalFoundPulseActive = true
+        binding.ivDoor.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        startPortalHeartbeat(fast = true)
+    }
+
+    /**
+     * Показывает найденного собеседника/группу в портале (аватар + имя + тег).
+     * Общая точка для 1:1 (profiles.txt) и группового (groupNameSeed/members.txt)
+     * путей — раньше это работало ТОЛЬКО для 1:1 (showPartnerInfo(profile: Profile)),
+     * групповая ветка в runConnect() никогда её не вызывала (см. фикс в runConnect).
+     *
+     * avatarBase64 == null допустим (например, для группы имя уже известно из инвайта,
+     * а аватар ещё не долетел из сети) — тогда просто не трогаем аватар-вью, показываем
+     * только имя; аватар появится отдельным вызовом этой же функции, когда придёт сеть.
+     */
+    private fun showFoundInfo(name: String, tag: String?, avatarBase64: String?) {
+        val bitmap = AvatarUtils.fromBase64(avatarBase64)
         if (bitmap != null) {
+            val alreadyShown = binding.ivPartnerAvatar.visibility == View.VISIBLE
             binding.ivPartnerAvatar.setImageBitmap(bitmap)
-            binding.ivPartnerAvatar.visibility = View.VISIBLE
-            binding.ivPartnerAvatar.alpha = 0f
-            binding.ivPartnerAvatar.scaleX = 0.5f
-            binding.ivPartnerAvatar.scaleY = 0.5f
-            binding.ivPartnerAvatar.animate()
-                .alpha(1f)
-                .scaleX(1f)
-                .scaleY(1f)
-                .setDuration(1000)
-                .setInterpolator(OvershootInterpolator())
-                .start()
+            if (!alreadyShown) {
+                binding.ivPartnerAvatar.visibility = View.VISIBLE
+                binding.ivPartnerAvatar.alpha = 0f
+                binding.ivPartnerAvatar.scaleX = 0.5f
+                binding.ivPartnerAvatar.scaleY = 0.5f
+                binding.ivPartnerAvatar.animate()
+                    .alpha(1f)
+                    .scaleX(1f)
+                    .scaleY(1f)
+                    .setDuration(1000)
+                    .setInterpolator(OvershootInterpolator())
+                    .start()
+            }
         }
 
-        if (profile.name.isNotBlank()) {
-            binding.tvPartnerName.text = profile.name
-            if (!profile.tag.isNullOrBlank()) {
-                binding.tvPartnerTag.text = profile.tag
+        if (name.isNotBlank()) {
+            binding.tvPartnerName.text = name
+            if (!tag.isNullOrBlank()) {
+                binding.tvPartnerTag.text = tag
                 binding.tvPartnerTag.visibility = View.VISIBLE
             } else {
                 binding.tvPartnerTag.visibility = View.GONE
             }
 
-            binding.llPartnerInfoGroup.visibility = View.VISIBLE
-            binding.llPartnerInfoGroup.alpha = 0f
-            binding.llPartnerInfoGroup.animate()
-                .alpha(1f)
-                .setDuration(1000)
-                .setStartDelay(300)
-                .start()
+            if (binding.llPartnerInfoGroup.visibility != View.VISIBLE) {
+                binding.llPartnerInfoGroup.visibility = View.VISIBLE
+                binding.llPartnerInfoGroup.alpha = 0f
+                binding.llPartnerInfoGroup.animate()
+                    .alpha(1f)
+                    .setDuration(1000)
+                    .setStartDelay(300)
+                    .start()
+            }
         }
     }
 

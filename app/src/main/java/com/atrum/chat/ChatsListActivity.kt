@@ -471,7 +471,10 @@ class ChatsListActivity : SecureActivity() {
                 val chatPassword = prefs.getChatPassword(chat.chatId)
                     .takeIf { it.isNotEmpty() }
                     ?: @Suppress("DEPRECATION") chat.chatPassword
-                val api = TransportFactory.forChat(applicationContext, chat.chatId, chatToken, chatPassword, myUserId)
+                // adminUserId — иначе NostrTransport.adminPubkeyHex всегда null и
+                // MembersSync.applyIncoming ниже получает membersContent = "" (no-op) даже
+                // для группы: счётчик участников/имя/аватар группы не обновлялись в списке.
+                val api = TransportFactory.forChat(applicationContext, chat.chatId, chatToken, chatPassword, myUserId, chat.adminUserId)
                 // Один запрос на всё (chat + profiles) — надёжнее и легче для реле, чем
                 // loadContent + отдельный pull profiles.txt. Аватар/профиль обновляются в
                 // том же снапшоте, что и сообщения → авто-обновление аватара в списке.

@@ -627,10 +627,8 @@ class CreateChatActivity : SecureActivity() {
                 participantLimit = selectedParticipants.max,
                 adminUserId = adminUserId,
                 groupName = groupName,
-                groupAvatarBase64 = groupAvatarB64,
-                // Версию 1 публикуем сами же прямо сейчас — сразу проставляем, чтобы
-                // applyIncoming (анти-откат) не отбросил наше же первичное members.txt.
-                membersVersion = 1
+                groupAvatarBase64 = groupAvatarB64
+                // membersVersion остаётся дефолтным 0 — см. баг ниже.
             )
             val pathToken = if (selectedTor) NostrTransport.NOSTR_TOKEN
                             else NostrTransport.NOSTR_DIRECT_TOKEN
@@ -640,6 +638,35 @@ class CreateChatActivity : SecureActivity() {
                 TorSyncWatchdog.arm(applicationContext, channelId)
             }
             val newId = withContext(Dispatchers.IO) { db.chatDao().insert(chat) }
+
+            // ⚠️ БАГ (найден и исправлен при аудите синхронизации групп): раньше здесь
+            // стояло membersVersion = 1 в Chat — с намерением "чтобы наше же первичное
+            // members.txt не отбросилось анти-откатом". На деле ровно наоборот: анти-откат
+            // в MembersSync.applyIncoming — это "parsed.version <= chat.membersVersion",
+            // т.е. НЕСТРОГОЕ сравнение. Если локальная версия УЖЕ равна 1 ДО того, как
+            // applyIncoming вообще увидел версию 1 с реле — 1 <= 1 истинно, и наш
+            // СОБСТВЕННЫЙ первый members.txt отбрасывался НАВСЕГДА (следующие версии
+            // от админа — 2, 3... — тоже стартуют от уже "виденной" единицы штатно, баг
+            // не в них). Итог: ChatParticipantDao участника-админа никогда не заполнялась
+            // → maybeAdminEnrollNewMembers() в ChatActivity видела current.isEmpty() и
+            // вечно ждала ("наша собственная версия 1 ещё не долетела"), из-за чего НИ
+            // ОДИН новый участник не подтверждался — застревал на баннере "Ожидаем
+            // подтверждения" навсегда, а счётчик участников у админа не рос никогда.
+            // Фикс: membersVersion остаётся 0 (как у всех чатов по умолчанию) — обычный
+            // анти-откат (1 <= 0 ложно) пропускает наш же v1 при первом же чтении с реле.
+            // Плюс — сразу локально (без сети, см. §1.5 CLAUDE.md) заводим себя как
+            // первого участника, чтобы счётчик показывал "1" мгновенно при создании
+            // группы, не дожидаясь даже первого опроса.
+            withContext(Dispatchers.IO) {
+                db.chatParticipantDao().upsert(
+                    com.atrum.chat.data.ChatParticipant(
+                        ownerId = newId,
+                        userId = adminUserId,
+                        banned = false,
+                        joinedAtMs = System.currentTimeMillis()
+                    )
+                )
+            }
 
             val myProfile = Profile(
                 userId = prefs.myUserId,

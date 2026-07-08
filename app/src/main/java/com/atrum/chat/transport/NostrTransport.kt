@@ -96,6 +96,19 @@ class NostrTransport(
 
     private val privkey: ByteArray = sha256("atrum_nostr_v1_${chatPassword}_${myUserId}")
 
+    /**
+     * Публичный ключ (hex) ЛЮБОГО участника чата — та же детерминированная деривация,
+     * что и [privkey]/[adminPubkeyHex] (chatPassword, userId), просто параметризована
+     * произвольным userId вместо "себя"/админа. Нужно для атрибуции "кто удалил
+     * сообщение" на экране статистики (см. NostrMessageStore.DeletedMessage): сверяем
+     * pubkey события-надгробия с pubkeyForUserId(автор) и pubkeyForUserId(admin).
+     */
+    fun pubkeyForUserId(userId: String): String =
+        com.atrum.chat.nostr.Schnorr.pubkeyFromPrivkey(sha256("atrum_nostr_v1_${chatPassword}_$userId")).toHex()
+
+    /** Удалённые сообщения этого канала (для экрана статистики админа), см. NostrMessageStore.DeletedMessage. */
+    fun deletedMessages(): List<NostrMessageStore.DeletedMessage> = NostrMessageStore.deletedMessagesFor(channelId)
+
     init {
         // Сообщаем долговечному стору пароль канала — он проверяет подлинность
         // clear/del-маркеров (защита от подделки очистки/удаления через знание channelId).
@@ -218,6 +231,16 @@ class NostrTransport(
      * опросе. Эти события и так скачиваются (chatFilter запрашивает kind FILE_KIND),
      * поэтому стикеры/фото партнёра подхватываются из памяти мгновенно — без отдельного
      * медленного per-file запроса к реле (8–15с + ретраи + по чанкам).
+     *
+     * ⚠️ Фикс (репорт: голосовое — "найден, не расшифр", GCM auth tag не сходится):
+     * события собираются UNION-чтением со ВСЕХ реле (queryAllRelays), и порядок в списке
+     * недетерминирован (кто из реле ответил раньше). Если хотя бы одно реле в пуле
+     * обрезает/повреждает содержимое крупного события (мягкий лимит на размер), а другое
+     * реле хранит полную копию — раньше "кэшировать, только если пусто" фиксировало
+     * НАВСЕГДА ту копию, что пришла первой, даже если это была битая. Теперь среди
+     * нескольких копий одного и того же (неизменяемого!) имени файла побеждает более
+     * ДЛИННАЯ — обрезка всегда укорачивает контент, никогда не удлиняет, так что "длиннее"
+     * равнозначно "полнее/вернее" для этого класса файлов.
      */
     private fun cacheMediaFrom(events: List<NostrEvent>) {
         for (ev in events) {
@@ -227,7 +250,8 @@ class NostrTransport(
             // loadFile ищет в кэше по тем же ключам и отдаёт ТОЛЬКО неизменяемые
             // (img_/stk_), поэтому случайно закэшированные profiles/reactions не мешают.
             val tagVal = ev.tags.firstOrNull { it.firstOrNull() == "file" }?.getOrNull(1) ?: continue
-            if (mediaCache.get(tagVal) == null) mediaCache.put(tagVal, ev.content)
+            val cached = mediaCache.get(tagVal)
+            if (cached == null || ev.content.length > cached.length) mediaCache.put(tagVal, ev.content)
         }
     }
 
@@ -284,9 +308,20 @@ class NostrTransport(
             .maxByOrNull { it.created_at }
             ?.content ?: ""
 
+    /**
+     * ⚠️ БАГ (найден и исправлен при аудите групповых чатов): membersContent ОБЯЗАН быть
+     * в хеше. Раньше его тут не было — loadAllIfChanged() считал канал "не изменившимся",
+     * если поменялось ТОЛЬКО members.txt (админ переименовал группу/сменил аву/забанил
+     * участника), и SyncEngine НЕ эмиттил новые данные — processChannelData() у остальных
+     * участников с открытым чатом просто не вызывался. На практике часто маскировалось
+     * presence-heartbeat'ом (меняет profiles.txt каждые ~5с, пока получатель онлайн), но
+     * это случайность, а не гарантия: если получатель офлайн или heartbeat не успел —
+     * изменение members.txt "зависало" до следующего постороннего изменения хеша. Для
+     * 1:1-чатов membersContent всегда "" — поведение не меняется ни на бит.
+     */
     private fun hashAll(d: AllChannelData): String =
         sha256(d.chatContent + " : " + d.reactionsContent + " : " + d.profilesContent +
-            " : " + d.profileSlots.joinToString("|")).toHex()
+            " : " + d.profileSlots.joinToString("|") + " : " + d.membersContent).toHex()
 
     // ─── запись ──────────────────────────────────────────────────────────────────
 
@@ -438,10 +473,18 @@ class NostrTransport(
         // (что бросаем при отсутствии) — та же самая.
         val eventsOrNull = queryAllRelays(fileFilter(name))
         val events = eventsOrNull ?: emptyList()
-        val content = events
-            .filter { ev -> eventHasFileName(ev, name) }
-            .maxByOrNull { it.created_at }
-            ?.content
+        val matches = events.filter { ev -> eventHasFileName(ev, name) }
+        // ⚠️ Тот же фикс, что и в cacheMediaFrom(): для неизменяемых файлов (img_/stk_/lp_ —
+        // фото, голосовые, чанки, манифесты) имя уникально и публикуется РОВНО один раз,
+        // так что "новее" (created_at) тут не значит "вернее" — легитимных повторных версий
+        // одного и того же имени не бывает. Если разные реле в союзе вернули РАЗНОЕ
+        // содержимое под одним тегом (одно реле обрезало крупное событие), берём более
+        // ДЛИННУЮ копию — обрезка только укорачивает, никогда не удлиняет.
+        val content = if (isImmutableFile(name)) {
+            matches.maxByOrNull { it.content.length }?.content
+        } else {
+            matches.maxByOrNull { it.created_at }?.content
+        }
         if (content != null) {
             if (isImmutableFile(name)) mediaCache.put(wireName(name), content)
             return content
