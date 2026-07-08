@@ -257,7 +257,7 @@ dependencies {
     implementation("com.netzarchitekten:IPtProxy:5.5.0")
 
     // CameraX — превью камеры + анализ кадров для QR-сканера (Bluetooth-подключение по QR).
-    val cameraX = "1.3.4"
+    val cameraX = "1.6.1"
     implementation("androidx.camera:camera-core:$cameraX")
     implementation("androidx.camera:camera-camera2:$cameraX")
     implementation("androidx.camera:camera-lifecycle:$cameraX")
