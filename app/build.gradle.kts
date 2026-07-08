@@ -239,7 +239,7 @@ dependencies {
     implementation("androidx.viewpager2:viewpager2:1.0.0")
 
     // Bouncy Castle — Argon2id KDF для защищённой деривации ключа шифрования
-    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.84")
 
     // Lottie — анимации и стикеры
     implementation("com.airbnb.android:lottie:6.3.0")
