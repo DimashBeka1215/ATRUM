@@ -46,4 +46,16 @@ interface ChatParticipantDao {
 
     @Query("DELETE FROM chat_participants WHERE ownerId = :ownerId")
     suspend fun deleteForChat(ownerId: Long)
+
+    /**
+     * Мут (см. ChatParticipant.mutedUntilMs). Публикация members.txt — отдельно, см.
+     * MembersSync.publish. [evidenceIds] — msgId'ы сообщений-оснований через запятую
+     * (см. ChatParticipant.mutedEvidenceIds), null/пусто — без оснований.
+     */
+    @Query("UPDATE chat_participants SET mutedUntilMs = :untilMs, mutedReason = :reason, mutedEvidenceIds = :evidenceIds WHERE ownerId = :ownerId AND userId = :userId")
+    suspend fun mute(ownerId: Long, userId: String, untilMs: Long, reason: String?, evidenceIds: String?)
+
+    /** Досрочное снятие мута администратором. */
+    @Query("UPDATE chat_participants SET mutedUntilMs = NULL, mutedReason = NULL, mutedEvidenceIds = NULL WHERE ownerId = :ownerId AND userId = :userId")
+    suspend fun unmute(ownerId: Long, userId: String)
 }

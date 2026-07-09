@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:layout_marginBottom="8dp">
+
+    <!-- Имя отправителя — только когда основание включает сообщение НЕ самого заглушённого
+         (см. ChatActivity.addMuteEvidenceBubble: ветка-переписка может включать реплику
+         собеседника). Для собственных сообщений заглушённого — скрыто, поведение как раньше. -->
+    <TextView
+        android:id="@+id/tv_evidence_bubble_sender"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="2dp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textColor="@color/text_tertiary"
+        android:textSize="11sp"
+        android:visibility="gone"
+        tools:text="Иван Петров" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+    <TextView
+        android:id="@+id/tv_evidence_bubble_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end"
+        android:maxWidth="220dp"
+        android:background="@drawable/bg_message_muted_evidence"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="9dp"
+        android:textColor="@color/warning_on"
+        android:textSize="13sp"
+        android:visibility="gone"
+        tools:text="Сообщение" />
+
+    <FrameLayout
+        android:id="@+id/fl_evidence_bubble_photo"
+        android:layout_width="130dp"
+        android:layout_height="90dp"
+        android:layout_gravity="end"
+        android:background="@drawable/bg_message_muted_evidence"
+        android:padding="4dp"
+        android:visibility="gone"
+        android:clickable="true"
+        android:focusable="true">
+
+        <ImageView
+            android:id="@+id/iv_evidence_bubble_photo"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:background="@drawable/bg_muted_icon_circle"
+            android:contentDescription="@string/cd_muted_evidence_photo"/>
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/ll_evidence_bubble_voice"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_message_muted_evidence"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="9dp"
+        android:visibility="gone"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="@string/cd_muted_evidence_voice">
+
+        <ImageView
+            android:id="@+id/iv_evidence_voice_play"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:src="@drawable/ic_play"
+            app:tint="@color/warning_on"
+            android:contentDescription="@null"/>
+
+        <FrameLayout
+            android:id="@+id/fl_evidence_voice_track"
+            android:layout_width="70dp"
+            android:layout_height="3dp"
+            android:layout_marginStart="8dp">
+
+            <View
+                android:id="@+id/v_evidence_voice_track_bg"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@color/warning_on_track_bg"/>
+
+            <View
+                android:id="@+id/v_evidence_voice_progress"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:background="@color/warning_on"/>
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/tv_evidence_voice_dur"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textColor="@color/warning_on"
+            android:textSize="11sp"
+            tools:text="0:08"/>
+    </LinearLayout>
+    </FrameLayout>
+</LinearLayout>

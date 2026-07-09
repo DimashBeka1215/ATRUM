@@ -4,11 +4,14 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
+import android.widget.Button
+import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -462,6 +465,20 @@ class PartnerProfileActivity : AppCompatActivity() {
     private fun applyIdentityBadge(chatId: String) {
         val shield = findViewById<android.widget.ImageButton>(R.id.btn_shield_status)
         val card = findViewById<View>(R.id.card_security)
+
+        // ECDH/SAS-сверка личности имеет смысл ТОЛЬКО для 1:1 (пара эфемерных ключей,
+        // один код на двоих). Для группы это концептуально не работает: общий пароль
+        // без per-pair forward-secrecy сессии, участников может быть больше двух — сверять
+        // "код" не с кем и не с чем (репорт: щит был кликабелен и открывал SAS-карточку в
+        // группе). Проверяем на каждый вызов (а не только один раз в setupRealGroupExtras),
+        // потому что applyIdentityBadge дёргается ещё и из onResume/периодической сверки —
+        // так надёжнее, чем полагаться на порядок вызовов.
+        if (intent.getBooleanExtra(EXTRA_IS_GROUP, false)) {
+            shield.visibility = View.GONE
+            card.visibility = View.GONE
+            stopShieldPulse(shield)
+            return
+        }
 
         val idk = intent.getStringExtra(EXTRA_IDENTITY_PUB)
         val eph = intent.getStringExtra(EXTRA_EPH_PUB)
@@ -993,6 +1010,29 @@ class PartnerProfileActivity : AppCompatActivity() {
     // здесь только специфичное для групп: список участников, бан, ре-публикация
     // имени/аватара группы через тот же подписанный канал.
 
+    /**
+     * Актуальная версия members.txt из БД — читать ПЕРЕД публикацией вместо
+     * `chat.membersVersion` напрямую.
+     *
+     * ⚠️ Фикс (репорт: "после мута у админа статус не сохраняется, жёлтая надпись
+     * теряется"). `chat: Chat`, который приходит параметром во все doMuteReal/
+     * doUnmuteReal/doBanReal/doUnbanReal/doEditGroupDescriptionReal/renameGroupReal — это ОДИН
+     * снимок, захваченный один раз при открытии экрана (setupRealGroupExtras) и
+     * никогда не обновляемый локально после публикаций (даже `groupChatCached`,
+     * который часть функций обновляет сам, копируется через `.copy()` БЕЗ бампа
+     * membersVersion). Если за один визит на экран выполнить больше одного
+     * административного действия (мут, потом бан, потом снова мут другого и т.п.),
+     * каждое следующее считало бы newVersion от ОДНОЙ и той же устаревшей версии —
+     * анти-откат (MembersSync.applyIncoming, версия <= уже применённой) тихо
+     * отбрасывал бы второе и последующие действия у ВСЕХ клиентов, включая самого
+     * админа на следующем опросе: статус визуально "терялся" без единой ошибки.
+     * Читаем версию из Room прямо перед публикацией — она всегда отражает
+     * реальное текущее состояние независимо от того, какой именно (возможно,
+     * устаревший) объект `chat` держит вызывающий код.
+     */
+    private suspend fun freshMembersVersion(chat: com.atrum.chat.data.Chat, database: com.atrum.chat.data.AppDatabase): Int =
+        withContext(Dispatchers.IO) { database.chatDao().getById(chat.id)?.membersVersion ?: chat.membersVersion }
+
     private fun setupRealGroupExtras(chatRoomId: Long, networkChatId: String, password: String) {
         // ECDH-сверка (fingerprint/QR/identity badge) не применима — группа шифруется
         // общим паролем без forward-secrecy сессии (см. ChatActivity.applyGroupPresence).
@@ -1011,34 +1051,34 @@ class PartnerProfileActivity : AppCompatActivity() {
 
             val avatarEditBtn = findViewById<ImageButton>(R.id.btn_avatar_edit_demo)
             val nameEditBtn = findViewById<ImageButton>(R.id.btn_name_edit_demo)
+            // Статистика активности участников — кнопка в шапке (справа от «назад»),
+            // доступна ТОЛЬКО админу. Раньше жила отдельной карточкой под списком
+            // участников — пользователь не смог её найти (репорт «кнопки нет»), перенесена
+            // в шапку и переключается в ОДНОМ блоке с карандашами редактирования (тем же
+            // проверенным условием groupIsAdmin), чтобы не повторить тот же баг.
+            val statsBtn = findViewById<ImageButton>(R.id.btn_group_stats)
             if (groupIsAdmin) {
                 avatarEditBtn.visibility = View.VISIBLE
                 nameEditBtn.visibility = View.VISIBLE
                 avatarEditBtn.setOnClickListener { pickRealGroupAvatar.launch("image/*") }
                 nameEditBtn.setOnClickListener { renameGroupReal() }
+
+                statsBtn.visibility = View.VISIBLE
+                statsBtn.setOnClickListener {
+                    startActivity(android.content.Intent(this@PartnerProfileActivity, GroupStatsActivity::class.java).apply {
+                        putExtra(GroupStatsActivity.EXTRA_CHAT_ID, chatRoomId)
+                    })
+                }
             } else {
                 avatarEditBtn.visibility = View.GONE
                 nameEditBtn.visibility = View.GONE
+                statsBtn.visibility = View.GONE
             }
 
             renderGroupDescription(chat)
 
             findViewById<View>(R.id.section_members).visibility = View.VISIBLE
             loadAndRenderGroupMembers(chat, networkChatId, password, database)
-
-            // Статистика активности участников — доступна ТОЛЬКО админу (см. §12/§0:
-            // мокап был показан и одобрен пользователем перед реализацией).
-            val statsEntry = findViewById<View>(R.id.card_group_stats_entry)
-            if (groupIsAdmin) {
-                statsEntry.visibility = View.VISIBLE
-                statsEntry.setOnClickListener {
-                    startActivity(android.content.Intent(this@PartnerProfileActivity, GroupStatsActivity::class.java).apply {
-                        putExtra(GroupStatsActivity.EXTRA_CHAT_ID, chatRoomId)
-                    })
-                }
-            } else {
-                statsEntry.visibility = View.GONE
-            }
         }
     }
 
@@ -1114,13 +1154,13 @@ class PartnerProfileActivity : AppCompatActivity() {
                     preferTor = true, adminUserId = adminUserId
                 )
                 val participants = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
-                    .map { MembersSync.Entry(it.userId, it.banned) }
+                    .map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds)) }
                 MembersSync.publish(
                     transport = transport,
                     password = password,
                     chatId = chat.chatId,
                     adminUserId = adminUserId,
-                    newVersion = chat.membersVersion + 1,
+                    newVersion = freshMembersVersion(chat, database) + 1,
                     participants = participants,
                     groupName = chat.groupName,
                     groupAvatarBase64 = chat.groupAvatarBase64,
@@ -1306,7 +1346,12 @@ class PartnerProfileActivity : AppCompatActivity() {
                 val avatarSrc = profile?.avatarBase64 ?: globalFallback?.avatarBase64 ?: (if (isMe) prefs.myAvatarBase64 else null)
                 append(member.userId).append(':').append(member.banned).append(':')
                 append(displayName).append(':').append(isOnline).append(':')
-                append(avatarSrc?.length ?: -1).append('|')
+                append(avatarSrc?.length ?: -1).append(':')
+                // ⚠️ Мут в сигнатуре ниже: без этого поля наложение/снятие мута
+                // не перерисовывало бы строку, если больше ничего не изменилось
+                // (ранний выход по сигнатуре считал бы состояние прежним).
+                append(member.mutedUntilMs ?: -1).append(':').append(member.mutedReason ?: "")
+                append('|')
             }
             append("admin=").append(chat.adminUserId).append(",meAdmin=").append(groupIsAdmin)
         }
@@ -1390,10 +1435,13 @@ class PartnerProfileActivity : AppCompatActivity() {
                     }
                 } else displayName
             }
+            // Мут (ADR-001, аналог banned, но временный и мягкий — см. ChatParticipant.mutedUntilMs).
+            val isMuted = !member.banned && member.mutedUntilMs != null && member.mutedUntilMs > now
             val statusTv = TextView(this).apply {
                 textSize = 11.5f
                 val (txt, colorRes) = when {
                     member.banned -> getString(R.string.demo_member_banned) to R.color.error
+                    isMuted -> getString(R.string.demo_member_muted_fmt, formatMuteUntil(member.mutedUntilMs!!)) to R.color.warning
                     isOnline -> getString(R.string.demo_member_online) to R.color.accent
                     else -> getString(R.string.demo_member_offline) to R.color.text_tertiary
                 }
@@ -1404,9 +1452,57 @@ class PartnerProfileActivity : AppCompatActivity() {
             col.addView(nameTv); col.addView(statusTv)
             row.addView(avatarView); row.addView(col)
 
+            // Значок личной статистики — только у СВОЕЙ строки и только для НЕ-админа
+            // (админ уже видит статистику всех, включая себя, через кнопку в шапке
+            // btn_group_stats → GroupStatsActivity). По запросу пользователя: "у обычного
+            // пользователя рядом с собой в списке — значок статистики, ведёт сразу в его
+            // личную стату, минуя выбор участника; в чужую стату заходить нельзя" — второе
+            // гарантируется тем, что кнопка есть только на isMe-строке, а на самом экране
+            // статистики (UserStatsActivity.setupAndLoad) не-админ дополнительно допускается
+            // ТОЛЬКО если targetUserId == его собственный (см. эту же сессию).
+            if (isMe && !groupIsAdmin) {
+                val rippleVal = android.util.TypedValue()
+                theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, rippleVal, true)
+                val statsBtn = ImageButton(this).apply {
+                    setImageResource(R.drawable.ic_chart_trend)
+                    setColorFilter(ContextCompat.getColor(this@PartnerProfileActivity, R.color.accent_light))
+                    setBackgroundResource(rippleVal.resourceId)
+                    contentDescription = getString(R.string.my_stats_entry_cd)
+                    layoutParams = LinearLayout.LayoutParams(dp(30), dp(30))
+                    setPadding(dp(6), dp(6), dp(6), dp(6))
+                    setOnClickListener { openMyStats(chat) }
+                }
+                row.addView(statsBtn)
+            }
+
             if (groupIsAdmin && !isAdminRow && !member.banned) {
                 val rippleVal = android.util.TypedValue()
                 theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, rippleVal, true)
+
+                if (isMuted) {
+                    val unmuteBtn = ImageButton(this).apply {
+                        setImageResource(R.drawable.ic_bell)
+                        setColorFilter(ContextCompat.getColor(this@PartnerProfileActivity, R.color.warning))
+                        setBackgroundResource(rippleVal.resourceId)
+                        contentDescription = getString(R.string.demo_unmute_cd, displayName)
+                        layoutParams = LinearLayout.LayoutParams(dp(30), dp(30)).also { it.marginEnd = dp(2) }
+                        setPadding(dp(6), dp(6), dp(6), dp(6))
+                        setOnClickListener { confirmUnmuteReal(member, displayName, chat) }
+                    }
+                    row.addView(unmuteBtn)
+                } else {
+                    val muteBtn = ImageButton(this).apply {
+                        setImageResource(R.drawable.ic_bell_off)
+                        setColorFilter(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_tertiary))
+                        setBackgroundResource(rippleVal.resourceId)
+                        contentDescription = getString(R.string.demo_mute_cd, displayName)
+                        layoutParams = LinearLayout.LayoutParams(dp(30), dp(30)).also { it.marginEnd = dp(2) }
+                        setPadding(dp(6), dp(6), dp(6), dp(6))
+                        setOnClickListener { showMuteDialog(member, displayName, chat) }
+                    }
+                    row.addView(muteBtn)
+                }
+
                 val banBtn = ImageButton(this).apply {
                     setImageResource(R.drawable.ic_close)
                     setColorFilter(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_tertiary))
@@ -1434,6 +1530,17 @@ class PartnerProfileActivity : AppCompatActivity() {
 
             container.addView(row)
         }
+    }
+
+    /** Личная статистика обычного (не-админа) участника — сразу его собственная страница,
+     *  минуя список участников GroupStatsActivity (тот экран целиком admin-only). */
+    private fun openMyStats(chat: com.atrum.chat.data.Chat) {
+        startActivity(android.content.Intent(this, UserStatsActivity::class.java).apply {
+            putExtra(UserStatsActivity.EXTRA_CHAT_ID, chat.id)
+            putExtra(UserStatsActivity.EXTRA_USER_ID, prefs.myUserId)
+            putExtra(UserStatsActivity.EXTRA_USER_NAME, prefs.myName)
+            putExtra(UserStatsActivity.EXTRA_USER_AVATAR, prefs.myAvatarBase64)
+        })
     }
 
     private fun confirmUnbanReal(member: com.atrum.chat.data.ChatParticipant, displayName: String, chat: com.atrum.chat.data.Chat) {
@@ -1476,13 +1583,13 @@ class PartnerProfileActivity : AppCompatActivity() {
                     sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
                     preferTor = true, adminUserId = adminUserId
                 )
-                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned) }
+                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds)) }
                 MembersSync.publish(
                     transport = transport,
                     password = password,
                     chatId = chat.chatId,
                     adminUserId = adminUserId,
-                    newVersion = chat.membersVersion + 1,
+                    newVersion = freshMembersVersion(chat, database) + 1,
                     participants = entries,
                     groupName = chat.groupName,
                     groupAvatarBase64 = chat.groupAvatarBase64,
@@ -1493,6 +1600,410 @@ class PartnerProfileActivity : AppCompatActivity() {
                         this@PartnerProfileActivity, R.string.demo_unban_share_hint, android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
+            } catch (_: Exception) {
+                android.widget.Toast.makeText(
+                    this@PartnerProfileActivity, R.string.invite_create_failed, android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    private fun formatMuteUntil(ms: Long): String =
+        java.text.SimpleDateFormat("dd.MM.yy, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ms))
+
+    private fun confirmUnmuteReal(member: com.atrum.chat.data.ChatParticipant, displayName: String, chat: com.atrum.chat.data.Chat) {
+        NeonDialog.showConfirm(
+            ctx = this,
+            title = getString(R.string.demo_unmute_title, displayName),
+            message = getString(R.string.demo_unmute_message),
+            positiveText = getString(R.string.demo_unmute_confirm),
+            positiveIsDestructive = false,
+            negativeText = getString(R.string.btn_cancel),
+            onPositive = { doUnmuteReal(member, chat) }
+        )
+    }
+
+    /** Досрочное снятие мута — тот же принцип публикации, что и doUnbanReal/doBanReal. */
+    private fun doUnmuteReal(member: com.atrum.chat.data.ChatParticipant, chat: com.atrum.chat.data.Chat) {
+        val adminUserId = chat.adminUserId ?: return
+        if (adminUserId != prefs.myUserId) return
+        lifecycleScope.launch {
+            val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
+            withContext(Dispatchers.IO) {
+                database.chatParticipantDao().unmute(chat.id, member.userId)
+                database.muteHistoryDao().markLatestUnmutedEarly(chat.id, member.userId, System.currentTimeMillis())
+            }
+            val fresh = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
+            renderGroupMembersRows(fresh, emptyMap(), chat)
+
+            try {
+                val password = prefs.getChatPassword(chat.chatId)
+                val transport = com.atrum.chat.transport.NostrTransport(
+                    sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
+                    preferTor = true, adminUserId = adminUserId
+                )
+                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds)) }
+                MembersSync.publish(
+                    transport = transport,
+                    password = password,
+                    chatId = chat.chatId,
+                    adminUserId = adminUserId,
+                    newVersion = freshMembersVersion(chat, database) + 1,
+                    participants = entries,
+                    groupName = chat.groupName,
+                    groupAvatarBase64 = chat.groupAvatarBase64,
+                    groupDescription = chat.groupDescription
+                )
+            } catch (_: Exception) {
+                android.widget.Toast.makeText(
+                    this@PartnerProfileActivity, R.string.invite_create_failed, android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    /**
+     * Кастомный диалог мута (DESIGN.md §10 — системные DatePicker/TimePicker запрещены):
+     * свой календарь (месяц + отдельный степпер года — до нескольких лет вперёд без
+     * пролистывания по месяцу) + часы:минуты + пресеты + причина.
+     */
+    private fun showMuteDialog(member: com.atrum.chat.data.ChatParticipant, displayName: String, chat: com.atrum.chat.data.Chat) {
+        val view = layoutInflater.inflate(R.layout.dialog_mute_member, null)
+        val tvTitle = view.findViewById<TextView>(R.id.tv_mute_title)
+        val chipRow = view.findViewById<LinearLayout>(R.id.mute_chip_row)
+        val tvMonth = view.findViewById<TextView>(R.id.tv_mute_month)
+        val tvYear = view.findViewById<TextView>(R.id.tv_mute_year)
+        val dowRow = view.findViewById<LinearLayout>(R.id.mute_dow_row)
+        val grid = view.findViewById<LinearLayout>(R.id.mute_calendar_grid)
+        val etHour = view.findViewById<EditText>(R.id.et_mute_hour)
+        val etMinute = view.findViewById<EditText>(R.id.et_mute_minute)
+        val tvSummary = view.findViewById<TextView>(R.id.tv_mute_summary)
+        val etReason = view.findViewById<EditText>(R.id.et_mute_reason)
+        val evidenceList = view.findViewById<LinearLayout>(R.id.mute_evidence_list)
+        val evidenceEmpty = view.findViewById<TextView>(R.id.tv_evidence_empty)
+        val selectedEvidenceIds = LinkedHashSet<String>()
+
+        tvTitle.text = getString(R.string.mute_dialog_title_fmt, displayName)
+
+        val cal = java.util.Calendar.getInstance()
+        cal.add(java.util.Calendar.HOUR_OF_DAY, 1) // разумный дефолт — на час вперёд
+        val selected = java.util.Calendar.getInstance().apply { timeInMillis = cal.timeInMillis }
+        val view_ = java.util.Calendar.getInstance().apply {
+            timeInMillis = selected.timeInMillis
+            set(java.util.Calendar.DAY_OF_MONTH, 1)
+        }
+        etHour.setText(selected.get(java.util.Calendar.HOUR_OF_DAY).toString())
+        etMinute.setText(selected.get(java.util.Calendar.MINUTE).toString())
+
+        val monthNames = resources.getStringArray(R.array.month_names_full)
+        val dowNames = listOf("П", "В", "С", "Ч", "П", "С", "В")
+        dowRow.removeAllViews()
+        dowNames.forEach { d ->
+            dowRow.addView(TextView(this).apply {
+                text = d
+                textSize = 10f
+                gravity = android.view.Gravity.CENTER
+                setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_tertiary))
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+        }
+
+        fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+        fun updateSummary() {
+            val h = etHour.text.toString().toIntOrNull()?.coerceIn(0, 23) ?: 0
+            val m = etMinute.text.toString().toIntOrNull()?.coerceIn(0, 59) ?: 0
+            selected.set(java.util.Calendar.HOUR_OF_DAY, h)
+            selected.set(java.util.Calendar.MINUTE, m)
+            selected.set(java.util.Calendar.SECOND, 0)
+            selected.set(java.util.Calendar.MILLISECOND, 0)
+            tvSummary.text = getString(R.string.mute_dialog_summary_fmt, formatMuteUntil(selected.timeInMillis))
+        }
+
+        fun renderCalendar() {
+            tvMonth.text = monthNames.getOrElse(view_.get(java.util.Calendar.MONTH)) { "" }
+            tvYear.text = view_.get(java.util.Calendar.YEAR).toString()
+            grid.removeAllViews()
+
+            val firstOfMonth = view_.clone() as java.util.Calendar
+            firstOfMonth.set(java.util.Calendar.DAY_OF_MONTH, 1)
+            // Понедельник = 0 ... Воскресенье = 6
+            val rawDow = firstOfMonth.get(java.util.Calendar.DAY_OF_WEEK) // Sunday=1..Saturday=7
+            val startOffset = (rawDow + 5) % 7
+            val daysInMonth = firstOfMonth.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+
+            var day = 1 - startOffset
+            while (day <= daysInMonth) {
+                val weekRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also { it.topMargin = dp(2) }
+                }
+                for (col in 0 until 7) {
+                    val thisDay = day
+                    val cellTv = TextView(this).apply {
+                        textSize = 11f
+                        gravity = android.view.Gravity.CENTER
+                        setPadding(0, dp(6), 0, dp(6))
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).also { it.marginStart = dp(1); it.marginEnd = dp(1) }
+                        if (thisDay in 1..daysInMonth) {
+                            text = thisDay.toString()
+                            val isSelected = selected.get(java.util.Calendar.YEAR) == view_.get(java.util.Calendar.YEAR) &&
+                                selected.get(java.util.Calendar.MONTH) == view_.get(java.util.Calendar.MONTH) &&
+                                selected.get(java.util.Calendar.DAY_OF_MONTH) == thisDay
+                            if (isSelected) {
+                                setBackgroundResource(R.drawable.bg_chip_selected)
+                                setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, R.color.white))
+                            } else {
+                                background = null
+                                setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_primary))
+                            }
+                            setOnClickListener {
+                                selected.set(java.util.Calendar.YEAR, view_.get(java.util.Calendar.YEAR))
+                                selected.set(java.util.Calendar.MONTH, view_.get(java.util.Calendar.MONTH))
+                                selected.set(java.util.Calendar.DAY_OF_MONTH, thisDay)
+                                updateSummary()
+                                renderCalendar()
+                            }
+                        } else {
+                            text = ""
+                        }
+                    }
+                    weekRow.addView(cellTv)
+                    day++
+                }
+                grid.addView(weekRow)
+            }
+        }
+
+        view.findViewById<ImageButton>(R.id.btn_mute_prev_month).setOnClickListener {
+            view_.add(java.util.Calendar.MONTH, -1); renderCalendar()
+        }
+        view.findViewById<ImageButton>(R.id.btn_mute_next_month).setOnClickListener {
+            view_.add(java.util.Calendar.MONTH, 1); renderCalendar()
+        }
+        view.findViewById<ImageButton>(R.id.btn_mute_prev_year).setOnClickListener {
+            view_.add(java.util.Calendar.YEAR, -1); renderCalendar()
+        }
+        view.findViewById<ImageButton>(R.id.btn_mute_next_year).setOnClickListener {
+            view_.add(java.util.Calendar.YEAR, 1); renderCalendar()
+        }
+        val timeWatcher = object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) { updateSummary() }
+        }
+        etHour.addTextChangedListener(timeWatcher)
+        etMinute.addTextChangedListener(timeWatcher)
+
+        val presets = listOf(
+            getString(R.string.mute_preset_1h) to java.util.Calendar.HOUR_OF_DAY to 1,
+            getString(R.string.mute_preset_1d) to java.util.Calendar.DAY_OF_MONTH to 1,
+            getString(R.string.mute_preset_1w) to java.util.Calendar.DAY_OF_MONTH to 7,
+            getString(R.string.mute_preset_1m) to java.util.Calendar.MONTH to 1,
+            getString(R.string.mute_preset_1y) to java.util.Calendar.YEAR to 1
+        )
+        chipRow.removeAllViews()
+        presets.forEach { (labelField, amount) ->
+            val (label, field) = labelField
+            chipRow.addView(TextView(this).apply {
+                text = label
+                textSize = 12f
+                setPadding(dp(12), dp(6), dp(12), dp(6))
+                setBackgroundResource(R.drawable.bg_pill)
+                setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_secondary))
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).also { it.marginEnd = dp(6) }
+                setOnClickListener {
+                    val target = java.util.Calendar.getInstance()
+                    target.add(field, amount)
+                    selected.timeInMillis = target.timeInMillis
+                    view_.timeInMillis = target.timeInMillis
+                    view_.set(java.util.Calendar.DAY_OF_MONTH, 1)
+                    etHour.setText(selected.get(java.util.Calendar.HOUR_OF_DAY).toString())
+                    etMinute.setText(selected.get(java.util.Calendar.MINUTE).toString())
+                    updateSummary()
+                    renderCalendar()
+                }
+            })
+        }
+
+        updateSummary()
+        renderCalendar()
+
+        // Сообщения-основание: вся история ЭТОГО участника, чекбокс на каждой строке
+        // (необязательно — можно заглушить и без единого выбранного сообщения, см.
+        // btn_mute_confirm ниже, он ничем не гейтится). Сами сообщения не дублируются —
+        // сохраняется только msgId (см. ChatParticipant.mutedEvidenceIds), заглушённый
+        // клиент найдёт их локально по этому же msgId в своей копии chat.txt.
+        fun addEvidenceRow(msg: Message) {
+            val row = layoutInflater.inflate(R.layout.item_mute_evidence_row, evidenceList, false)
+            val ivKind = row.findViewById<ImageView>(R.id.iv_evidence_kind)
+            val tvTime = row.findViewById<TextView>(R.id.tv_evidence_time)
+            val tvPreview = row.findViewById<TextView>(R.id.tv_evidence_preview)
+            val cb = row.findViewById<android.widget.CheckBox>(R.id.cb_evidence_selected)
+            tvTime.text = StatsUtil.formatMessageTime(this, msg.timestampMs)
+            when {
+                msg.isVoice -> {
+                    ivKind.setImageResource(R.drawable.ic_mic)
+                    ivKind.visibility = View.VISIBLE
+                    tvPreview.text = getString(R.string.msg_preview_voice)
+                }
+                msg.isImage -> {
+                    ivKind.setImageResource(R.drawable.ic_image_outline)
+                    ivKind.visibility = View.VISIBLE
+                    tvPreview.text = msg.text.takeIf { it.isNotBlank() } ?: getString(R.string.msg_preview_photo)
+                }
+                else -> {
+                    ivKind.visibility = View.GONE
+                    tvPreview.text = msg.text
+                }
+            }
+            row.setOnClickListener {
+                if (selectedEvidenceIds.contains(msg.msgId)) {
+                    selectedEvidenceIds.remove(msg.msgId)
+                    cb.isChecked = false
+                } else {
+                    selectedEvidenceIds.add(msg.msgId)
+                    cb.isChecked = true
+                }
+            }
+            evidenceList.addView(row)
+        }
+
+        /**
+         * Ветка-переписка целиком как одно основание (по запросу пользователя: "указать
+         * переписку в ветке ответов пользователя с другим человеком") — [replyMsg] это
+         * ответ участника, [originalMsg] — сообщение, на которое он отвечал (может быть от
+         * ЛЮБОГО собеседника, не обязательно от самого участника). Один чекбокс выбирает/
+         * снимает ОБА msgId сразу. originalMsg.msgId ссылается на строку в chat.txt, которая
+         * и так есть у заглушённого клиента (chat.txt общий для всей группы) — рендерится
+         * там как нейтральный (не жёлтый) пузырёк с подписью отправителя, см.
+         * ChatActivity.addMuteEvidenceBubble.
+         */
+        fun addEvidenceThreadRow(replyMsg: Message, originalMsg: Message) {
+            val row = layoutInflater.inflate(R.layout.item_mute_evidence_thread, evidenceList, false)
+            val cb = row.findViewById<android.widget.CheckBox>(R.id.cb_evidence_thread_selected)
+            val tvLabel = row.findViewById<TextView>(R.id.tv_evidence_thread_label)
+            val tvOrigSender = row.findViewById<TextView>(R.id.tv_evidence_thread_orig_sender)
+            val tvOrigText = row.findViewById<TextView>(R.id.tv_evidence_thread_orig_text)
+            val tvReplyText = row.findViewById<TextView>(R.id.tv_evidence_thread_reply_text)
+
+            fun preview(m: Message): String = when {
+                m.isVoice -> getString(R.string.msg_preview_voice)
+                m.isImage -> m.text.takeIf { it.isNotBlank() } ?: getString(R.string.msg_preview_photo)
+                else -> m.text
+            }
+
+            tvLabel.text = getString(R.string.mute_evidence_thread_with_fmt, originalMsg.sender)
+            tvOrigSender.text = originalMsg.sender
+            tvOrigText.text = preview(originalMsg)
+            tvReplyText.text = preview(replyMsg)
+
+            fun syncChecked() {
+                cb.isChecked = selectedEvidenceIds.contains(replyMsg.msgId) && selectedEvidenceIds.contains(originalMsg.msgId)
+            }
+            syncChecked()
+            row.setOnClickListener {
+                if (cb.isChecked) {
+                    selectedEvidenceIds.remove(replyMsg.msgId)
+                    selectedEvidenceIds.remove(originalMsg.msgId)
+                } else {
+                    selectedEvidenceIds.add(replyMsg.msgId)
+                    selectedEvidenceIds.add(originalMsg.msgId)
+                }
+                syncChecked()
+            }
+            evidenceList.addView(row)
+        }
+
+        lifecycleScope.launch {
+            try {
+                val transport = TransportFactory.forChat(this@PartnerProfileActivity, chat.chatId, chat.transportToken, chat.chatPassword, prefs.myUserId)
+                val all = withContext(Dispatchers.IO) { transport.loadAll() }
+                val allMessages = withContext(Dispatchers.Default) {
+                    StatsUtil.decodeAll(all.chatContent, chat.chatPassword, chat.chatId, prefs.myUserId, prefs.myName)
+                }
+                val messages = allMessages
+                    .filter { it.senderUserId == member.userId }
+                    .sortedByDescending { it.timestampMs }
+                if (messages.isEmpty()) {
+                    evidenceEmpty.text = getString(R.string.mute_dialog_evidence_empty)
+                    evidenceEmpty.visibility = View.VISIBLE
+                } else {
+                    evidenceEmpty.visibility = View.GONE
+                    // Ветка-переписка (см. addEvidenceThreadRow) — только для реплик участника,
+                    // у которых нашёлся оригинал (см. StatsUtil.findQuotedOriginal); остальные
+                    // сообщения — как раньше, отдельной строкой (addEvidenceRow).
+                    messages.forEach { msg ->
+                        val original = if (msg.isReply) StatsUtil.findQuotedOriginal(allMessages, msg) else null
+                        if (original != null) addEvidenceThreadRow(msg, original) else addEvidenceRow(msg)
+                    }
+                }
+            } catch (_: Exception) {
+                evidenceEmpty.text = getString(R.string.mute_dialog_evidence_empty)
+                evidenceEmpty.visibility = View.VISIBLE
+            }
+        }
+
+        val dialog = AlertDialog.Builder(this, R.style.Theme_AtrumChat_Dialog)
+            .setView(view)
+            .create()
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        view.findViewById<Button>(R.id.btn_mute_cancel).setOnClickListener { dialog.dismiss() }
+        view.findViewById<Button>(R.id.btn_mute_confirm).setOnClickListener {
+            updateSummary()
+            val untilMs = selected.timeInMillis
+            if (untilMs <= System.currentTimeMillis()) {
+                android.widget.Toast.makeText(this, R.string.mute_dialog_time_in_past, android.widget.Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            val reason = etReason.text?.toString()?.trim().orEmpty().takeIf { it.isNotBlank() }
+            dialog.dismiss()
+            doMuteReal(member, chat, untilMs, reason, selectedEvidenceIds.toList())
+        }
+        dialog.show()
+    }
+
+    /** Мут — тот же принцип публикации, что и doBanReal/doUnbanReal. */
+    private fun doMuteReal(member: com.atrum.chat.data.ChatParticipant, chat: com.atrum.chat.data.Chat, untilMs: Long, reason: String?, evidenceMsgIds: List<String> = emptyList()) {
+        val adminUserId = chat.adminUserId ?: return
+        if (adminUserId != prefs.myUserId) return
+        lifecycleScope.launch {
+            val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
+            withContext(Dispatchers.IO) {
+                database.chatParticipantDao().mute(chat.id, member.userId, untilMs, reason, MembersSync.evidenceIdsToStore(evidenceMsgIds))
+                database.muteHistoryDao().insert(
+                    com.atrum.chat.data.MuteHistoryEntry(
+                        ownerId = chat.id,
+                        userId = member.userId,
+                        issuedByUserId = prefs.myUserId,
+                        mutedUntilMs = untilMs,
+                        reason = reason,
+                        evidenceMsgIds = MembersSync.evidenceIdsToStore(evidenceMsgIds)
+                    )
+                )
+            }
+            val fresh = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
+            renderGroupMembersRows(fresh, emptyMap(), chat)
+
+            try {
+                val password = prefs.getChatPassword(chat.chatId)
+                val transport = com.atrum.chat.transport.NostrTransport(
+                    sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
+                    preferTor = true, adminUserId = adminUserId
+                )
+                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds)) }
+                MembersSync.publish(
+                    transport = transport,
+                    password = password,
+                    chatId = chat.chatId,
+                    adminUserId = adminUserId,
+                    newVersion = freshMembersVersion(chat, database) + 1,
+                    participants = entries,
+                    groupName = chat.groupName,
+                    groupAvatarBase64 = chat.groupAvatarBase64,
+                    groupDescription = chat.groupDescription
+                )
             } catch (_: Exception) {
                 android.widget.Toast.makeText(
                     this@PartnerProfileActivity, R.string.invite_create_failed, android.widget.Toast.LENGTH_SHORT
@@ -1534,13 +2045,13 @@ class PartnerProfileActivity : AppCompatActivity() {
                     sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
                     preferTor = true, adminUserId = adminUserId
                 )
-                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned) }
+                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds)) }
                 MembersSync.publish(
                     transport = transport,
                     password = password,
                     chatId = chat.chatId,
                     adminUserId = adminUserId,
-                    newVersion = chat.membersVersion + 1,
+                    newVersion = freshMembersVersion(chat, database) + 1,
                     participants = entries,
                     groupName = chat.groupName,
                     groupAvatarBase64 = chat.groupAvatarBase64,
@@ -1587,13 +2098,13 @@ class PartnerProfileActivity : AppCompatActivity() {
                     preferTor = true, adminUserId = adminUserId
                 )
                 val participants = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
-                    .map { MembersSync.Entry(it.userId, it.banned) }
+                    .map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds)) }
                 MembersSync.publish(
                     transport = transport,
                     password = password,
                     chatId = chat.chatId,
                     adminUserId = adminUserId,
-                    newVersion = chat.membersVersion + 1,
+                    newVersion = freshMembersVersion(chat, database) + 1,
                     participants = participants,
                     groupName = newName,
                     groupAvatarBase64 = chat.groupAvatarBase64,
@@ -1677,13 +2188,13 @@ class PartnerProfileActivity : AppCompatActivity() {
                     preferTor = true, adminUserId = adminUserId
                 )
                 val participants = database.chatParticipantDao().getForChat(chat.id)
-                    .map { MembersSync.Entry(it.userId, it.banned) }
+                    .map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds)) }
                 MembersSync.publish(
                     transport = transport,
                     password = password,
                     chatId = chat.chatId,
                     adminUserId = adminUserId,
-                    newVersion = chat.membersVersion + 1,
+                    newVersion = freshMembersVersion(chat, database) + 1,
                     participants = participants,
                     groupName = chat.groupName,
                     groupAvatarBase64 = newAvatarB64,

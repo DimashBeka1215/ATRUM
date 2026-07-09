@@ -60,34 +60,142 @@
         android:layout_height="0.5dp"
         android:background="@color/border" />
 
-    <TextView
-        android:id="@+id/tv_sort_label"
-        android:layout_width="wrap_content"
+    <!-- Переключатель разделов: Участники / История мутов. -->
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginStart="16dp"
-        android:layout_marginTop="14dp"
-        android:layout_marginBottom="6dp"
-        android:fontFamily="sans-serif-medium"
-        android:letterSpacing="0.06"
-        android:text="@string/group_stats_sort_label"
-        android:textAllCaps="true"
-        android:textColor="@color/text_tertiary"
-        android:textSize="11sp" />
+        android:orientation="horizontal"
+        android:paddingHorizontal="16dp"
+        android:paddingTop="10dp">
 
-    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-        android:id="@+id/swipe_refresh"
+        <LinearLayout
+            android:id="@+id/tab_users"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:background="?attr/selectableItemBackground"
+            android:paddingVertical="8dp">
+
+            <TextView
+                android:id="@+id/tv_tab_users"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/group_stats_tab_users"
+                android:textColor="@color/accent"
+                android:textSize="13sp"
+                android:fontFamily="sans-serif-medium" />
+
+            <View
+                android:id="@+id/v_tab_users_underline"
+                android:layout_width="match_parent"
+                android:layout_height="2dp"
+                android:layout_marginTop="8dp"
+                android:background="@color/accent" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/tab_mute_history"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:background="?attr/selectableItemBackground"
+            android:paddingVertical="8dp">
+
+            <TextView
+                android:id="@+id/tv_tab_mute_history"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/group_stats_tab_mute_history"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp"
+                android:fontFamily="sans-serif-medium" />
+
+            <View
+                android:id="@+id/v_tab_mute_history_underline"
+                android:layout_width="match_parent"
+                android:layout_height="2dp"
+                android:layout_marginTop="8dp"
+                android:background="@color/accent"
+                android:visibility="invisible" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0.5dp"
+        android:background="@color/border" />
+
+    <!-- Раздел «Участники» -->
+    <LinearLayout
+        android:id="@+id/section_users"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1">
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tv_sort_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="14dp"
+            android:layout_marginBottom="6dp"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="0.06"
+            android:text="@string/group_stats_sort_label"
+            android:textAllCaps="true"
+            android:textColor="@color/text_tertiary"
+            android:textSize="11sp" />
+
+        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+            android:id="@+id/swipe_refresh"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rv_stats_users"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingBottom="12dp"
+                android:scrollbars="vertical" />
+
+        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+    </LinearLayout>
+
+    <!-- Раздел «История мутов» -->
+    <FrameLayout
+        android:id="@+id/section_mute_history"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:visibility="gone">
 
         <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/rv_stats_users"
+            android:id="@+id/rv_mute_history"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:clipToPadding="false"
+            android:paddingHorizontal="16dp"
+            android:paddingTop="12dp"
             android:paddingBottom="12dp"
             android:scrollbars="vertical" />
 
-    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+        <TextView
+            android:id="@+id/tv_mute_history_empty"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="@string/mute_history_empty"
+            android:textColor="@color/text_tertiary"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+    </FrameLayout>
 
 </LinearLayout>

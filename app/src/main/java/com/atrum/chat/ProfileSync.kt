@@ -1,6 +1,10 @@
 package com.atrum.chat
 
 import com.atrum.chat.transport.ChatTransport
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
@@ -23,6 +27,23 @@ import java.util.concurrent.ConcurrentHashMap
 object ProfileSync {
 
     private const val FILE_NAME = "profiles.txt"
+
+    /**
+     * Ограниченный по параллелизму дочерний диспетчер поверх Dispatchers.Default — только
+     * для параллельной расшифровки слотов profiles.txt в [unionProfileSlots].
+     *
+     * ⚠️ Фикс (репорт: «сообщения-текст стали дольше висеть в отправке» — регрессия от
+     * первой версии этой оптимизации). Отправка текста тоже шифруется на Dispatchers.Default
+     * (см. ChatActivity.sendMessage → withContext(Dispatchers.Default) { encryptChatLine }),
+     * и для ГРУППОВЫХ чатов это ТЯЖЁЛЫЙ Argon2id (encryptGroupMessage). Если одновременно с
+     * отправкой сообщения активная группа из N участников гоняла N параллельных Argon2id
+     * расшифровок profiles.txt на ТОМ ЖЕ пуле потоков (Dispatchers.Default размером с число
+     * ядер CPU) — шифрование сообщения вставало в очередь позади них, и «часики» висели
+     * дольше. Ограничение до 2 одновременных слотов оставляет пулу свободные потоки для
+     * шифрования сообщений почти при любом числе ядер, сохраняя при этом выигрыш от
+     * параллелизма (в разы быстрее строго последовательного варианта на больших группах).
+     */
+    private val profileSlotDecryptDispatcher = Dispatchers.Default.limitedParallelism(2)
 
     /**
      * Мьютекс для сериализации всех write-операций с profiles.txt.
@@ -150,11 +171,26 @@ object ProfileSync {
      * а presence-таймстампы — максимумом по слотам. Убирает lost-update: свежая правка
      * одного участника физически не может быть затёрта устаревшей копией из чужого слота.
      * Обратносовместимо: старый общий блоб — это просто слот с несколькими uid.
+     *
+     * ⚠️ Оптимизация (репорт §16: «групповые чаты грузятся долго»): расшифровка КАЖДОГО
+     * слота — тяжёлый Argon2id, а слотов у группы столько же, сколько участников. Раньше
+     * цикл шёл строго последовательно на вызывающем потоке (в ChatActivity — это основной
+     * поток UI!), поэтому активная группа из N участников на КАЖДЫЙ тик, где меняется
+     * presence (у любого из них — раз в ~5с), платила N последовательных тяжёлых
+     * расшифровок ПОДРЯД, включая блокировку главного потока. Теперь независимые слоты
+     * расшифровываются ПАРАЛЛЕЛЬНО (см. [profileSlotDecryptDispatcher] — ограничено 2
+     * одновременными, не весь Dispatchers.Default, иначе конкурирует с шифрованием
+     * отправляемых сообщений на том же пуле, см. докстринг диспетчера). Сам мердж —
+     * дешёвое сравнение полей — остаётся последовательным ПОСЛЕ того, как все расшифровки
+     * завершились, никакой гонки на общем состоянии. Результат идентичен прежнему.
      */
-    fun unionProfileSlots(slots: List<String>, password: String, chatId: String): Map<String, Profile> {
+    suspend fun unionProfileSlots(slots: List<String>, password: String, chatId: String): Map<String, Profile> = coroutineScope {
+        val parsedPerSlot = slots.map { slotEnc ->
+            async(profileSlotDecryptDispatcher) { parseProfiles(slotEnc, password, chatId) }
+        }.awaitAll()
+
         val best = LinkedHashMap<String, Profile>()
-        for (slotEnc in slots) {
-            val parsed = parseProfiles(slotEnc, password, chatId)
+        for (parsed in parsedPerSlot) {
             for ((uid, p) in parsed) {
                 val cur = best[uid]
                 if (cur == null) { best[uid] = p; continue }
@@ -167,7 +203,7 @@ object ProfileSync {
                 )
             }
         }
-        return best
+        best
     }
 
     /** Дешифрует и парсит ОДИН уже загруженный блоб profiles.txt (без сетевого вызова). */

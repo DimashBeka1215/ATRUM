@@ -33,5 +33,26 @@ data class ChatParticipant(
     /** true — забанен админом. Забаненный не может писать, чат у него удаляется локально. */
     val banned: Boolean = false,
 
-    val joinedAtMs: Long = System.currentTimeMillis()
+    val joinedAtMs: Long = System.currentTimeMillis(),
+
+    /**
+     * Мут (ADR-001, аналог banned, но временный и мягкий — крипто-доступ не трогает).
+     * null — не заглушён. Иначе — метка времени (мс), до которой заглушён; после
+     * наступления этого момента считается автоматически снятым (никакой отдельной
+     * "разглушающей" записи не публикуется — просто mutedUntilMs < now).
+     */
+    val mutedUntilMs: Long? = null,
+
+    /** Причина мута (показывается заглушённому при входе в чат). null — без причины. */
+    val mutedReason: String? = null,
+
+    /**
+     * Сообщения-основание мута — msgId'ы (см. Message.msgId), через запятую (base64 не
+     * содержит запятых — безопасный разделитель). null/пусто — оснований не указано
+     * (необязательное поле, мут работает и без них). Сами сообщения НЕ дублируются —
+     * это только ссылки на уже существующие строки в chat.txt; заглушённый клиент
+     * находит их локально по msgId и показывает в баннере (см. MembersSync.Entry.mutedEvidenceIds,
+     * ChatActivity.applySelfMuteState).
+     */
+    val mutedEvidenceIds: String? = null
 )

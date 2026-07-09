@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:layout_marginBottom="6dp"
+    android:layout_gravity="end">
+
+    <!-- Имя отправителя — только для строк не от самого заглушённого (ветка-переписка,
+         см. GroupStatsActivity.MuteHistoryAdapter.addEvidenceLine). -->
+    <TextView
+        android:id="@+id/tv_mhe_sender"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="2dp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textColor="@color/text_tertiary"
+        android:textSize="10.5sp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/ll_mhe_bubble"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_message_muted_evidence"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="8dp">
+
+        <ImageView
+            android:id="@+id/iv_mhe_icon"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:layout_marginEnd="8dp"
+            android:visibility="gone"
+            app:tint="@color/warning_on"
+            android:contentDescription="@null" />
+
+        <TextView
+            android:id="@+id/tv_mhe_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:maxWidth="220dp"
+            android:maxLines="3"
+            android:ellipsize="end"
+            android:textColor="@color/warning_on"
+            android:textSize="13sp" />
+
+    </LinearLayout>
+
+</LinearLayout>

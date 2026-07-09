@@ -58,6 +58,12 @@
     <!-- Тёмный текст/иконка ПОВЕРХ сплошной жёлтой плашки (@color/warning).
          Один и тот же в светлой и тёмной теме — фон гарантированно янтарный. -->
     <color name="warning_on">#412402</color>
+    <!-- Фон непроигранной части полосы прогресса голосового в жёлтом пузырьке-основании
+         (item_muted_evidence_bubble.xml) — 25% альфа @color/warning_on, тот же в обеих
+         темах. Вынесено из хардкода в XML в ресурс (см. CLAUDE.md §4) при добавлении
+         ветки-переписки (ChatActivity.addMuteEvidenceBubble задаёт цвет и для "чужого"
+         варианта программно). -->
+    <color name="warning_on_track_bg">#40412402</color>
     <color name="voice_limit_bg">#FFD23F</color>
     <color name="voice_limit_on">#4A3500</color>
 </resources>

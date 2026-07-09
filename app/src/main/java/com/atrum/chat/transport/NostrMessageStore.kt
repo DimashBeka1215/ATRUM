@@ -150,9 +150,19 @@ object NostrMessageStore {
         val map = mem.getOrPut(channelId) { loadDisk(channelId) }
         val byHash = HashMap<String, Entry>()
         for (e in map.values) if (e.type == 'm') byHash[delHash(e.content)] = e
+        // ⚠️ Дедуп по хешу удаления (репорт: "дубликат в удалённых" при быстром
+        // delete→restore на экране статистики): несколько 'd'-событий с ОДНИМ и тем же
+        // content (=delHash) означают ОДНО и то же логическое удаление ОДНОГО сообщения —
+        // например, если надгробие случайно опубликовано дважды (двойной тап, ретрай) или
+        // event.id отличается из-за разной created_at при почти одновременных попытках.
+        // Семантически это одна и та же запись "это сообщение удалено", поэтому в списке
+        // должна быть ровно одна строка на исходное сообщение — берём САМОЕ РАННЕЕ надгробие
+        // (более старое = более достоверное "когда реально удалили").
         return map.values
             .filter { it.type == 'd' }
-            .mapNotNull { d -> byHash[d.content]?.let { orig -> DeletedMessage(orig.content, d.createdAt, d.pubkey) } }
+            .mapNotNull { d -> byHash[d.content]?.let { orig -> Triple(d.content, DeletedMessage(orig.content, d.createdAt, d.pubkey), d.createdAt) } }
+            .groupBy { it.first }
+            .map { (_, group) -> group.minByOrNull { it.third }!!.second }
             .sortedByDescending { it.deletedAtMs }
     }
 
@@ -166,7 +176,11 @@ object NostrMessageStore {
         return sb.toString()
     }
 
-    private fun fileName(channelId: String) = "msgs_" + Integer.toHexString(channelId.hashCode()) + ".tsv"
+    // ⚠️ Фикс (§16, тот же класс проблемы, что и в ChatSnapshotCache.fileName): раньше
+    // использовался обычный 32-битный String.hashCode() — теоретическая коллизия двух
+    // разных channelId привела бы к чтению/записи ЧУЖОГО файла истории сообщений на
+    // диске. sha256() уже есть в этом файле (для delHash/ctrlToken) — переиспользуем.
+    private fun fileName(channelId: String) = "msgs_" + sha256(channelId).take(32) + ".tsv"
 
     /**
      * Формат TSV: id \t createdAt \t type \t pubkey \t content (5 полей, pubkey добавлен

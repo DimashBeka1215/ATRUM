@@ -38,7 +38,22 @@ import org.json.JSONObject
  */
 object MembersSync {
 
-    data class Entry(val userId: String, val banned: Boolean)
+    data class Entry(
+        val userId: String,
+        val banned: Boolean,
+        /** null — не заглушён; иначе метка времени (мс), до которой заглушён (см. ChatParticipant.mutedUntilMs). */
+        val mutedUntilMs: Long? = null,
+        val mutedReason: String? = null,
+        /** msgId'ы сообщений-оснований мута (см. ChatParticipant.mutedEvidenceIds). Пусто — не указаны. */
+        val mutedEvidenceIds: List<String> = emptyList()
+    )
+
+    /** Список msgId → строка для Room (ChatParticipant.mutedEvidenceIds). Пустой список → null. */
+    fun evidenceIdsToStore(ids: List<String>): String? = ids.filter { it.isNotBlank() }.takeIf { it.isNotEmpty() }?.joinToString(",")
+
+    /** Строка из Room обратно в список msgId. */
+    fun evidenceIdsFromStore(stored: String?): List<String> =
+        stored?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
 
     data class MembersFile(
         val version: Int,
@@ -60,7 +75,19 @@ object MembersSync {
         for (i in 0 until arr.length()) {
             val o = arr.getJSONObject(i)
             val userId = o.optString("userId").takeIf { it.isNotBlank() } ?: continue
-            list.add(Entry(userId, o.optBoolean("banned", false)))
+            val evidenceArr = o.optJSONArray("mutedEvidence")
+            val evidenceIds = if (evidenceArr != null) {
+                (0 until evidenceArr.length()).mapNotNull { evidenceArr.optString(it).takeIf { s -> s.isNotBlank() } }
+            } else emptyList()
+            list.add(
+                Entry(
+                    userId = userId,
+                    banned = o.optBoolean("banned", false),
+                    mutedUntilMs = o.optLong("mutedUntil", 0L).takeIf { it > 0L },
+                    mutedReason = o.optString("mutedReason", "").takeIf { it.isNotBlank() },
+                    mutedEvidenceIds = evidenceIds
+                )
+            )
         }
         MembersFile(
             version = j.getInt("v"),
@@ -98,6 +125,9 @@ object MembersSync {
                             JSONObject().apply {
                                 put("userId", p.userId)
                                 put("banned", p.banned)
+                                if (p.mutedUntilMs != null) put("mutedUntil", p.mutedUntilMs)
+                                if (!p.mutedReason.isNullOrBlank()) put("mutedReason", p.mutedReason)
+                                if (p.mutedEvidenceIds.isNotEmpty()) put("mutedEvidence", JSONArray(p.mutedEvidenceIds))
                             }
                         )
                     }
@@ -146,7 +176,10 @@ object MembersSync {
                     ownerId = chat.id,
                     userId = e.userId,
                     banned = e.banned,
-                    joinedAtMs = existing[e.userId]?.joinedAtMs ?: now
+                    joinedAtMs = existing[e.userId]?.joinedAtMs ?: now,
+                    mutedUntilMs = e.mutedUntilMs,
+                    mutedReason = e.mutedReason,
+                    mutedEvidenceIds = evidenceIdsToStore(e.mutedEvidenceIds)
                 )
             }
         )
@@ -175,6 +208,18 @@ object MembersSync {
      *   (null = "не менять"), так что случайной потери имени/аватара/описания при
      *   простом добавлении участника нет, но явно передавать их надо самому вызывающему
      *   коду (см. ChatActivity/PartnerProfileActivity).
+     *
+     * ⚠️ Фикс (репорт: жёлтая плашка мута появляется у заглушённого через 10–25с).
+     * Раньше здесь стоял generic CryptoHelper.encrypt() — для группового чата (у групп
+     * НИКОГДА нет forward-secrecy сессионного ключа) он всегда падает на V5: Argon2id
+     * (64 МиБ) со случайной солью НА КАЖДЫЙ вызов, некэшируемо. Это ровно та проблема,
+     * что уже описана и решена в CryptoHelper.encryptMetadata() для profiles.txt —
+     * V4 с детерминированной солью от chatId, ключ Argon2 считается один раз и
+     * переиспользуется (getOrDeriveArgon2KeyV4), дальше "почти бесплатно". members.txt
+     * ошибочно не был переведён на этот путь при добавлении мута/бана — теперь тоже
+     * V4, тот же тёплый кэш, что и у profiles.txt/текста сообщений группы (encryptGroupMessage),
+     * скорее всего уже прогретый к моменту действия админа. decrypt() на приёме менять
+     * не нужно — формат определяется по префиксу автоматически (см. MembersSync.applyIncoming).
      */
     suspend fun publish(
         transport: ChatTransport,
@@ -188,7 +233,7 @@ object MembersSync {
         groupDescription: String? = null
     ) {
         val content = buildContent(newVersion, adminUserId, participants, groupName, groupAvatarBase64, groupDescription)
-        val encrypted = CryptoHelper.encrypt(content, password, chatId)
+        val encrypted = CryptoHelper.encryptMetadata(content, password, chatId)
         transport.saveFile("members.txt", encrypted)
     }
 }

@@ -18,6 +18,10 @@ import android.view.HapticFeedbackConstants
 import android.annotation.SuppressLint
 import java.io.File
 import android.widget.Toast
+import android.widget.TextView
+import android.widget.ImageView
+import android.widget.FrameLayout
+import android.widget.LinearLayout
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
@@ -214,6 +218,20 @@ class ChatActivity : SecureActivity() {
      * applyGroupPresence() (тикер), чтобы не дёргать Room в горячем пути.
      */
     private var groupActiveParticipantCount: Int = 0
+
+    /**
+     * Я сам заглушён прямо сейчас (см. applySelfMuteState) — read-only режим: строка
+     * ввода скрыта, реакции запрещены (см. handleReactionToggle). Обновляется на
+     * каждом опросе, не только при открытии чата.
+     */
+    private var isSelfMuted: Boolean = false
+
+    /** msgId'ы сообщений-оснований текущего мута (см. ChatParticipant.mutedEvidenceIds). */
+    private var currentMuteEvidenceIds: List<String> = emptyList()
+    /** Полный (без фильтра бана/мута) декод последнего тика — источник для ленты сообщений-оснований. */
+    private var lastAllDecodedMessages: List<Message> = emptyList()
+    /** Мемо-ключ последней отрисованной ленты — не перестраиваем views без реальных изменений (без мерцания). */
+    private var lastRenderedEvidenceKey: String? = null
 
     /** true — уже показали пользователю экран «вас исключили» и закрываем чат (анти-дубль). */
     private var groupBanHandled: Boolean = false
@@ -744,31 +762,15 @@ class ChatActivity : SecureActivity() {
         }
         val partner = ProfileSync.findPartner(allProfiles, prefs.myUserId, prefs.myName)
 
-        // Если кроме меня появился кто-то ещё (или partner найден) — чат "занят".
-        // Помечаем partnerJoined=true чтобы кнопка "Поделиться" стала disabled.
-        val secondParticipantExists = partner != null ||
-                allProfiles.values.any { it.userId != prefs.myUserId }
-        // Групповой чат (ADR-001): баннер «X присоединился» для групп теперь считается
-        // в processChannelData() — на КАЖДОМ опросе (SyncEngine, 3с), а не только здесь,
-        // при открытии чата (с ограниченным числом retry). Раньше баннер был виден только
-        // если участник вступал в узкое окно сразу после открытия чата — если кто-то
-        // вступал позже (чат уже открыт и просто ждёшь) баннер никогда не появлялся
-        // (найдено по репорту пользователя). Логика перенесена туда же, откуда уже
-        // непрерывно читается ChatParticipant (то же состояние announcedJoinedUserIds/
-        // groupJoinAnnounceInitialized используется обеими — дублирования нет).
-        if (!chat.isGroup && secondParticipantExists && !chat.partnerJoined) {
-            db.chatDao().markPartnerJoined(chat.id)
-            chat = chat.copy(partnerJoined = true)
-            // Локальная плашка «X присоединился к чату» — только в этой сессии (см. §1.5
-            // и комментарий у ChatStore.systemMessages). Не шифруется, не публикуется —
-            // партнёр её не увидит, каждая сторона показывает её у себя независимо.
-            val joinedName = partner?.name?.takeIf { it.isNotBlank() }
-                ?: chat.partnerName.takeIf { it.isNotBlank() }
-                ?: getString(R.string.join_default_partner_name)
-            chatStore.addSystemMessage(
-                Message.system(getString(R.string.cc_system_partner_joined, joinedName))
-            )
-        }
+        // ⚠️ Переход partnerJoined=false→true и плашка «X присоединился к чату» для
+        // 1:1-чатов раньше считались ЗДЕСЬ — с ограниченным числом ретраев (3с→6с→9с)
+        // только при onCreate/onResume. Если партнёр вступал позже, а чат оставался
+        // открытым, плашка никогда не появлялась (репорт пользователя). Перенесено в
+        // processParsedProfiles() — она вызывается на КАЖДОМ тике SyncEngine (тот же
+        // принцип, что уже применён к групповым чатам, см. processChannelData), поэтому
+        // здесь эта проверка больше не нужна — дублировать её значило бы рисковать
+        // двойной плашкой (гонка между этой suspend-функцией и тиком SyncEngine на
+        // общем поле chat.partnerJoined).
 
         if (partner != null) {
             if (isTorChat()) {
@@ -1466,6 +1468,10 @@ class ChatActivity : SecureActivity() {
         binding.headerDivider.setBackgroundColor(glowColor)
         binding.headerDivider.visibility = android.view.View.VISIBLE
         binding.loadingOverlay.setBackgroundColor(overlayBgColor)
+        // Крупная плашка мута играет ту же роль, что loadingOverlay (перекрывает
+        // область сообщений) — тот же фон, чтобы не класть непрозрачный @color/bg
+        // поверх обоев (запрещено в glass mode, см. CLAUDE.md §0).
+        binding.mutedBannerLarge.setBackgroundColor(overlayBgColor)
 
         // Cinematic scrim gradients
         binding.viewScrimTop.visibility    = android.view.View.VISIBLE
@@ -1498,6 +1504,7 @@ class ChatActivity : SecureActivity() {
         binding.inputPill.background = pillBg
         binding.headerDivider.visibility = android.view.View.GONE
         binding.loadingOverlay.setBackgroundColor(overlayColor)
+        binding.mutedBannerLarge.setBackgroundColor(overlayColor)
 
         binding.viewScrimTop.visibility    = android.view.View.GONE
         binding.viewScrimBottom.visibility = android.view.View.GONE
@@ -1518,6 +1525,7 @@ class ChatActivity : SecureActivity() {
         binding.headerDivider.visibility = android.view.View.VISIBLE
         binding.headerDivider.setBackgroundColor(ContextCompat.getColor(this, R.color.border))
         binding.loadingOverlay.setBackgroundColor(solidColor)
+        binding.mutedBannerLarge.setBackgroundColor(solidColor)
 
         binding.viewScrimTop.visibility    = android.view.View.GONE
         binding.viewScrimBottom.visibility = android.view.View.GONE
@@ -1824,6 +1832,24 @@ class ChatActivity : SecureActivity() {
             return
         }
 
+        // ⚠️ Фикс (репорт: «зашёл в чат — плашка что партнёр присоединился не
+        // появилась»): переход partnerJoined=false→true и сама плашка раньше считались
+        // ТОЛЬКО в doSyncProfilesOnce() — с ограниченным числом ретраев (3с→6с→9с) при
+        // onCreate/onResume. Если партнёр публиковал профиль ПОЗЖЕ этого окна, а чат всё
+        // это время оставался открытым (без выхода-входа) — плашка никогда не появлялась.
+        // processParsedProfiles() уже вызывается на КАЖДОМ тике (тот же принцип, что уже
+        // применён к групповым чатам, см. processChannelData) — считаем джойн здесь же.
+        if (!chat.isGroup && !chat.partnerJoined) {
+            db.chatDao().markPartnerJoined(chat.id)
+            chat = chat.copy(partnerJoined = true)
+            val joinedName = partner.name.takeIf { it.isNotBlank() }
+                ?: chat.partnerName.takeIf { it.isNotBlank() }
+                ?: getString(R.string.join_default_partner_name)
+            chatStore.addSystemMessage(
+                Message.system(getString(R.string.cc_system_partner_joined, joinedName))
+            )
+        }
+
         // Обновляем V3-сессионный ключ если партнёр опубликовал новый ephemeral ключ
         tryEstablishSessionKey(partner.ephemeralPubKey)
         verifyPartnerIdentity(partner)
@@ -1993,8 +2019,27 @@ class ChatActivity : SecureActivity() {
                     // membersVersion уже обновлена в БД (анти-откат внутри applyIncoming) —
                     // подтягиваем свежее значение в in-memory chat, чтобы повторные
                     // проверки версии в этой же сессии видели актуальное число.
+                    //
+                    // ⚠️ Фикс (репорт: "аватарка чата внезапно не подхватилась" — без
+                    // перезахода): applyIncoming() выше УЖЕ записал новые groupName/
+                    // groupAvatarBase64/groupDescription в Room (chatDao.updateGroupProfile),
+                    // но раньше отсюда в in-memory chat копировался ТОЛЬКО membersVersion —
+                    // свежие имя/аватар/описание молча терялись до перезахода в чат (новый
+                    // Chat читался из БД только в onCreate). Теперь копируем все три поля и,
+                    // если хоть одно реально изменилось, сразу перерисовываем шапку.
                     withContext(Dispatchers.IO) { db.chatDao().getById(chat.id) }?.let { fresh ->
-                        chat = chat.copy(membersVersion = fresh.membersVersion)
+                        val groupProfileChanged = fresh.groupName != chat.groupName ||
+                            fresh.groupAvatarBase64 != chat.groupAvatarBase64 ||
+                            fresh.groupDescription != chat.groupDescription
+                        chat = chat.copy(
+                            membersVersion = fresh.membersVersion,
+                            groupName = fresh.groupName,
+                            groupAvatarBase64 = fresh.groupAvatarBase64,
+                            groupDescription = fresh.groupDescription
+                        )
+                        if (groupProfileChanged) {
+                            withContext(Dispatchers.Main) { applyPartnerToHeader() }
+                        }
                     }
                 }
             }
@@ -2019,6 +2064,18 @@ class ChatActivity : SecureActivity() {
             }
             groupActiveParticipantCount = activeParticipants.size
             withContext(Dispatchers.Main) { applyGroupPresence() }
+
+            // Мой собственный мут — read-only режим (§ запрос пользователя: "только
+            // права на чтение"). Проверяем на КАЖДОМ опросе (не только при открытии),
+            // чтобы и наложение, и снятие/истечение мута отражались без перезахода
+            // в чат (§1.5 CLAUDE.md).
+            val myEntryNow = activeParticipants.firstOrNull { it.userId == prefs.myUserId }
+            val untilNow = myEntryNow?.mutedUntilMs
+            val amMutedNow = untilNow != null && untilNow > System.currentTimeMillis()
+            val evidenceIdsNow = MembersSync.evidenceIdsFromStore(myEntryNow?.mutedEvidenceIds)
+            withContext(Dispatchers.Main) {
+                applySelfMuteState(amMutedNow, untilNow, myEntryNow?.mutedReason, evidenceIdsNow)
+            }
 
             // Баннер «X присоединился к чату» (найдено и исправлено по репорту
             // пользователя: раньше объявление группового джойна считалось ТОЛЬКО при
@@ -2099,12 +2156,41 @@ class ChatActivity : SecureActivity() {
         // Сам чат у забаненного удаляется отдельно (см. checkSelfBanned() выше). Считаем
         // ДО хвостовой оптимизации ниже — иначе сообщение забаненного мелькнёт в хвосте
         // и тут же исчезнет при полном reconcile (нарушение §1.5 "всё на месте").
-        val bannedIds: Set<String> = if (!chat.isGroup) emptySet() else withContext(Dispatchers.IO) {
-            db.chatParticipantDao().getForChat(chat.id).filter { it.banned }.map { it.userId }.toSet()
+        // ⚠️ Мут (тот же мягкий принцип, что и бан выше, но временный): пока
+        // mutedUntilMs у отправителя ещё не наступил, его сообщения скрыты у ОСТАЛЬНЫХ
+        // (включая уже отправленные им ранее — как только мут снят/истёк, они
+        // снова становятся видимы всем без каких-либо действий, крипто-доступ не трогаем).
+        //
+        // ⚠️ На СВОЁМ ЖЕ устройстве заглушённый видит ленту через этот же общий код —
+        // раньше withoutBanned() вырезал ВСЕ его сообщения (репорт: "нет возможности
+        // наблюдать за чатом"). По уточнению пользователя это неверно с обеих сторон:
+        //   — сообщения ОСТАЛЬНЫХ участников заглушённый обязан видеть как обычно
+        //     (myUid никогда не должен попадать в mutedIds — фильтруем только чужих);
+        //   — из СВОИХ СОБСТВЕННЫХ сообщений скрываются только те, что админ отметил
+        //     как "основание" мута (ChatParticipant.mutedEvidenceIds) — они и так
+        //     показаны отдельно в ленте баннера (renderMuteEvidenceFeed), дублировать
+        //     их в общей ленте не нужно. Остальные свои сообщения (не отмеченные как
+        //     основание) остаются видимы как обычно.
+        val groupParticipantsNow = if (!chat.isGroup) emptyList() else withContext(Dispatchers.IO) {
+            db.chatParticipantDao().getForChat(chat.id)
         }
+        val bannedIds: Set<String> = groupParticipantsNow.filter { it.banned }.map { it.userId }.toSet()
+        val nowMs = System.currentTimeMillis()
+        val mutedIds: Set<String> = groupParticipantsNow
+            .filter { !it.banned && it.mutedUntilMs != null && it.mutedUntilMs > nowMs && it.userId != myUid }
+            .map { it.userId }
+            .toSet()
+        val myMuteEntry = groupParticipantsNow.firstOrNull { it.userId == myUid }
+        val myEvidenceMsgIds: Set<String> =
+            if (myMuteEntry != null && !myMuteEntry.banned && myMuteEntry.mutedUntilMs != null && myMuteEntry.mutedUntilMs > nowMs)
+                MembersSync.evidenceIdsFromStore(myMuteEntry.mutedEvidenceIds).toSet()
+            else emptySet()
         fun List<Message>.withoutBanned(): List<Message> =
-            if (bannedIds.isEmpty()) this
-            else filterNot { it.senderUserId != null && it.senderUserId in bannedIds }
+            if (bannedIds.isEmpty() && mutedIds.isEmpty() && myEvidenceMsgIds.isEmpty()) this
+            else filterNot { msg ->
+                (msg.senderUserId != null && (msg.senderUserId in bannedIds || msg.senderUserId in mutedIds)) ||
+                    msg.msgId in myEvidenceMsgIds
+            }
 
         // ── Оптимизация первой загрузки: "хвост" ─────────────────────────────
         // Если чат длинный (> 30 строк), сначала декодируем последние 30
@@ -2118,7 +2204,13 @@ class ChatActivity : SecureActivity() {
             }
         }
 
-        val messages: List<Message> = decodeLines(allLines).withoutBanned()
+        val allDecoded = decodeLines(allLines)
+        val messages: List<Message> = allDecoded.withoutBanned()
+        // Кэш ПОЛНОГО (без фильтра бана/мута) декода — нужен ленте "сообщения-основание"
+        // в баннере мута (applySelfMuteState/renderMuteEvidenceFeed): свои же скрытые
+        // сообщения нужно найти по msgId, даже когда withoutBanned() убрал их из общей ленты.
+        lastAllDecodedMessages = allDecoded
+        if (isSelfMuted) renderMuteEvidenceFeed()
 
         // Forward secrecy баннер (V4-S/V3 сообщения без активного сессионного ключа).
         // ВАЖНО: это окно — НОРМА на старте, пока идёт ECDH-handshake (обмен ephemeral
@@ -2321,7 +2413,11 @@ class ChatActivity : SecureActivity() {
 
         val toAdd = candidates.sortedBy { groupCandidateFirstSeenMs[it] ?: Long.MAX_VALUE }.take(freeSlots)
         val newVersion = chat.membersVersion + 1
-        val allEntries = current.map { MembersSync.Entry(it.userId, it.banned) } +
+        // ⚠️ Пробрасываем mutedUntilMs/mutedReason из текущего локального состояния —
+        // иначе республикация (обычная энролл-проверка, не связанная с мутом вообще)
+        // молча стирала бы мут ВСЕХ участников на каждый тик (Entry по умолчанию
+        // mutedUntilMs=null, см. MembersSync.Entry).
+        val allEntries = current.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds)) } +
             toAdd.map { MembersSync.Entry(it, false) }
         try {
             MembersSync.publish(
@@ -2579,6 +2675,9 @@ class ChatActivity : SecureActivity() {
         else CryptoHelper.encrypt(plaintext, chat.chatPassword, chatId)
 
     private fun sendMessage() {
+        // Заглушённый — read-only (защита в глубину: строка ввода и так скрыта, см.
+        // applySelfMuteState, но на случай отложенного IME-события "отправить").
+        if (isSelfMuted) return
         // Есть выбранные фото в баре → шлём их (с подписью из поля) и очищаем бар.
         if (stagedUris.isNotEmpty()) {
             if (sendManager.isPunished()) return
@@ -3501,6 +3600,213 @@ class ChatActivity : SecureActivity() {
         updateOnlineIndicator(isOnline)
     }
 
+    /**
+     * Мут (read-only режим, запрос пользователя: "только права на чтение чата").
+     * Вызывается на КАЖДОМ опросе (см. processChannelData) — наложение/снятие/истечение
+     * мута отражается сразу, без перезахода в чат (§1.5 CLAUDE.md).
+     *
+     * Пока [muted] — строка ввода полностью скрыта (input_area, вместе с вложениями/
+     * стикерами/голосом — там же), а крупная жёлтая плашка занимает область сообщений.
+     * Плашку можно свернуть в компактную (тап по крестику/самой плашке переключает),
+     * но она никогда не исчезает совсем, пока мут действует — свёрнутое состояние лишь
+     * персистентно на конкретный untilMs (см. Prefs.isMuteBannerCollapsed).
+     */
+    private fun applySelfMuteState(muted: Boolean, untilMs: Long?, reason: String?, evidenceIds: List<String> = emptyList()) {
+        isSelfMuted = muted
+        currentMuteEvidenceIds = evidenceIds
+        if (!muted || untilMs == null) {
+            binding.mutedBannerLarge.visibility = View.GONE
+            binding.mutedBannerCompact.visibility = View.GONE
+            binding.inputArea.visibility = View.VISIBLE
+            binding.mutedEvidenceSection.visibility = View.GONE
+            lastRenderedEvidenceKey = null
+            return
+        }
+        binding.inputArea.visibility = View.GONE
+        renderMuteEvidenceFeed()
+
+        val untilFmt = java.text.SimpleDateFormat("dd.MM.yy, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(untilMs))
+        val reasonText = reason?.takeIf { it.isNotBlank() } ?: getString(R.string.muted_banner_no_reason)
+
+        binding.tvMutedBannerUntil.text = getString(R.string.muted_banner_until_fmt, untilFmt)
+        binding.tvMutedBannerReason.text = reasonText
+        binding.tvMutedBannerCompactText.text = getString(R.string.muted_banner_title) + " " + getString(R.string.muted_banner_until_fmt, untilFmt)
+
+        fun showCollapsed() {
+            prefs.setMuteBannerCollapsed(chat.chatId, untilMs, true)
+            binding.mutedBannerLarge.visibility = View.GONE
+            binding.mutedBannerCompact.visibility = View.VISIBLE
+        }
+        fun showExpanded() {
+            prefs.setMuteBannerCollapsed(chat.chatId, untilMs, false)
+            binding.mutedBannerCompact.visibility = View.GONE
+            binding.mutedBannerLarge.visibility = View.VISIBLE
+        }
+
+        binding.btnMutedBannerCollapse.setOnClickListener { showCollapsed() }
+        binding.mutedBannerCompact.setOnClickListener { showExpanded() }
+
+        // Если оба уже видны (просто обновление текста на очередном тике) — не дёргаем
+        // видимость заново, иначе выбор пользователя (свёрнуто/развёрнуто) на этом же
+        // тике сбросился бы обратно к сохранённому предпочтению.
+        if (binding.mutedBannerLarge.visibility == View.VISIBLE || binding.mutedBannerCompact.visibility == View.VISIBLE) return
+
+        if (prefs.isMuteBannerCollapsed(chat.chatId, untilMs)) showCollapsed() else showExpanded()
+    }
+
+    /**
+     * Лента "сообщения-основание" внутри баннера мута — по запросу пользователя:
+     * админ при муте может прикрепить любое число сообщений (текст/фото/голос),
+     * заглушённый видит их у себя в баннере, фото открывается, голос проигрывается.
+     * Сами сообщения НЕ дублируются — только msgId (см. ChatParticipant.mutedEvidenceIds);
+     * находим их в уже расшифрованной [lastAllDecodedMessages] (полный декод БЕЗ фильтра
+     * бана/мута — свои же скрытые сообщения иначе не найти, см. processChannelData).
+     * Мемо по [lastRenderedEvidenceKey] — не перестраиваем views без реальных изменений.
+     */
+    private fun renderMuteEvidenceFeed() {
+        if (!isSelfMuted || currentMuteEvidenceIds.isEmpty()) {
+            binding.mutedEvidenceSection.visibility = View.GONE
+            lastRenderedEvidenceKey = null
+            return
+        }
+        val key = currentMuteEvidenceIds.joinToString(",") + "#" + lastAllDecodedMessages.size
+        if (key == lastRenderedEvidenceKey) return
+        val evidenceSet = currentMuteEvidenceIds.toHashSet()
+        val evidenceMsgs = lastAllDecodedMessages.filter { it.msgId in evidenceSet }.sortedBy { it.timestampMs }
+        if (evidenceMsgs.isEmpty()) {
+            // Ещё не было полного декода в этой сессии (см. processChannelData) — самолечится
+            // на следующем тике/после первой реальной загрузки, ничего не показываем пока.
+            binding.mutedEvidenceSection.visibility = View.GONE
+            return
+        }
+        lastRenderedEvidenceKey = key
+        binding.mutedEvidenceSection.visibility = View.VISIBLE
+        binding.mutedEvidenceFeed.removeAllViews()
+        evidenceMsgs.forEach { addMuteEvidenceBubble(it) }
+    }
+
+    /**
+     * Один пузырёк ленты сообщений-оснований — текст/фото (по тапу открывается)/голос (по
+     * тапу играет). Ветка-переписка (см. PartnerProfileActivity.addEvidenceThreadRow) может
+     * включать реплику ДРУГОГО человека, на которую отвечал заглушённый — такие пузырьки
+     * рисуются нейтральным (серым) цветом слева + подпись с именем, чтобы не выглядело,
+     * будто это сказал сам заглушённый (см. §16-репорт этой сессии). Собственные сообщения
+     * заглушённого — без изменений (жёлтый, справа, без подписи).
+     */
+    private fun addMuteEvidenceBubble(msg: Message) {
+        val row = layoutInflater.inflate(R.layout.item_muted_evidence_bubble, binding.mutedEvidenceFeed, false)
+        val tvSender = row.findViewById<TextView>(R.id.tv_evidence_bubble_sender)
+        val tvText = row.findViewById<TextView>(R.id.tv_evidence_bubble_text)
+        val flPhoto = row.findViewById<FrameLayout>(R.id.fl_evidence_bubble_photo)
+        val ivPhoto = row.findViewById<ImageView>(R.id.iv_evidence_bubble_photo)
+        val llVoice = row.findViewById<LinearLayout>(R.id.ll_evidence_bubble_voice)
+        val ivVoicePlay = row.findViewById<ImageView>(R.id.iv_evidence_voice_play)
+        val voiceProgress = row.findViewById<View>(R.id.v_evidence_voice_progress)
+        val voiceTrackBg = row.findViewById<View>(R.id.v_evidence_voice_track_bg)
+        val tvVoiceDur = row.findViewById<TextView>(R.id.tv_evidence_voice_dur)
+
+        val isOwn = msg.senderUserId == null || msg.senderUserId == prefs.myUserId
+        if (isOwn) {
+            tvSender.visibility = View.GONE
+        } else {
+            tvSender.visibility = View.VISIBLE
+            tvSender.text = msg.sender
+        }
+        val bubbleBg = if (isOwn) R.drawable.bg_message_muted_evidence else R.drawable.bg_message_muted_evidence_other
+        val bubbleTextColor = ContextCompat.getColor(this, if (isOwn) R.color.warning_on else R.color.text_primary)
+        val bubbleGravity = if (isOwn) android.view.Gravity.END else android.view.Gravity.START
+        listOf<View>(tvText, flPhoto, llVoice).forEach { bubble ->
+            bubble.setBackgroundResource(bubbleBg)
+            (bubble.layoutParams as? FrameLayout.LayoutParams)?.let { it.gravity = bubbleGravity; bubble.layoutParams = it }
+        }
+        tvText.setTextColor(bubbleTextColor)
+        tvVoiceDur.setTextColor(bubbleTextColor)
+        ivVoicePlay.setColorFilter(bubbleTextColor, android.graphics.PorterDuff.Mode.SRC_IN)
+        voiceProgress.setBackgroundColor(bubbleTextColor)
+        voiceTrackBg.setBackgroundColor(
+            ContextCompat.getColor(this, if (isOwn) R.color.warning_on_track_bg else R.color.border)
+        )
+
+        when {
+            msg.isVoice -> {
+                llVoice.visibility = View.VISIBLE
+                tvVoiceDur.text = "0:%02d".format(msg.voiceDurationSec.coerceAtLeast(0))
+                fun refreshIcon() {
+                    ivVoicePlay.setImageResource(if (VoicePlayer.isPlaying(msg.msgId)) R.drawable.ic_pause else R.drawable.ic_play)
+                }
+                refreshIcon()
+                llVoice.setOnClickListener {
+                    val ref = msg.voiceFileName ?: return@setOnClickListener
+                    val loader = imageLoader ?: return@setOnClickListener
+                    lifecycleScope.launch {
+                        val dir = File(cacheDir, "voice_play").apply { mkdirs() }
+                        val f = File(dir, "v_" + Integer.toHexString(ref.hashCode()) + ".m4a")
+                        val file = if (f.exists() && f.length() > 0) f else {
+                            val bytes = withContext(Dispatchers.IO) { loader.loadRawBytes(ref) }
+                            if (bytes == null) null else {
+                                try { f.writeBytes(bytes); f } catch (_: Exception) { null }
+                            }
+                        }
+                        if (file == null) {
+                            Toast.makeText(this@ChatActivity, R.string.voice_load_failed, Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
+                        VoicePlayer.toggle(
+                            key = msg.msgId,
+                            file = file,
+                            onProgress = { _, posMs, durMs ->
+                                voiceProgress.layoutParams = voiceProgress.layoutParams.apply {
+                                    width = (voiceProgress.parent as View).width * posMs / durMs.coerceAtLeast(1)
+                                }
+                                voiceProgress.requestLayout()
+                                refreshIcon()
+                            },
+                            onComplete = {
+                                voiceProgress.layoutParams = voiceProgress.layoutParams.apply { width = 0 }
+                                voiceProgress.requestLayout()
+                                refreshIcon()
+                            }
+                        )
+                        refreshIcon()
+                    }
+                }
+            }
+            msg.isImage -> {
+                flPhoto.visibility = View.VISIBLE
+                // Коллаж (несколько фото) — открываем тем же вьювером, что и в обычной ленте,
+                // с первого кадра; одиночное фото/старый inline base64 — как раньше.
+                val collageRefs = msg.imageFileNames
+                if (!collageRefs.isNullOrEmpty()) {
+                    flPhoto.setOnClickListener { openImageFullscreenByRef(collageRefs, 0) }
+                } else {
+                    flPhoto.setOnClickListener { openImageFullscreen(msg) }
+                }
+                val fileName = collageRefs?.firstOrNull() ?: msg.imageFileName
+                val cachedBmp = fileName?.let { ImageCache.getBitmap(it) }
+                if (cachedBmp != null) {
+                    ivPhoto.setImageBitmap(cachedBmp)
+                } else if (fileName != null) {
+                    val loader = imageLoader
+                    if (loader != null) {
+                        lifecycleScope.launch {
+                            val bmp = loader.loadBitmap(fileName)
+                            if (bmp != null) ivPhoto.setImageBitmap(bmp)
+                        }
+                    }
+                } else if (msg.imageBase64 != null) {
+                    lifecycleScope.launch {
+                        val bmp = withContext(Dispatchers.Default) { ImageUtils.fromBase64(msg.imageBase64) }
+                        if (bmp != null) ivPhoto.setImageBitmap(bmp)
+                    }
+                }
+            }
+            else -> {
+                tvText.visibility = View.VISIBLE
+                tvText.text = msg.text
+            }
+        }
+        binding.mutedEvidenceFeed.addView(row)
+    }
 
     // ====== UI-блокировка во время загрузки изображений ======
 
@@ -4063,6 +4369,8 @@ class ChatActivity : SecureActivity() {
      * После записи — сбрасывает кеш реакций чтобы следующий poll принёс реальное состояние.
      */
     private fun handleReactionToggle(msgId: String, emoji: String) {
+        // Заглушённый — только чтение (запрос пользователя), реакции тоже запрещены.
+        if (isSelfMuted) return
         val userId = prefs.myUserId
         if (userId.isBlank() || msgId.isBlank()) return
 
@@ -4212,8 +4520,11 @@ class ChatActivity : SecureActivity() {
      */
     private fun updateSelectionBar(selected: Set<String>) {
         if (selected.isEmpty() && !adapter.isSelectionMode) {
-            // Exit selection mode — show input, hide selection bar
-            binding.inputArea.visibility    = View.VISIBLE
+            // Exit selection mode — show input, hide selection bar.
+            // ⚠️ Не показывать строку ввода, если сейчас действует мут (см.
+            // applySelfMuteState) — иначе выход из режима выделения молча возвращал бы
+            // ввод заглушённому пользователю до следующего опроса.
+            if (!isSelfMuted) binding.inputArea.visibility = View.VISIBLE
             binding.selectionBar.visibility = View.GONE
         } else {
             // Selection mode active

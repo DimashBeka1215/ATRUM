@@ -226,7 +226,7 @@ ChatActivity.startPolling() → SyncEngine (единый single-flight polling l
 
 | Параметр | Значение | Где |
 |----------|----------|-----|
-| Интервал поллинга | 3 сек (Nostr) / 5 сек (локальный) | `SyncEngine.NOSTR_ACTIVE_INTERVAL_MS / ACTIVE_INTERVAL_MS` |
+| Интервал поллинга | 1 сек (Nostr) / 2 сек (локальный) | `SyncEngine.NOSTR_ACTIVE_INTERVAL_MS / ACTIVE_INTERVAL_MS` |
 | Интервал в фоне | 30 сек | `SyncEngine.BACKGROUND_INTERVAL_MS` |
 | Online heartbeat | каждые 5 сек | `ChatActivity.PRESENCE_INTERVAL_MS` |
 | Online expiry | 20 сек без heartbeat → оффлайн | `ChatActivity.ONLINE_EXPIRY_MS` |

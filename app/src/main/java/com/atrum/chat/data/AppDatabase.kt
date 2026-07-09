@@ -15,14 +15,58 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * проход гарантирует что ни одна запись не хранит приватный ключ в БД.
  * init-проверка в Chat убрана — миграция надёжнее аварийного краша.
  */
-@Database(entities = [Chat::class, ChatParticipant::class], version = 14, exportSchema = false)
+@Database(entities = [Chat::class, ChatParticipant::class, MuteHistoryEntry::class], version = 17, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun chatDao(): ChatDao
     abstract fun chatParticipantDao(): ChatParticipantDao
+    abstract fun muteHistoryDao(): MuteHistoryDao
 
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null
+
+        /**
+         * Версия 17: локальная (не синхронизируемая между устройствами) история мутов
+         * для экрана статистики (см. MuteHistoryEntry). Новая таблица, старые данные
+         * не затронуты.
+         */
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS mute_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        ownerId INTEGER NOT NULL,
+                        userId TEXT NOT NULL,
+                        issuedByUserId TEXT NOT NULL,
+                        issuedAtMs INTEGER NOT NULL,
+                        mutedUntilMs INTEGER NOT NULL,
+                        reason TEXT DEFAULT NULL,
+                        evidenceMsgIds TEXT DEFAULT NULL,
+                        unmutedEarlyAtMs INTEGER DEFAULT NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_mute_history_ownerId_userId ON mute_history (ownerId, userId)"
+                )
+            }
+        }
+
+        /** Версия 16: сообщения-основание мута (msgId'ы через запятую) — nullable, старые строки не затронуты. */
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE chat_participants ADD COLUMN mutedEvidenceIds TEXT DEFAULT NULL")
+            }
+        }
+
+        /** Версия 15: мут участника группы (ADR-001) — обе колонки nullable, старые строки не затронуты. */
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE chat_participants ADD COLUMN mutedUntilMs INTEGER DEFAULT NULL")
+                database.execSQL("ALTER TABLE chat_participants ADD COLUMN mutedReason TEXT DEFAULT NULL")
+            }
+        }
 
         /** Версия 14: описание группы (ADR-001) — колонка с дефолтом, 1:1-чаты не затронуты. */
         private val MIGRATION_13_14 = object : Migration(13, 14) {
@@ -161,7 +205,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "atrum.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }

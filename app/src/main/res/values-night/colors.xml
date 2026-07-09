@@ -57,6 +57,7 @@
     <color name="warning_muted">#D49E5D</color>
     <!-- Тёмный текст/иконка поверх сплошной жёлтой плашки — янтарный фон одинаков в обеих темах. -->
     <color name="warning_on">#412402</color>
+    <color name="warning_on_track_bg">#40412402</color>
     <color name="voice_limit_bg">#FFD23F</color>
     <color name="voice_limit_on">#4A3500</color>
 </resources>

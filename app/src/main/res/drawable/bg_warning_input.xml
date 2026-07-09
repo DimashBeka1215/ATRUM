@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Окно "Основание" внутри крупной плашки мута (activity_chat.xml, muted_evidence_section) —
+     раньше было нейтральным bg_input (тёмно-серое), пробивало "дыру" в жёлтой плашке
+     (CLAUDE.md §16-репорт). Теперь плотнее жёлтая заливка/обводка, чем у внешней bg_warning
+     (10%/24%), чтобы окно читалось как приподнятый элемент внутри той же жёлтой семьи,
+     а не отдельный нейтральный блок. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#26FFB454" />
+    <stroke android:width="1dp" android:color="#4DFFB454" />
+    <corners android:radius="12dp" />
+</shape>

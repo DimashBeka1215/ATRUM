@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:fillViewport="true">
+
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_settings_card"
+    android:padding="20dp">
+
+    <TextView
+        android:id="@+id/tv_mute_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="@color/text_primary"
+        android:textSize="17sp"
+        android:fontFamily="sans-serif-medium"
+        android:layout_marginBottom="4dp"
+        tools:text="Заглушить Ивана" />
+
+    <TextView
+        android:id="@+id/tv_mute_subtitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/mute_dialog_desc"
+        android:textColor="@color/text_secondary"
+        android:textSize="12.5sp"
+        android:lineSpacingExtra="2dp"
+        android:layout_marginBottom="16dp" />
+
+    <LinearLayout
+        android:id="@+id/mute_chip_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="16dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="10dp">
+
+        <ImageButton
+            android:id="@+id/btn_mute_prev_month"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:padding="6dp"
+            android:src="@drawable/ic_chevron_right"
+            android:rotation="180"
+            android:background="@drawable/bg_icon_button"
+            android:contentDescription="@string/cd_mute_prev_month"
+            app:tint="@color/accent" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:layout_marginHorizontal="4dp">
+
+            <TextView
+                android:id="@+id/tv_mute_month"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text_primary"
+                android:textSize="13.5sp"
+                android:fontFamily="sans-serif-medium"
+                tools:text="Апрель" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="  ·  "
+                android:textColor="@color/text_tertiary"
+                android:textSize="13.5sp" />
+
+            <ImageButton
+                android:id="@+id/btn_mute_prev_year"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:padding="4dp"
+                android:src="@drawable/ic_chevron_right"
+                android:rotation="180"
+                android:background="@drawable/bg_icon_button"
+                android:contentDescription="@string/cd_mute_prev_year"
+                app:tint="@color/accent" />
+
+            <TextView
+                android:id="@+id/tv_mute_year"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="4dp"
+                android:textColor="@color/text_primary"
+                android:textSize="13.5sp"
+                android:fontFamily="sans-serif-medium"
+                tools:text="2028" />
+
+            <ImageButton
+                android:id="@+id/btn_mute_next_year"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:padding="4dp"
+                android:src="@drawable/ic_chevron_right"
+                android:background="@drawable/bg_icon_button"
+                android:contentDescription="@string/cd_mute_next_year"
+                app:tint="@color/accent" />
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/btn_mute_next_month"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:padding="6dp"
+            android:src="@drawable/ic_chevron_right"
+            android:background="@drawable/bg_icon_button"
+            android:contentDescription="@string/cd_mute_next_month"
+            app:tint="@color/accent" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/mute_dow_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginBottom="4dp" />
+
+    <LinearLayout
+        android:id="@+id/mute_calendar_grid"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginBottom="14dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:background="@drawable/bg_settings_card"
+        android:padding="10dp"
+        android:layout_marginBottom="14dp">
+
+        <ImageView
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:layout_marginEnd="8dp"
+            android:src="@drawable/ic_clock"
+            app:tint="@color/accent"
+            android:contentDescription="@null" />
+
+        <EditText
+            android:id="@+id/et_mute_hour"
+            android:layout_width="40dp"
+            android:layout_height="wrap_content"
+            android:background="@null"
+            android:gravity="center"
+            android:inputType="number"
+            android:maxLength="2"
+            android:textColor="@color/text_primary"
+            android:textSize="16sp"
+            android:importantForAutofill="no" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text=":"
+            android:textColor="@color/text_primary"
+            android:textSize="16sp" />
+
+        <EditText
+            android:id="@+id/et_mute_minute"
+            android:layout_width="40dp"
+            android:layout_height="wrap_content"
+            android:background="@null"
+            android:gravity="center"
+            android:inputType="number"
+            android:maxLength="2"
+            android:textColor="@color/text_primary"
+            android:textSize="16sp"
+            android:importantForAutofill="no" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tv_mute_summary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="@color/text_secondary"
+        android:textSize="12.5sp"
+        android:layout_marginBottom="12dp"
+        tools:text="Заглушён до: 12.05.2028, 20:00" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/mute_dialog_reason_label"
+        android:textColor="@color/text_secondary"
+        android:textSize="11.5sp"
+        android:layout_marginBottom="6dp" />
+
+    <EditText
+        android:id="@+id/et_mute_reason"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="44dp"
+        android:background="@drawable/bg_input"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="10dp"
+        android:hint="@string/mute_dialog_reason_hint"
+        android:textColorHint="@color/text_quaternary"
+        android:textColor="@color/text_primary"
+        android:textSize="13.5sp"
+        android:inputType="textMultiLine|textCapSentences"
+        android:maxLines="3"
+        android:importantForAutofill="no"
+        android:layout_marginBottom="20dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/mute_dialog_evidence_label"
+        android:textColor="@color/text_secondary"
+        android:textSize="11.5sp"
+        android:layout_marginBottom="6dp" />
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="220dp"
+        android:background="@drawable/bg_input"
+        android:layout_marginBottom="20dp">
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <LinearLayout
+                android:id="@+id/mute_evidence_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="4dp" />
+        </ScrollView>
+
+        <TextView
+            android:id="@+id/tv_evidence_empty"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="@string/mute_dialog_evidence_loading"
+            android:textColor="@color/text_quaternary"
+            android:textSize="12.5sp" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btn_mute_cancel"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:layout_marginEnd="10dp"
+            android:text="@string/btn_cancel"
+            android:textColor="@color/text_primary"
+            android:textSize="15sp"
+            android:textAllCaps="false"
+            android:background="@drawable/bg_button_outline"
+            android:stateListAnimator="@null" />
+
+        <Button
+            android:id="@+id/btn_mute_confirm"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:text="@string/mute_dialog_confirm"
+            android:textColor="@color/white"
+            android:textSize="15sp"
+            android:fontFamily="sans-serif-medium"
+            android:textAllCaps="false"
+            android:background="@drawable/bg_button"
+            android:stateListAnimator="@null" />
+    </LinearLayout>
+
+</LinearLayout>
+</ScrollView>

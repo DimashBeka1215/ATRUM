@@ -33,6 +33,49 @@ object StatsUtil {
         }
     }
 
+    /**
+     * Как [decodeAll], но с memo-кэшем по сырой (зашифрованной) строке — повторный вызов
+     * на той же истории пропускает уже расшифрованные строки: шифртекст неизменяем,
+     * расшифровка одной и той же строки всегда даёт один и тот же результат (включая
+     * "не расшифровалось" — мусорную/undecryptable строку тоже кэшируем, чтобы не decrypt'ить
+     * её заново на каждый тик). Резко ускоряет периодические обновления статистики — иначе
+     * КАЖДЫЙ тик (см. LIVE_REFRESH_INTERVAL_MS) заново прогоняет тяжёлый Argon2id по ВСЕЙ
+     * истории чата целиком (репорт §16: «первая загрузка долгая, даже если в чате грузить
+     * нечего» — на деле грузилось не "нечего", а ВСЁ, заново, каждый раз).
+     * [cache] переживает вызовы — хранится в самом экране статистики (не тут, не глобально:
+     * пароль/chatId у каждого чата свои, поэтому кэш живёт по одному на Activity-инстанс).
+     *
+     * ⚠️ Экраны статистики запускают refreshData()/refreshStats() из НЕСКОЛЬКИХ независимых
+     * корутин (живой пуш watchMessages, периодический liveRefreshJob, pull-to-refresh) —
+     * они могут выполняться конкурентно на Dispatchers.Default. Проверка+запись здесь
+     * синхронизированы НА САМОМ [cache] — этого достаточно для обычного HashMap, ПОКА
+     * ничто другое не читает/не пишет в тот же экземпляр [cache] в обход этого метода
+     * (сейчас так и есть — экраны статистики держат его только ради этого вызова).
+     */
+    fun decodeAllCached(
+        chatContent: String, password: String, chatId: String, myUserId: String, myName: String,
+        cache: MutableMap<String, Message?>
+    ): List<Message> {
+        val lines = chatContent.split("\n").filter { it.isNotEmpty() }
+        return lines.mapNotNull { rawLine ->
+            val line = rawLine.trim()
+            synchronized(cache) {
+                if (!cache.containsKey(line)) {
+                    cache[line] = CryptoHelper.decrypt(line, password, chatId)?.let { decrypted ->
+                        val garbage = decrypted.count { c ->
+                            c.code in 0x80..0x9F ||
+                                (c.code < 0x20 && c != '\n' && c != '\r' && c != '\t' &&
+                                    c.code !in setOf(0x01, 0x02, 0x11, 0x1E, 0x1F))
+                        }
+                        if (decrypted.length > 8 && garbage * 100 / decrypted.length > GARBAGE_PERCENT_THRESHOLD) null
+                        else Message.fromDecrypted(decrypted, myUserId, myName, emptySet(), raw = line)
+                    }
+                }
+                cache[line]
+            }
+        }
+    }
+
     /** Пара (расшифрованное сообщение, метаданные удаления) для раздела «Удалённые сообщения». */
     data class DeletedRow(val message: Message, val deletedAtMs: Long, val deleterPubkey: String)
 
@@ -43,6 +86,26 @@ object StatsUtil {
         val decrypted = CryptoHelper.decrypt(d.encryptedContent, password, chatId) ?: return@mapNotNull null
         val msg = Message.fromDecrypted(decrypted, myUserId, myName, emptySet(), raw = d.encryptedContent)
         DeletedRow(msg, d.deletedAtMs, d.deleterPubkey)
+    }
+
+    /**
+     * Находит "оригинал" цитаты для [msg] в [all] — тот же принцип сопоставления, что и
+     * ChatActivity.scrollToOriginal (совпадение по имени отправителя + первым 120 символам
+     * текста). Отдельного msgId у цитаты в протоколе нет (см. Message.quotedSender/quotedText —
+     * лёгкая цитата, не жёсткая ссылка), поэтому сопоставление приблизительное: при дублях
+     * текста/имени вернётся первое совпадение. Это ограничение уже существует в проде для
+     * перехода по цитате в самом чате — здесь тот же trade-off, не новый риск.
+     */
+    fun findQuotedOriginal(all: List<Message>, msg: Message): Message? {
+        val qText = msg.quotedText ?: return null
+        val qSender = msg.quotedSender ?: return null
+        return all.firstOrNull { it.sender == qSender && it.text.take(120) == qText }
+    }
+
+    /** Обратная сторона [findQuotedOriginal] — все сообщения из [all], являющиеся ответом на [msg]. */
+    fun findReplies(all: List<Message>, msg: Message): List<Message> {
+        val snippet = msg.text.take(120)
+        return all.filter { it.quotedSender == msg.sender && it.quotedText == snippet }
     }
 
     enum class Period { DAY, WEEK, MONTH, YEAR }

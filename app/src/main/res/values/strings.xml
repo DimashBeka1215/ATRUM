@@ -247,6 +247,7 @@
     <string name="error_message_not_found">Сообщение уже изменено или удалено</string>
     <string name="error_edit">Не удалось изменить</string>
     <string name="error_delete">Не удалось удалить</string>
+    <string name="error_restore">Не удалось восстановить</string>
 
     <!-- Create chat (new single-screen design) -->
     <string name="cc_profile_title">Ваш профиль</string>
@@ -301,6 +302,61 @@
     <string name="demo_unban_cd">Разбанить %1$s</string>
     <string name="demo_unban_share_hint">Разбанен(а). Чтобы человек вернулся — поделитесь с ним новым приглашением из списка чатов.</string>
     <string name="cd_group_description_edit">Изменить описание группы</string>
+
+    <string name="demo_mute_cd">Заглушить %1$s</string>
+    <string name="demo_unmute_cd">Снять мут с %1$s</string>
+    <string name="demo_member_muted_fmt">заглушён(а) до %1$s</string>
+    <string name="demo_unmute_title">Снять мут с %1$s?</string>
+    <string name="demo_unmute_message">Он(а) сразу сможет снова писать в чат.</string>
+    <string name="demo_unmute_confirm">Снять мут</string>
+
+    <string name="mute_dialog_title_fmt">Заглушить %1$s</string>
+    <string name="mute_dialog_desc">Сообщения будут скрыты у всех участников до указанного момента, строка ввода у него(неё) исчезнет</string>
+    <string name="mute_dialog_reason_label">Причина (покажем при входе в чат)</string>
+    <string name="mute_dialog_reason_hint">Например: слишком много спама в общем чате</string>
+    <string name="mute_dialog_confirm">Заглушить</string>
+    <string name="mute_dialog_summary_fmt">Заглушён до: %1$s</string>
+    <string name="mute_dialog_time_in_past">Выберите время в будущем</string>
+    <string name="mute_preset_1h">1 час</string>
+    <string name="mute_preset_1d">1 день</string>
+    <string name="mute_preset_1w">1 неделя</string>
+    <string name="mute_preset_1m">1 месяц</string>
+    <string name="mute_preset_1y">1 год</string>
+    <string name="cd_mute_prev_month">Предыдущий месяц</string>
+    <string name="cd_mute_next_month">Следующий месяц</string>
+    <string name="cd_mute_prev_year">Предыдущий год</string>
+    <string name="cd_mute_next_year">Следующий год</string>
+    <string name="mute_dialog_evidence_label">Сообщения-основание (необязательно)</string>
+    <string name="mute_dialog_evidence_loading">Загрузка истории…</string>
+    <string name="mute_dialog_evidence_empty">У этого участника пока нет сообщений</string>
+    <string name="mute_evidence_thread_with_fmt">Ветка с %1$s</string>
+    <string name="my_stats_entry_cd">Моя статистика</string>
+
+    <string name="muted_banner_title">Вы заглушены</string>
+    <string name="muted_banner_until_fmt">до %1$s</string>
+    <string name="muted_banner_reason_label">Причина</string>
+    <string name="muted_banner_no_reason">Без указания причины</string>
+    <string name="muted_banner_input_hidden">Строка ввода сообщений скрыта, пока действует мут</string>
+    <string name="muted_banner_evidence_label">Сообщения, за которые вы получили ограничение</string>
+    <string name="cd_muted_banner_collapse">Свернуть</string>
+    <string name="cd_muted_banner_expand">Развернуть предупреждение о муте</string>
+    <string name="cd_muted_evidence_photo">Открыть фото</string>
+    <string name="cd_muted_evidence_voice">Прослушать голосовое</string>
+
+    <string-array name="month_names_full">
+        <item>Январь</item>
+        <item>Февраль</item>
+        <item>Март</item>
+        <item>Апрель</item>
+        <item>Май</item>
+        <item>Июнь</item>
+        <item>Июль</item>
+        <item>Август</item>
+        <item>Сентябрь</item>
+        <item>Октябрь</item>
+        <item>Ноябрь</item>
+        <item>Декабрь</item>
+    </string-array>
     <string name="group_description_placeholder_admin">Добавить описание группы</string>
     <string name="group_description_dialog_title">Описание группы</string>
     <string name="tester_item_group_profile_demo">Предпросмотр: профиль группы</string>
@@ -346,6 +402,7 @@
     <string name="join_status_verifying">Проверяем пароль…</string>
     <string name="join_status_saving">Сохраняем чат…</string>
     <string name="join_status_profile">Делимся профилем…</string>
+    <string name="join_status_loading_profile">Загружаем аватар и имя собеседника…</string>
     <string name="join_status_already">Этот чат уже в вашем списке</string>
     <string name="join_err_empty">Введите пароль приглашения, который дал друг.</string>
     <string name="join_err_not_invite">Это не похоже на пароль приглашения. Попросите у друга длинный пароль, начинающийся с ATRM.</string>
@@ -1010,6 +1067,24 @@
     <string name="group_stats_name_with_admin">%1$s · админ</string>
     <string name="group_stats_last_active">последнее %1$s</string>
     <string name="group_stats_no_messages">нет сообщений</string>
+
+    <!-- Экран статистики — раздел «История мутов» -->
+    <string name="group_stats_tab_users">Участники</string>
+    <string name="group_stats_tab_mute_history">История мутов</string>
+    <string name="mute_history_empty">Мутов ещё не было</string>
+    <string name="mute_history_status_active_fmt">До %1$s</string>
+    <string name="mute_history_status_expired">Истёк</string>
+    <string name="mute_history_status_unmuted_early">Снят досрочно</string>
+    <string name="mute_history_issued_at_fmt">Выдано %1$s</string>
+    <string name="mute_history_issued_by_fmt">Выдал: %1$s</string>
+    <string name="mute_history_issued_by_me">Вы</string>
+    <string name="mute_history_until_fmt">Мут до: %1$s</string>
+    <string name="mute_history_until_early_fmt">Мут до %1$s · снят досрочно %2$s</string>
+    <string name="mute_history_reason_label">Причина</string>
+    <string name="mute_history_evidence_label">Сообщения-основание</string>
+    <string name="mute_history_evidence_photo">Фото</string>
+    <string name="mute_history_evidence_voice_fmt">Голосовое сообщение · 0:%02d</string>
+    <string name="mute_history_evidence_unavailable">Сообщение недоступно</string>
 
     <string name="stats_period_day">Дни</string>
     <string name="stats_period_week">Недели</string>

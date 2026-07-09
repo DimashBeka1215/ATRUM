@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Пузырёк ленты "сообщения-основание" в баннере мута (item_muted_evidence_bubble.xml) —
+     по запросу пользователя вся плашка мута, включая эти пузырьки, должна быть одной
+     жёлтой гаммой (см. CLAUDE.md §16-репорт "окно с жёлтым цветом не сочетается").
+     Сплошная заливка @color/warning вместо фиолетового bg_message_self — тот же хвост
+     скругления, что и у обычного исходящего пузырька (DESIGN.md §3). Текст/иконки поверх —
+     @color/warning_on (тёмно-янтарный, гарантированный контраст на #FFB454 в обеих темах). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/warning" />
+    <corners
+        android:topLeftRadius="20dp"
+        android:topRightRadius="20dp"
+        android:bottomLeftRadius="20dp"
+        android:bottomRightRadius="6dp" />
+</shape>

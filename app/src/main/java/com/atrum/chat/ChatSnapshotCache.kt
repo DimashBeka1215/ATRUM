@@ -5,6 +5,7 @@ import com.atrum.chat.transport.AllGistData
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
@@ -54,8 +55,22 @@ object ChatSnapshotCache {
         io.execute { runCatching { File(d, fileName(chatId)).delete() } }
     }
 
-    private fun fileName(chatId: String): String =
-        "snap_" + Integer.toHexString(chatId.hashCode()) + ".dat"
+    // ⚠️ Фикс (аудит §16): раньше имя файла строилось из Integer.toHexString(chatId.hashCode())
+    // — обычный 32-битный String.hashCode(). У двух РАЗНЫХ chatId (у нас это 128-битный
+    // SecureRandom-секрет, см. CreateChatActivity.generateChannelId) теоретически может
+    // совпасть 32-битный хеш — тогда чат Б читал/писал бы файл снимка чата А на диске
+    // (после перезапуска процесса, когда в памяти ещё пусто — см. get()). Вероятность на
+    // практике ничтожна, но у сборки, которую многократно переустанавливают/пересобирают
+    // для тестов, лучше не полагаться на это. SHA-256 снижает риск до пренебрежимого.
+    private fun fileName(chatId: String): String = "snap_" + sha256(chatId).take(32) + ".dat"
+
+    private fun sha256(s: String): String {
+        val b = MessageDigest.getInstance("SHA-256").digest(s.toByteArray(Charsets.UTF_8))
+        val hex = "0123456789abcdef"
+        val sb = StringBuilder(b.size * 2)
+        for (x in b) { val v = x.toInt() and 0xFF; sb.append(hex[v ushr 4]); sb.append(hex[v and 0x0F]) }
+        return sb.toString()
+    }
 
     private fun writeSnap(f: File, d: AllGistData) {
         DataOutputStream(f.outputStream().buffered()).use { o ->

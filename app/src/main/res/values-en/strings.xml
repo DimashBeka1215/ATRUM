@@ -242,6 +242,7 @@
     <string name="error_message_not_found">Message has already been changed or deleted</string>
     <string name="error_edit">Failed to edit</string>
     <string name="error_delete">Failed to delete</string>
+    <string name="error_restore">Failed to restore</string>
 
     <!-- Create chat new design -->
     <string name="cc_profile_title">Your profile</string>
@@ -296,6 +297,61 @@
     <string name="demo_unban_cd">Unban %1$s</string>
     <string name="demo_unban_share_hint">Unbanned. For them to come back, share a new invite from the chat list.</string>
     <string name="cd_group_description_edit">Edit group description</string>
+
+    <string name="demo_mute_cd">Mute %1$s</string>
+    <string name="demo_unmute_cd">Unmute %1$s</string>
+    <string name="demo_member_muted_fmt">muted until %1$s</string>
+    <string name="demo_unmute_title">Unmute %1$s?</string>
+    <string name="demo_unmute_message">They\'ll be able to write to the chat again right away.</string>
+    <string name="demo_unmute_confirm">Unmute</string>
+
+    <string name="mute_dialog_title_fmt">Mute %1$s</string>
+    <string name="mute_dialog_desc">Their messages will be hidden from everyone until the chosen moment, and their message input will disappear</string>
+    <string name="mute_dialog_reason_label">Reason (shown to them when they open the chat)</string>
+    <string name="mute_dialog_reason_hint">For example: too much spam in the group chat</string>
+    <string name="mute_dialog_confirm">Mute</string>
+    <string name="mute_dialog_summary_fmt">Muted until: %1$s</string>
+    <string name="mute_dialog_time_in_past">Pick a time in the future</string>
+    <string name="mute_preset_1h">1 hour</string>
+    <string name="mute_preset_1d">1 day</string>
+    <string name="mute_preset_1w">1 week</string>
+    <string name="mute_preset_1m">1 month</string>
+    <string name="mute_preset_1y">1 year</string>
+    <string name="cd_mute_prev_month">Previous month</string>
+    <string name="cd_mute_next_month">Next month</string>
+    <string name="cd_mute_prev_year">Previous year</string>
+    <string name="cd_mute_next_year">Next year</string>
+    <string name="mute_dialog_evidence_label">Messages as evidence (optional)</string>
+    <string name="mute_dialog_evidence_loading">Loading history…</string>
+    <string name="mute_dialog_evidence_empty">This member has no messages yet</string>
+    <string name="mute_evidence_thread_with_fmt">Thread with %1$s</string>
+    <string name="my_stats_entry_cd">My stats</string>
+
+    <string name="muted_banner_title">You\'re muted</string>
+    <string name="muted_banner_until_fmt">until %1$s</string>
+    <string name="muted_banner_reason_label">Reason</string>
+    <string name="muted_banner_no_reason">No reason given</string>
+    <string name="muted_banner_input_hidden">Message input is hidden while the mute is active</string>
+    <string name="muted_banner_evidence_label">Messages you were restricted for</string>
+    <string name="cd_muted_banner_collapse">Collapse</string>
+    <string name="cd_muted_banner_expand">Expand mute warning</string>
+    <string name="cd_muted_evidence_photo">Open photo</string>
+    <string name="cd_muted_evidence_voice">Play voice message</string>
+
+    <string-array name="month_names_full">
+        <item>January</item>
+        <item>February</item>
+        <item>March</item>
+        <item>April</item>
+        <item>May</item>
+        <item>June</item>
+        <item>July</item>
+        <item>August</item>
+        <item>September</item>
+        <item>October</item>
+        <item>November</item>
+        <item>December</item>
+    </string-array>
     <string name="group_description_placeholder_admin">Add a group description</string>
     <string name="group_description_dialog_title">Group description</string>
     <string name="tester_item_group_profile_demo">Preview: group chat profile</string>
@@ -341,6 +397,7 @@
     <string name="join_status_verifying">Verifying password…</string>
     <string name="join_status_saving">Saving chat…</string>
     <string name="join_status_profile">Sharing profile…</string>
+    <string name="join_status_loading_profile">Loading the other person\'s avatar and name…</string>
     <string name="join_status_already">This chat is already in your list</string>
     <string name="join_err_empty">Enter the invite password your friend gave you.</string>
     <string name="join_err_not_invite">This doesn\'t look like an invite password. Ask your friend for the long password starting with ATRM.</string>
@@ -988,6 +1045,24 @@
     <string name="group_stats_name_with_admin">%1$s · admin</string>
     <string name="group_stats_last_active">last active %1$s</string>
     <string name="group_stats_no_messages">no messages</string>
+
+    <!-- Stats screen — "Mute history" section -->
+    <string name="group_stats_tab_users">Members</string>
+    <string name="group_stats_tab_mute_history">Mute history</string>
+    <string name="mute_history_empty">No mutes yet</string>
+    <string name="mute_history_status_active_fmt">Until %1$s</string>
+    <string name="mute_history_status_expired">Expired</string>
+    <string name="mute_history_status_unmuted_early">Unmuted early</string>
+    <string name="mute_history_issued_at_fmt">Issued %1$s</string>
+    <string name="mute_history_issued_by_fmt">Issued by: %1$s</string>
+    <string name="mute_history_issued_by_me">You</string>
+    <string name="mute_history_until_fmt">Muted until: %1$s</string>
+    <string name="mute_history_until_early_fmt">Muted until %1$s · unmuted early %2$s</string>
+    <string name="mute_history_reason_label">Reason</string>
+    <string name="mute_history_evidence_label">Evidence messages</string>
+    <string name="mute_history_evidence_photo">Photo</string>
+    <string name="mute_history_evidence_voice_fmt">Voice message · 0:%02d</string>
+    <string name="mute_history_evidence_unavailable">Message unavailable</string>
 
     <string name="stats_period_day">Days</string>
     <string name="stats_period_week">Weeks</string>

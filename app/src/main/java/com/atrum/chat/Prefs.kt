@@ -413,6 +413,26 @@ class Prefs(private val context: Context) {
         prefs.edit().putLong("eph_rot_$chatId", ts).apply()
     }
 
+    /**
+     * Свёрнута ли крупная плашка мута (см. ChatActivity.applySelfMuteState) — только
+     * UI-предпочтение, не секрет, но проще держать в том же файле. Привязано к
+     * mutedUntilMs — при СЛЕДУЮЩЕМ отдельном муте (новый untilMs) счётчик стартует
+     * заново для этого untilMs.
+     *
+     * Дефолт — false (развёрнуто): при новом муте пользователь сначала видит крупную
+     * плашку с причиной/сроком/основанием целиком, и сворачивает её сам (крестик/тап),
+     * если хочет продолжить читать ленту. Реальная причина, из-за которой заглушённый
+     * не видел вообще никаких сообщений, была не в этом — фильтр withoutBanned() в
+     * ChatActivity.processChannelData вырезал его СОБСТВЕННЫЕ сообщения из его же
+     * ленты (см. фикс там же, exclude по myUid) — это устранено на уровне данных,
+     * не зависит от развёрнутости плашки.
+     */
+    fun isMuteBannerCollapsed(chatId: String, untilMs: Long): Boolean =
+        prefs.getBoolean("mute_collapsed_${chatId}_$untilMs", false)
+    fun setMuteBannerCollapsed(chatId: String, untilMs: Long, collapsed: Boolean) {
+        prefs.edit().putBoolean("mute_collapsed_${chatId}_$untilMs", collapsed).apply()
+    }
+
     // ─── Ключ издателя списка реле (есть только у владельца) ───────────────────
     // Приватный ключ подписи списка реле. Хранится в EncryptedSharedPreferences/Keystore,
     // в сеть НЕ уходит. Наличие ключа => в настройках появляется экран «Издатель».

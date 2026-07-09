@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/chat_main_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -400,6 +401,201 @@
                     android:layout_marginStart="4dp"
                     app:tint="#B3FFFFFF"/>
             </com.atrum.chat.BackdropBlurView>
+
+            <!-- ═══ Мут (read-only) — крупная плашка по центру, DESIGN.md §10: кастомная,
+                 не системный диалог. Занимает всю область сообщений, пока не свёрнута
+                 (см. ChatActivity.applySelfMuteState) ═══ -->
+            <FrameLayout
+                android:id="@+id/muted_banner_large"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@color/bg"
+                android:visibility="gone">
+
+                <ImageButton
+                    android:id="@+id/btn_muted_banner_collapse"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_gravity="top|end"
+                    android:layout_margin="8dp"
+                    android:padding="8dp"
+                    android:src="@drawable/ic_close"
+                    android:background="@drawable/bg_icon_button"
+                    android:contentDescription="@string/cd_muted_banner_collapse"
+                    app:tint="@color/text_tertiary"/>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:layout_marginHorizontal="24dp"
+                    android:orientation="vertical"
+                    android:gravity="center_horizontal"
+                    android:background="@drawable/bg_warning"
+                    android:paddingHorizontal="20dp"
+                    android:paddingVertical="24dp">
+
+                    <FrameLayout
+                        android:layout_width="56dp"
+                        android:layout_height="56dp"
+                        android:layout_marginBottom="14dp">
+
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:background="@drawable/bg_muted_icon_circle"/>
+
+                        <ImageView
+                            android:id="@+id/iv_muted_banner_icon"
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_bell_off"
+                            app:tint="@color/warning"
+                            android:contentDescription="@null"/>
+                    </FrameLayout>
+
+                    <TextView
+                        android:id="@+id/tv_muted_banner_title"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/muted_banner_title"
+                        android:textColor="@color/warning"
+                        android:textSize="16sp"
+                        android:fontFamily="sans-serif-medium"
+                        android:layout_marginBottom="6dp"/>
+
+                    <TextView
+                        android:id="@+id/tv_muted_banner_until"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp"
+                        android:layout_marginBottom="12dp"
+                        tools:text="до 12.05.2028, 20:00"/>
+
+                    <View
+                        android:layout_width="120dp"
+                        android:layout_height="1dp"
+                        android:background="@color/border"
+                        android:layout_marginBottom="12dp"/>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/muted_banner_reason_label"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp"
+                        android:layout_marginBottom="4dp"/>
+
+                    <TextView
+                        android:id="@+id/tv_muted_banner_reason"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp"
+                        android:layout_marginBottom="14dp"
+                        tools:text="слишком много спама в общем чате"/>
+
+                    <LinearLayout
+                        android:id="@+id/muted_evidence_section"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:visibility="gone">
+
+                        <View
+                            android:layout_width="120dp"
+                            android:layout_height="1dp"
+                            android:layout_gravity="center_horizontal"
+                            android:background="@color/border"
+                            android:layout_marginBottom="12dp"/>
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/muted_banner_evidence_label"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp"
+                            android:gravity="center"
+                            android:layout_marginBottom="10dp"/>
+
+                        <FrameLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="170dp"
+                            android:background="@drawable/bg_warning_input"
+                            android:layout_marginBottom="14dp">
+
+                            <ScrollView
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent">
+
+                                <LinearLayout
+                                    android:id="@+id/muted_evidence_feed"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:orientation="vertical"
+                                    android:padding="10dp" />
+                            </ScrollView>
+                        </FrameLayout>
+                    </LinearLayout>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/muted_banner_input_hidden"
+                        android:textColor="@color/text_tertiary"
+                        android:textSize="11sp"
+                        android:gravity="center"/>
+                </LinearLayout>
+            </FrameLayout>
+
+            <!-- ═══ Мут — свёрнутая компактная версия (тап разворачивает обратно) ═══ -->
+            <LinearLayout
+                android:id="@+id/muted_banner_compact"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top"
+                android:background="@drawable/bg_warning"
+                android:orientation="horizontal"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="10dp"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:contentDescription="@string/cd_muted_banner_expand"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:layout_marginEnd="10dp"
+                    android:src="@drawable/ic_bell_off"
+                    app:tint="@color/warning"
+                    android:contentDescription="@null"/>
+
+                <TextView
+                    android:id="@+id/tv_muted_banner_compact_text"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textColor="@color/warning"
+                    android:textSize="12sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    tools:text="Вы заглушены до 12.05.2028, 20:00"/>
+
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:layout_marginStart="8dp"
+                    android:src="@drawable/ic_chevron_down"
+                    android:rotation="180"
+                    app:tint="@color/warning"
+                    android:contentDescription="@null"/>
+            </LinearLayout>
 
         </FrameLayout>
 

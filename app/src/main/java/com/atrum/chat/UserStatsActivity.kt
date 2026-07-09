@@ -8,7 +8,9 @@ import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -25,8 +27,11 @@ import com.atrum.chat.transport.NostrTransport
 import com.atrum.chat.transport.TransportFactory
 import com.google.android.material.imageview.ShapeableImageView
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -51,6 +56,26 @@ class UserStatsActivity : AppCompatActivity() {
         const val EXTRA_USER_ID = "user_id"
         const val EXTRA_USER_NAME = "user_name"
         const val EXTRA_USER_AVATAR = "user_avatar"
+        private const val LIVE_REFRESH_INTERVAL_MS = 6_000L
+
+        /** Первая загрузка: сколько раз ждать СВОЙ настоящий ответ реле (loadAllFresh),
+         *  прежде чем сдаться и подставить обычный терпеливый loadAll(). */
+        private const val FIRST_LOAD_MAX_ATTEMPTS = 5
+        private const val FIRST_LOAD_RETRY_DELAY_MS = 2_500L
+
+        /** Сколько сообщений показываем сразу (и добавляем за один шаг ленивой подгрузки
+         *  при скролле) — репорт: «пусть при первом заходе грузит минимум 25 сообщений,
+         *  а дальше по мере необходимости ленивая прогрузка во время скролла». */
+        private const val INITIAL_VISIBLE_MESSAGES = 25
+        private const val PAGE_SIZE = 25
+        private const val SCROLL_LOAD_THRESHOLD = 5
+
+        /** Стартовый размер "хвостового" окна строк чата для быстрой первой отрисовки
+         *  (см. ChatActivity.TAIL_FIRST — тот же принцип): не все строки общего чата
+         *  принадлежат целевому участнику, поэтому окно растёт, пока не наберём хотя бы
+         *  INITIAL_VISIBLE_MESSAGES ЕГО сообщений. */
+        private const val TAIL_INITIAL_WINDOW = 60
+        private const val TAIL_GROWTH_FACTOR = 3
     }
 
     // ── Строки списка ────────────────────────────────────────────────────────
@@ -66,6 +91,16 @@ class UserStatsActivity : AppCompatActivity() {
     private var targetUserName: String = "?"
     private var targetUserAvatar: String? = null
 
+    /**
+     * Урезанный вид "моя статистика" для обычного (не-админа) участника — по запросу
+     * пользователя: свои графики/сводка видно, но БЕЗ раздела "Все сообщения" (значит и
+     * без веток-ответов, и без свайп-удаления — секция с сообщениями просто не строится,
+     * см. buildRows). Устанавливается в setupAndLoad() строго по факту "я не админ" — НЕ
+     * по intent-флагу, который можно было бы подделать: раз не-админ вообще прошёл guard
+     * (см. setupAndLoad), targetUserId==его собственный гарантированно.
+     */
+    private var isSelfRestrictedView: Boolean = false
+
     private var networkChatId = ""
     private var chatPassword = ""
     private lateinit var transport: NostrTransport
@@ -73,14 +108,59 @@ class UserStatsActivity : AppCompatActivity() {
     private var adminUserId: String? = null
 
     /** Живая подписка на новые события (см. ChatActivity.transportWatch) — толкает
-     *  refreshData() при появлении нового сообщения в канале, БЕЗ отдельного
-     *  поллинг-цикла (переиспользуем существующий REQ-стрим NostrTransport, см. §1). */
+     *  refreshData() при появлении нового сообщения в канале. Быстрый путь, но не
+     *  единственный — см. liveRefreshJob ниже (репорт: «нужно перезайти, чтобы
+     *  появилось новое сообщение» — подписка на свежесозданном одноразовом transport
+     *  не всегда успевает подняться вовремя через Tor). */
     private var transportWatch: AutoCloseable? = null
-    private var isFirstResume = true
+
+    /** Гарантированный запасной путь обновления, ПОКА экран открыт (старт в onResume,
+     *  стоп в onPause) — не полагаемся только на watchMessages. Формально это второй
+     *  поллинг-цикл сверх SyncEngine (см. §1), но он строго локален этому
+     *  диагностическому админ-экрану, не конкурирует с таймингами доставки в чате, и
+     *  §1.5 («никаких перезаходов») здесь весомее. Интервал не короче, чем у самого
+     *  чата (NOSTR_ACTIVE_INTERVAL_MS = 3с) — не бьёт по реле сильнее. */
+    private var liveRefreshJob: kotlinx.coroutines.Job? = null
 
     /** Все сообщения ЭТОГО участника (для диаграмм и списка) — newest first для списка. */
     private var userMessages: List<Message> = emptyList()
     private var currentPeriod: StatsUtil.Period = StatsUtil.Period.WEEK
+
+    /** Полная (все отправители) расшифрованная история — нужна ТОЛЬКО для разрешения
+     *  "оригинала" цитаты у ответов (см. StatsUtil.findQuotedOriginal): собеседник, которому
+     *  отвечал целевой участник, обычно не входит в [userMessages]. Обновляется в refreshData()
+     *  тем же тиком, что и userMessages; до первого полного прохода (см. TAIL_INITIAL_WINDOW
+     *  fast-path) может быть пустой — цитата тогда просто не резолвится, самолечится на
+     *  следующем тике. */
+    private var allMessagesCache: List<Message> = emptyList()
+
+    /** Ленивый загрузчик фото/голоса для инлайн-просмотра в списке (см. MsgVH.bind) —
+     *  тот же ImageLoader, что и в чате, просто отдельный инстанс на этот экран. */
+    private val imageLoader: ImageLoader by lazy { ImageLoader(transport, chatPassword, networkChatId) }
+
+    /** Сообщения, удалённые ЛОКАЛЬНО (свайпом) в этой сессии, но ещё не подтверждённые
+     *  реле (репорт: «удаляется странно и не всегда» — надгробие через Tor может идти до
+     *  ~30с (см. NOSTR_ACTION_TIMEOUT_MS), а периодический live-refresh каждые 6с успевает
+     *  переспросить реле раньше и вернуть ещё НЕ удалённую копию, из-за чего сообщение на
+     *  секунду возвращалось обратно в "все сообщения"). refreshData() всегда исключает эти
+     *  raw из свежепрочитанного списка и держит соответствующую строку в "удалённых",
+     *  пока сама история не подтвердит удаление. */
+    private val pendingDeletedRaw = HashSet<String>()
+    private val pendingDeletedRows = HashMap<String, Row.DeletedRow>()
+
+    /** Memo-кэш расшифровки по сырой строке — переживает refreshData(), см.
+     *  StatsUtil.decodeAllCached (репорт: «первая загрузка долгая, даже если грузить
+     *  нечего» — без кэша ВЕСЬ чат перерасшифровывался заново на каждый тик). */
+    private val decodeCache = HashMap<String, Message?>()
+
+    /** Сколько сообщений сейчас материализовано в список (пагинация рендера — не сетевая
+     *  пагинация: данные уже расшифрованы кэшем, просто не все сразу превращены в строки
+     *  RecyclerView). Растёт при скролле к концу списка, см. onCreate/onScrolled. */
+    private var visibleLimit = INITIAL_VISIBLE_MESSAGES
+
+    /** Последний набор "удалённых" строк — нужен, чтобы пересобрать список при ленивой
+     *  подгрузке (скролл) без повторного похода в сеть. */
+    private var lastDeletedRows: List<Row.DeletedRow> = emptyList()
 
     private lateinit var adapter: RowsAdapter
     private lateinit var swipeRefresh: SwipeRefreshLayout
@@ -111,10 +191,31 @@ class UserStatsActivity : AppCompatActivity() {
         val rv = findViewById<RecyclerView>(R.id.rv_user_stats)
         rv.layoutManager = LinearLayoutManager(this)
         rv.adapter = adapter
-        ItemTouchHelper(SwipeToDeleteCallback(this) { position -> onSwipeDelete(position) }).attachToRecyclerView(rv)
+        ItemTouchHelper(SwipeToDeleteCallback(this) { position -> onSwipeAction(position) }).attachToRecyclerView(rv)
+
+        // Ленивая подгрузка при скролле вниз (к более старым сообщениям) — см.
+        // INITIAL_VISIBLE_MESSAGES/PAGE_SIZE. Данные уже расшифрованы (decodeCache) и
+        // лежат в userMessages целиком — тут только добавляем ещё строк в отрисовку,
+        // без похода в сеть.
+        rv.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                if (dy <= 0) return
+                val lm = recyclerView.layoutManager as? LinearLayoutManager ?: return
+                val lastVisible = lm.findLastVisibleItemPosition()
+                if (lastVisible == RecyclerView.NO_POSITION) return
+                if (lastVisible >= adapter.itemCount - SCROLL_LOAD_THRESHOLD && visibleLimit < userMessages.size) {
+                    visibleLimit += PAGE_SIZE
+                    buildRows(lastDeletedRows)
+                }
+            }
+        })
 
         swipeRefresh = findViewById(R.id.swipe_refresh)
         swipeRefresh.setColorSchemeResources(R.color.accent)
+        // ⚠️ Фикс (репорт: "кружок загрузки белый на тёмной теме"): setColorSchemeResources
+        // красит только вращающуюся дугу — круглый ФОН под ней у SwipeRefreshLayout по
+        // умолчанию хардкожен белым и не подхватывает тему сам по себе (см. CLAUDE.md §5.1).
+        swipeRefresh.setProgressBackgroundColorSchemeResource(R.color.surface_elevated)
         swipeRefresh.setOnRefreshListener {
             if (transportReady) lifecycleScope.launch { refreshData() } else swipeRefresh.isRefreshing = false
         }
@@ -125,15 +226,30 @@ class UserStatsActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Пропускаем самый первый onResume — сразу после onCreate его уже покрывает
-        // initial-load из setupAndLoad(); последующие (вернулись на экран) — освежаем.
-        if (isFirstResume) { isFirstResume = false }
-        else if (transportReady) lifecycleScope.launch { refreshData() }
+        if (transportReady) startLiveRefreshLoop()
+    }
+
+    override fun onPause() {
+        liveRefreshJob?.cancel()
+        liveRefreshJob = null
+        super.onPause()
     }
 
     override fun onDestroy() {
         transportWatch?.close()
         super.onDestroy()
+    }
+
+    /** Периодически освежает данные, пока экран реально на переднем плане — гарантирует
+     *  обновление «на месте» (§1.5) независимо от того, успела ли подняться watchMessages. */
+    private fun startLiveRefreshLoop() {
+        liveRefreshJob?.cancel()
+        liveRefreshJob = lifecycleScope.launch {
+            while (isActive) {
+                delay(LIVE_REFRESH_INTERVAL_MS)
+                refreshData()
+            }
+        }
     }
 
     /** Разовая инициализация: находим чат/транспорт, поднимаем живую подписку, затем первая загрузка. */
@@ -143,7 +259,14 @@ class UserStatsActivity : AppCompatActivity() {
             val chatEntity = withContext(Dispatchers.IO) { db.chatDao().getById(chatRoomId) }
             if (chatEntity == null || !chatEntity.isGroup) { finish(); return@launch }
             val isAdmin = !chatEntity.adminUserId.isNullOrBlank() && chatEntity.adminUserId == prefs.myUserId
-            if (!isAdmin) { finish(); return@launch }
+            // ⚠️ Не-админ допускается СЮДА только на СВОЮ же статистику (см. кнопку в
+            // PartnerProfileActivity.renderGroupMembersRows, isMe && !groupIsAdmin) — прямой
+            // запуск Intent'ом с чужим EXTRA_USER_ID всё равно отклоняется. isSelfRestrictedView
+            // выводится из факта "не админ", а не из отдельного intent-флага — так его нельзя
+            // подделать отдельно от targetUserId.
+            val isSelf = targetUserId == prefs.myUserId
+            if (!isAdmin && !isSelf) { finish(); return@launch }
+            isSelfRestrictedView = !isAdmin
 
             networkChatId = chatEntity.chatId
             chatPassword = prefs.getChatPassword(networkChatId).takeIf { it.isNotEmpty() } ?: chatEntity.chatPassword
@@ -154,6 +277,9 @@ class UserStatsActivity : AppCompatActivity() {
                 this@UserStatsActivity, networkChatId, transportToken, chatPassword, prefs.myUserId, adminUserId
             ) as? NostrTransport ?: run { finish(); return@launch }
             transportReady = true
+            // onResume уже мог отработать до этого момента (transportReady был false) —
+            // запускаем цикл сейчас, а не полагаемся только на следующий onResume.
+            startLiveRefreshLoop()
 
             // Живая подписка (тот же REQ-стрим, что ChatActivity.transportWatch) — новое
             // сообщение в канале сразу дёргает пересчёт статистики, без ожидания
@@ -162,20 +288,77 @@ class UserStatsActivity : AppCompatActivity() {
                 lifecycleScope.launch { refreshData() }
             }
 
-            refreshData()
+            // Существующий индикатор SwipeRefreshLayout (не новый UI-элемент) — видимая
+            // обратная связь, пока идут попытки дождаться СВОЕГО ответа реле (см.
+            // fetchFirstFresh) и/или растёт "хвостовое" окно первой быстрой отрисовки.
+            swipeRefresh.isRefreshing = true
+            refreshData(isFirstLoad = true)
         }
     }
 
-    /** Повторно читает историю канала и пересобирает список — вызывается из onResume,
-     *  pull-to-refresh и живой подписки; переиспользует уже поднятый [transport]. */
-    private suspend fun refreshData() {
-        try {
-            val allData = withContext(Dispatchers.IO) { runCatching { transport.loadAll() }.getOrNull() }
-            val allMessages = if (allData != null) withContext(Dispatchers.Default) {
-                StatsUtil.decodeAll(allData.chatContent, chatPassword, networkChatId, prefs.myUserId, prefs.myName)
-            } else emptyList()
+    /**
+     * Первая загрузка: ждём СВОЙ настоящий ответ реле (loadAllFresh), а не молча
+     * подставляем то, что уже накопил общий стор благодаря чужой сессии (репорт §16:
+     * «пользователь считается вошедшим по странному паттерну — то тогда, когда обновился
+     * чат у админа»). После нескольких попыток — обычный терпеливый loadAll(), чтобы
+     * экран не завис в вечной загрузке при полном отказе реле.
+     */
+    private suspend fun fetchFirstFresh(): com.atrum.chat.transport.AllChannelData? {
+        repeat(FIRST_LOAD_MAX_ATTEMPTS) { attempt ->
+            val fresh = withContext(Dispatchers.IO) { runCatching { transport.loadAllFresh() }.getOrNull() }
+            if (fresh != null) return fresh
+            if (attempt < FIRST_LOAD_MAX_ATTEMPTS - 1) delay(FIRST_LOAD_RETRY_DELAY_MS)
+        }
+        return withContext(Dispatchers.IO) { runCatching { transport.loadAll() }.getOrNull() }
+    }
 
-            userMessages = allMessages.filter { it.senderUserId == targetUserId }
+    /**
+     * Повторно читает историю канала и пересобирает список — вызывается из onResume,
+     * pull-to-refresh и живой подписки; переиспользует уже поднятый [transport].
+     *
+     * [isFirstLoad]: (а) ждём СВОЙ независимый от админа ответ реле (fetchFirstFresh);
+     * (б) сначала декодируем только "хвост" — растущее окно строк с конца чата, пока не
+     * наберём хотя бы INITIAL_VISIBLE_MESSAGES сообщений ЦЕЛЕВОГО участника — и сразу
+     * показываем (быстрая первая отрисовка, тот же принцип, что ChatActivity.TAIL_FIRST),
+     * а полную точную историю досчитываем следом тем же тиком, без блокировки UI. Дальше
+     * (не первая загрузка) — один проход по кэшу decodeCache, уже дешёвый.
+     */
+    private suspend fun refreshData(isFirstLoad: Boolean = false) {
+        try {
+            val allData = if (isFirstLoad) fetchFirstFresh()
+                else withContext(Dispatchers.IO) { runCatching { transport.loadAll() }.getOrNull() }
+
+            if (isFirstLoad && allData != null) {
+                val allLines = allData.chatContent.split("\n").filter { it.isNotEmpty() }
+                var windowSize = TAIL_INITIAL_WINDOW
+                while (true) {
+                    val windowLines = allLines.takeLast(windowSize.coerceAtMost(allLines.size))
+                    val tailDecoded = withContext(Dispatchers.Default) {
+                        StatsUtil.decodeAllCached(
+                            windowLines.joinToString("\n"), chatPassword, networkChatId,
+                            prefs.myUserId, prefs.myName, decodeCache
+                        )
+                    }
+                    val tailUserMsgs = tailDecoded.filter { it.senderUserId == targetUserId && it.rawEncrypted !in pendingDeletedRaw }
+                    val exhausted = windowSize >= allLines.size
+                    if (tailUserMsgs.size >= INITIAL_VISIBLE_MESSAGES || exhausted) {
+                        userMessages = tailUserMsgs
+                        buildRows(emptyList())
+                        break
+                    }
+                    windowSize *= TAIL_GROWTH_FACTOR
+                }
+            }
+
+            val allMessages = if (allData != null) withContext(Dispatchers.Default) {
+                StatsUtil.decodeAllCached(allData.chatContent, chatPassword, networkChatId, prefs.myUserId, prefs.myName, decodeCache)
+            } else emptyList()
+            if (allMessages.isNotEmpty()) allMessagesCache = allMessages
+
+            // Исключаем то, что сами только что удалили локально (см. pendingDeletedRaw) —
+            // надгробие может ещё не долететь до реле, свежий фетч иначе вернёт сообщение
+            // обратно в "все сообщения" на один цикл обновления.
+            userMessages = allMessages.filter { it.senderUserId == targetUserId && it.rawEncrypted !in pendingDeletedRaw }
 
             val deleted = withContext(Dispatchers.IO) { runCatching { transport.deletedMessages() }.getOrDefault(emptyList()) }
             val deletedDecoded = withContext(Dispatchers.Default) {
@@ -184,7 +367,7 @@ class UserStatsActivity : AppCompatActivity() {
 
             val authorPub = transport.pubkeyForUserId(targetUserId)
             val adminPub = adminUserId?.let { transport.pubkeyForUserId(it) }
-            val deletedRows = deletedDecoded
+            val confirmedRows = deletedDecoded
                 .sortedByDescending { it.deletedAtMs }
                 .map { dr ->
                     val label = when {
@@ -196,6 +379,22 @@ class UserStatsActivity : AppCompatActivity() {
                     }
                     Row.DeletedRow(dr.message, dr.deletedAtMs, label)
                 }
+            // Реле подтвердило удаление этих raw — больше не нужно держать их "в ожидании".
+            pendingDeletedRaw.removeAll(confirmedRows.map { it.msg.rawEncrypted }.toSet())
+            pendingDeletedRows.keys.retainAll(pendingDeletedRaw)
+            // Показываем подтверждённые реле + всё ещё ожидающие (чтобы строка не пропадала
+            // из "удалённых" между свайпом и реальным подтверждением надгробия).
+            val stillPendingRows = pendingDeletedRows.values.filter { row ->
+                confirmedRows.none { it.msg.rawEncrypted == row.msg.rawEncrypted }
+            }
+            // ⚠️ Защитный дедуп (репорт: "быстро удалил → восстановил → в удалённых дубликат").
+            // confirmedRows идёт ПЕРВЫМ, поэтому distinctBy оставляет именно подтверждённую
+            // реле версию строки, а не потенциально устаревшую "ожидающую" — на случай гонки
+            // между refreshData() и restoreMessage(), когда pendingDeletedRows ещё не успел
+            // синхронизироваться с тем, что реле уже подтвердило.
+            val deletedRows = (confirmedRows + stillPendingRows)
+                .distinctBy { it.msg.rawEncrypted }
+                .sortedByDescending { it.deletedAtMs }
 
             buildRows(deletedRows)
         } finally {
@@ -203,15 +402,28 @@ class UserStatsActivity : AppCompatActivity() {
         }
     }
 
-    /** Пересобирает список строк (шапка+диаграммы, «все сообщения», «удалённые»). */
+    /**
+     * Пересобирает список строк (шапка+диаграммы, «все сообщения», «удалённые»).
+     * Диаграммы и счётчик секции считаются от ПОЛНОГО [userMessages] (точность —
+     * см. §16 репорт), а материализуется в RecyclerView только [visibleLimit] строк
+     * «Все сообщения» — остальные подгружаются при скролле (см. onScrolled в onCreate).
+     */
     private fun buildRows(deletedRows: List<Row.DeletedRow>) {
-        val rows = ArrayList<Row>(userMessages.size + deletedRows.size + 3)
+        lastDeletedRows = deletedRows
+        val rows = ArrayList<Row>()
         rows.add(Row.Header)
-        rows.add(Row.Section(getString(R.string.stats_section_all), userMessages.size))
-        userMessages.sortedByDescending { it.timestampMs }.forEach { rows.add(Row.MsgRow(it)) }
-        if (deletedRows.isNotEmpty()) {
-            rows.add(Row.Section(getString(R.string.stats_section_deleted), deletedRows.size))
-            rows.addAll(deletedRows)
+        // "Моя статистика" обычного участника — только шапка (графики/сводка), без списка
+        // сообщений: ни веток-ответов, ни свайп-удаления (см. isSelfRestrictedView).
+        if (!isSelfRestrictedView) {
+            val sortedUser = userMessages.sortedByDescending { it.timestampMs }
+            val visibleUser = sortedUser.take(visibleLimit)
+            rows.ensureCapacity(1 + visibleUser.size + deletedRows.size + 2)
+            rows.add(Row.Section(getString(R.string.stats_section_all), userMessages.size))
+            visibleUser.forEach { rows.add(Row.MsgRow(it)) }
+            if (deletedRows.isNotEmpty()) {
+                rows.add(Row.Section(getString(R.string.stats_section_deleted), deletedRows.size))
+                rows.addAll(deletedRows)
+            }
         }
         adapter.submit(rows)
     }
@@ -222,30 +434,40 @@ class UserStatsActivity : AppCompatActivity() {
         adapter.notifyItemChanged(0)
     }
 
-    // ── Свайп-удаление (только для MsgRow) ──────────────────────────────────────
+    // ── Свайп: удалить (MsgRow) или восстановить (DeletedRow) ───────────────────
 
-    private fun onSwipeDelete(position: Int) {
-        val row = adapter.rowAt(position) as? Row.MsgRow ?: return
-        val msg = row.msg
-        NeonDialog.showConfirm(
-            ctx = this,
-            title = getString(R.string.dialog_delete_title),
-            message = getString(R.string.dialog_delete_message),
-            positiveText = getString(R.string.action_delete),
-            positiveIsDestructive = true,
-            negativeText = getString(R.string.btn_cancel)
-        ) { performDelete(msg) }
+    private fun onSwipeAction(position: Int) {
+        when (val row = adapter.rowAt(position)) {
+            is Row.MsgRow -> {
+                val msg = row.msg
+                NeonDialog.showConfirm(
+                    ctx = this,
+                    title = getString(R.string.dialog_delete_title),
+                    message = getString(R.string.dialog_delete_message),
+                    positiveText = getString(R.string.action_delete),
+                    positiveIsDestructive = true,
+                    negativeText = getString(R.string.btn_cancel)
+                ) { performDelete(msg) }
+            }
+            is Row.DeletedRow -> restoreMessage(row.msg)
+            else -> {}
+        }
     }
 
     private fun performDelete(msg: Message) {
         // Оптимистично убираем из "всех сообщений" и сразу показываем в "удалённых" —
         // это МОДЕРАЦИЯ админом (только админ видит этот экран/свайп), поэтому атрибуция
-        // однозначна без пересчёта pubkey.
+        // однозначна без пересчёта pubkey. Запоминаем raw как "ожидает подтверждения" —
+        // иначе следующий live-refresh (см. pendingDeletedRaw) вернёт сообщение обратно,
+        // пока надгробие не долетело до реле.
+        val deletedRow = Row.DeletedRow(msg, System.currentTimeMillis(), getString(R.string.stats_deleted_by_admin))
+        pendingDeletedRaw.add(msg.rawEncrypted)
+        pendingDeletedRows[msg.rawEncrypted] = deletedRow
+
         userMessages = userMessages.filter { it.rawEncrypted != msg.rawEncrypted }
         val currentRows = adapter.currentRows().toMutableList()
         val idx = currentRows.indexOfFirst { it is Row.MsgRow && it.msg.rawEncrypted == msg.rawEncrypted }
         if (idx >= 0) currentRows.removeAt(idx)
-        val deletedRow = Row.DeletedRow(msg, System.currentTimeMillis(), getString(R.string.stats_deleted_by_admin))
         val sectionDeletedIdx = currentRows.indexOfFirst { it is Row.Section && it.title == getString(R.string.stats_section_deleted) }
         if (sectionDeletedIdx >= 0) {
             currentRows.add(sectionDeletedIdx + 1, deletedRow)
@@ -273,6 +495,64 @@ class UserStatsActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Восстанавливает удалённое сообщение — свайп в секции «Удалённые».
+     *
+     * Протокольное ограничение: надгробие (del) в Nostr привязано к ХЕШУ содержимого
+     * (см. NostrMessageStore.delHash) и не снимается — повторная публикация БАЙТ-В-БАЙТ
+     * той же строки так и останется скрытой. Поэтому "восстановление" — это расшифровка
+     * исходного текста и публикация НОВЫМ событием (свежий IV даёт другой шифртекст →
+     * другой delHash → сообщение снова видно всем). Видимое содержимое (текст, время,
+     * автор) не меняется — они закодированы в самом plaintext, не в оболочке события.
+     */
+    private fun restoreMessage(msg: Message) {
+        pendingDeletedRaw.remove(msg.rawEncrypted)
+        pendingDeletedRows.remove(msg.rawEncrypted)
+
+        // Оптимистично: убираем строку из "удалённых", возвращаем в "все сообщения".
+        val currentRows = adapter.currentRows().toMutableList()
+        val idx = currentRows.indexOfFirst { it is Row.DeletedRow && it.msg.rawEncrypted == msg.rawEncrypted }
+        if (idx >= 0) currentRows.removeAt(idx)
+        val sectionDeletedIdx = currentRows.indexOfFirst { it is Row.Section && it.title == getString(R.string.stats_section_deleted) }
+        if (sectionDeletedIdx >= 0) {
+            val old = currentRows[sectionDeletedIdx] as Row.Section
+            if (old.count <= 1) {
+                // Секция и заголовок больше не нужны — убираем полностью.
+                currentRows.removeAt(sectionDeletedIdx)
+            } else {
+                currentRows[sectionDeletedIdx] = old.copy(count = old.count - 1)
+            }
+        }
+        val sectionAllIdx = currentRows.indexOfFirst { it is Row.Section && it.title == getString(R.string.stats_section_all) }
+        val msgRow = Row.MsgRow(msg)
+        if (sectionAllIdx >= 0) {
+            val old = currentRows[sectionAllIdx] as Row.Section
+            currentRows[sectionAllIdx] = old.copy(count = old.count + 1)
+            // Вставляем сразу после заголовка секции — порядок внутри секции всё равно
+            // пересортируется по времени на следующем buildRows() из настоящих данных.
+            currentRows.add(sectionAllIdx + 1, msgRow)
+        }
+        userMessages = userMessages + msg
+        adapter.submit(currentRows)
+
+        lifecycleScope.launch {
+            try {
+                val plaintext = withContext(Dispatchers.Default) {
+                    CryptoHelper.decrypt(msg.rawEncrypted, chatPassword, networkChatId)
+                } ?: throw IllegalStateException("decrypt failed")
+                val freshCiphertext = withContext(Dispatchers.Default) {
+                    CryptoHelper.encrypt(plaintext, chatPassword, networkChatId)
+                }
+                withContext(Dispatchers.IO) { transport.appendLine(freshCiphertext) }
+            } catch (e: Exception) {
+                Toast.makeText(this@UserStatsActivity, R.string.error_restore, Toast.LENGTH_SHORT).show()
+                // Не откатываем локально — следующий refreshData() подтянет реальное
+                // состояние с реле (если публикация не удалась, сообщение снова уедет
+                // в "удалённые" на очередном обновлении).
+            }
+        }
+    }
+
     // ── Переход к сообщению в чате (долгое нажатие) ─────────────────────────────
 
     private fun jumpToMessage(msg: Message) {
@@ -281,6 +561,38 @@ class UserStatsActivity : AppCompatActivity() {
             putExtra(ChatActivity.EXTRA_SCROLL_TO_MSGID, msg.msgId)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         })
+    }
+
+    /** Полноэкранный просмотр фото прямо из списка сообщений участника — тот же принцип,
+     *  что и ChatActivity.openImageFullscreenByRef (см. §11: используем уже проверенный путь,
+     *  не изобретаем новый транспорт для медиа). */
+    private fun openImageFullscreenByRef(refs: List<String>, startIndex: Int) {
+        val ref = refs[startIndex]
+
+        fun openViewer() {
+            startActivity(Intent(this, ImageViewActivity::class.java).apply {
+                putExtra(ImageViewActivity.EXTRA_REFS, ArrayList(refs))
+                putExtra(ImageViewActivity.EXTRA_START_INDEX, startIndex)
+            })
+        }
+
+        if (ImageCache.getBitmap(ref) != null) { openViewer(); return }
+
+        val base64 = ImageCache.getBase64(ref)
+        if (base64 != null) {
+            lifecycleScope.launch {
+                val bitmap = withContext(Dispatchers.Default) { ImageUtils.fromBase64(base64) }
+                if (bitmap != null) ImageCache.put(ref, base64, bitmap)
+                openViewer()
+            }
+            return
+        }
+
+        lifecycleScope.launch {
+            val bitmap = imageLoader.loadBitmap(ref)
+            if (bitmap != null) openViewer()
+            else Toast.makeText(this@UserStatsActivity, R.string.error_image_load, Toast.LENGTH_SHORT).show()
+        }
     }
 
     // ── Adapter ──────────────────────────────────────────────────────────────
@@ -323,8 +635,10 @@ class UserStatsActivity : AppCompatActivity() {
             }
         }
 
-        /** Можно свайпать только строки активных сообщений (не шапку/раздел/удалённые). */
-        fun isSwipeable(position: Int): Boolean = rows.getOrNull(position) is Row.MsgRow
+        /** Свайпать можно активные сообщения (удалить) и удалённые (восстановить) —
+         *  не шапку/раздел. */
+        fun isSwipeable(position: Int): Boolean =
+            rows.getOrNull(position).let { it is Row.MsgRow || it is Row.DeletedRow }
 
         // ── Header: сегменты + диаграммы + сводка ───────────────────────────────
         inner class HeaderVH(v: View) : RecyclerView.ViewHolder(v) {
@@ -341,8 +655,12 @@ class UserStatsActivity : AppCompatActivity() {
             private val statPerDay: TextView = v.findViewById(R.id.stat_per_day)
             private val statPeakHour: TextView = v.findViewById(R.id.stat_peak_hour)
             private val statActiveDays: TextView = v.findViewById(R.id.stat_active_days)
+            private val gestureHint: TextView = v.findViewById(R.id.tv_gesture_hint)
 
             fun bind() {
+                // Подсказка про свайп/удаление относится только к разделу "Все сообщения",
+                // которого в урезанном виде "моя статистика" нет — см. isSelfRestrictedView.
+                gestureHint.visibility = if (isSelfRestrictedView) View.GONE else View.VISIBLE
                 val segs = listOf(
                     segDay to StatsUtil.Period.DAY, segWeek to StatsUtil.Period.WEEK,
                     segMonth to StatsUtil.Period.MONTH, segYear to StatsUtil.Period.YEAR
@@ -430,9 +748,42 @@ class UserStatsActivity : AppCompatActivity() {
         inner class MsgVH(v: View) : RecyclerView.ViewHolder(v) {
             private val time: TextView = v.findViewById(R.id.tv_msg_time)
             private val text: TextView = v.findViewById(R.id.tv_msg_text)
+            private val quoteBlock: LinearLayout = v.findViewById(R.id.ll_msg_quote)
+            private val quoteSender: TextView = v.findViewById(R.id.tv_msg_quote_sender)
+            private val quoteText: TextView = v.findViewById(R.id.tv_msg_quote_text)
+            private val flPhoto: FrameLayout = v.findViewById(R.id.fl_msg_photo)
+            private val ivPhoto: ShapeableImageView = v.findViewById(R.id.iv_msg_photo)
+            private val llVoice: LinearLayout = v.findViewById(R.id.ll_msg_voice)
+            private val ivVoicePlay: ImageView = v.findViewById(R.id.iv_msg_voice_play)
+            private val voiceProgress: View = v.findViewById(R.id.v_msg_voice_progress)
+            private val tvVoiceDur: TextView = v.findViewById(R.id.tv_msg_voice_dur)
+
             fun bind(msg: Message) {
                 time.text = StatsUtil.formatMessageTime(itemView.context, msg.timestampMs)
-                text.text = previewText(itemView.context, msg)
+
+                // Ветка ответа — цитата оригинала прямо в общей хронологии (по запросу
+                // пользователя, см. CLAUDE.md-сессию: "ветки ответов там же по хронологии").
+                if (msg.isReply) {
+                    quoteBlock.visibility = View.VISIBLE
+                    quoteSender.text = msg.quotedSender
+                    quoteText.text = msg.quotedText
+                } else {
+                    quoteBlock.visibility = View.GONE
+                }
+
+                flPhoto.visibility = View.GONE
+                llVoice.visibility = View.GONE
+                text.visibility = View.GONE
+
+                when {
+                    msg.isVoice -> bindVoice(msg)
+                    msg.isImage || msg.isMultiImage -> bindPhoto(msg)
+                    else -> {
+                        text.visibility = View.VISIBLE
+                        text.text = previewText(itemView.context, msg)
+                    }
+                }
+
                 // Стандартный OnLongClickListener — уже корректно уживается с ItemTouchHelper
                 // (свайп) на уровне фреймворка, в отличие от ручного отслеживания ACTION_MOVE
                 // (тот же паттерн долгого нажатия, что и в MediaListActivity.select()).
@@ -440,6 +791,90 @@ class UserStatsActivity : AppCompatActivity() {
                     it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                     jumpToMessage(msg)
                     true
+                }
+            }
+
+            /** Миниатюра фото — тап открывает полноэкранный просмотрщик (тот же путь, что и
+             *  в чате, см. UserStatsActivity.openImageFullscreenByRef). Подпись к фото (если
+             *  есть) показывается отдельной строкой под миниатюрой. */
+            private fun bindPhoto(msg: Message) {
+                flPhoto.visibility = View.VISIBLE
+                if (msg.text.isNotBlank()) {
+                    text.visibility = View.VISIBLE
+                    text.text = msg.text
+                }
+                val refs = msg.imageFileNames?.takeIf { it.isNotEmpty() }
+                    ?: msg.imageFileName?.let { listOf(it) }
+                val ref = refs?.firstOrNull()
+                ivPhoto.setImageDrawable(null)
+                if (ref != null) {
+                    ImageCache.getBitmap(ref)?.let { ivPhoto.setImageBitmap(it) }
+                        ?: run {
+                            ivPhoto.tag = ref
+                            lifecycleScope.launch {
+                                val bmp = imageLoader.loadBitmap(ref)
+                                if (bmp != null && ivPhoto.tag == ref) ivPhoto.setImageBitmap(bmp)
+                            }
+                        }
+                    flPhoto.setOnClickListener { openImageFullscreenByRef(refs, 0) }
+                } else if (msg.imageBase64 != null) {
+                    val b64 = msg.imageBase64
+                    lifecycleScope.launch {
+                        val bmp = withContext(Dispatchers.Default) { ImageUtils.fromBase64(b64) }
+                        if (bmp != null) ivPhoto.setImageBitmap(bmp)
+                    }
+                    flPhoto.setOnClickListener {
+                        ImageViewActivity.pendingBase64 = b64
+                        startActivity(Intent(this@UserStatsActivity, ImageViewActivity::class.java))
+                    }
+                } else {
+                    flPhoto.setOnClickListener(null)
+                }
+            }
+
+            /** Воспроизведение голосового прямо в списке — тот же VoicePlayer/паттерн, что
+             *  и лента сообщений-оснований мута (ChatActivity.addMuteEvidenceBubble). */
+            private fun bindVoice(msg: Message) {
+                llVoice.visibility = View.VISIBLE
+                tvVoiceDur.text = "0:%02d".format(msg.voiceDurationSec.coerceAtLeast(0))
+                fun refreshIcon() {
+                    ivVoicePlay.setImageResource(if (VoicePlayer.isPlaying(msg.msgId)) R.drawable.ic_pause else R.drawable.ic_play)
+                }
+                refreshIcon()
+                voiceProgress.layoutParams = voiceProgress.layoutParams.apply { width = 0 }
+                llVoice.setOnClickListener {
+                    val ref = msg.voiceFileName ?: return@setOnClickListener
+                    lifecycleScope.launch {
+                        val dir = File(cacheDir, "voice_play").apply { mkdirs() }
+                        val f = File(dir, "v_" + Integer.toHexString(ref.hashCode()) + ".m4a")
+                        val file = if (f.exists() && f.length() > 0) f else {
+                            val bytes = withContext(Dispatchers.IO) { imageLoader.loadRawBytes(ref) }
+                            if (bytes == null) null else {
+                                try { f.writeBytes(bytes); f } catch (_: Exception) { null }
+                            }
+                        }
+                        if (file == null) {
+                            Toast.makeText(this@UserStatsActivity, R.string.voice_load_failed, Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
+                        VoicePlayer.toggle(
+                            key = msg.msgId,
+                            file = file,
+                            onProgress = { _, posMs, durMs ->
+                                voiceProgress.layoutParams = voiceProgress.layoutParams.apply {
+                                    width = (voiceProgress.parent as View).width * posMs / durMs.coerceAtLeast(1)
+                                }
+                                voiceProgress.requestLayout()
+                                refreshIcon()
+                            },
+                            onComplete = {
+                                voiceProgress.layoutParams = voiceProgress.layoutParams.apply { width = 0 }
+                                voiceProgress.requestLayout()
+                                refreshIcon()
+                            }
+                        )
+                        refreshIcon()
+                    }
                 }
             }
         }
@@ -472,11 +907,11 @@ class UserStatsActivity : AppCompatActivity() {
     }
 
     /**
-     * Свайп влево — удалить у всех (тот же паттерн, что SwipeToReplyCallback: порог,
-     * вибро-триггер и снэп-бэк, НЕ постоянное открытие — после срабатывания строка сама
-     * возвращается на место, а действие подтверждается диалогом). Свайп работает ТОЛЬКО
-     * для активных сообщений (см. RowsAdapter.isSwipeable) — шапку/разделы/уже удалённые
-     * свайпать нельзя.
+     * Свайп влево — удалить (MsgRow) или восстановить (DeletedRow); тот же паттерн, что
+     * SwipeToReplyCallback: порог, вибро-триггер и снэп-бэк, НЕ постоянное открытие —
+     * после срабатывания строка сама возвращается на место. Иконка/цвет подсказки
+     * подбираются под тип строки под пальцем (красный+корзина для удаления, фиолетовый+
+     * восстановление для уже удалённых) — см. RowsAdapter.isSwipeable для разрешённых типов.
      */
     private class SwipeToDeleteCallback(
         context: android.content.Context,
@@ -485,8 +920,14 @@ class UserStatsActivity : AppCompatActivity() {
 
         private val density = context.resources.displayMetrics.density
         private val trashIcon = ContextCompat.getDrawable(context, R.drawable.ic_trash_menu)!!
-        private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = ColorUtils.setAlphaComponent(ContextCompat.getColor(context, R.color.error), 0x33)
+        private val restoreIcon = ContextCompat.getDrawable(context, R.drawable.ic_restore)!!
+        private val deleteColor = ContextCompat.getColor(context, R.color.error)
+        private val restoreColor = ContextCompat.getColor(context, R.color.accent_light)
+        private val deleteBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ColorUtils.setAlphaComponent(deleteColor, 0x33)
+        }
+        private val restoreBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ColorUtils.setAlphaComponent(restoreColor, 0x33)
         }
 
         private var hasTriggered = false
@@ -510,6 +951,12 @@ class UserStatsActivity : AppCompatActivity() {
         ) {
             if (actionState == ItemTouchHelper.ACTION_STATE_SWIPE) {
                 val itemView = viewHolder.itemView
+                val isRestore = (recyclerView.adapter as? RowsAdapter)
+                    ?.rowAt(viewHolder.bindingAdapterPosition) is Row.DeletedRow
+                val icon = if (isRestore) restoreIcon else trashIcon
+                val tintColor = if (isRestore) restoreColor else deleteColor
+                val bgPaint = if (isRestore) restoreBgPaint else deleteBgPaint
+
                 val maxTranslation = 80f * density
                 val clamped = if (abs(dX) > maxTranslation) -(maxTranslation + (abs(dX) - maxTranslation) * 0.2f) else dX
                 val finalDx = clamped.coerceAtMost(0f)
@@ -530,10 +977,10 @@ class UserStatsActivity : AppCompatActivity() {
                     val cx = itemView.right - margin - iconSize / 2f
                     val cy = itemView.top + itemView.height / 2f
                     val half = (iconSize / 2f * (0.5f + 0.5f * progress)).toInt()
-                    trashIcon.setTint(ContextCompat.getColor(recyclerView.context, R.color.error))
-                    trashIcon.setBounds((cx - half).toInt(), (cy - half).toInt(), (cx + half).toInt(), (cy + half).toInt())
-                    trashIcon.alpha = (255 * progress).toInt().coerceIn(0, 255)
-                    trashIcon.draw(c)
+                    icon.setTint(tintColor)
+                    icon.setBounds((cx - half).toInt(), (cy - half).toInt(), (cx + half).toInt(), (cy + half).toInt())
+                    icon.alpha = (255 * progress).toInt().coerceIn(0, 255)
+                    icon.draw(c)
                 }
             } else {
                 super.onChildDraw(c, recyclerView, viewHolder, dX, dY, actionState, isCurrentlyActive)

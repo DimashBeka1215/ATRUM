@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Круглая подложка под иконку в крупной плашке мута (см. muted_banner_large в
+     activity_chat.xml) — та же полупрозрачная жёлтая палитра, что и bg_warning,
+     просто в форме круга. Работает одинаково в тёмной и светлой теме (сам цвет
+     не меняется между темами, см. DESIGN.md §1.1 @color/warning). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#2AFFB454" />
+</shape>

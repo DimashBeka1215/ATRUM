@@ -169,6 +169,18 @@ class NostrTransport(
         return data
     }
 
+    /** См. ChatTransport.loadAllFresh — здесь единственная реализация, где различие
+     *  реально есть: [loadAll] намеренно подставляет lastGoodAll/общий стор при отказе
+     *  реле (анти-мерцание истории в ChatActivity), а этот метод — нет. */
+    override suspend fun loadAllFresh(): AllChannelData? {
+        val events = queryAllRelays(chatFilter()) ?: return null
+        val data = splitAll(events)
+        lastAllHash = hashAll(data)
+        lastContentHash = sha256(data.chatContent).toHex()
+        lastGoodAll = data
+        return data
+    }
+
     private fun chatFrom(events: List<NostrEvent>): String {
         fun has(ev: NostrEvent, key: String) = ev.tags.any { it.firstOrNull() == key }
         // Маркер очистки: оба клиента отбрасывают сообщения старше последнего "clear".
@@ -988,7 +1000,28 @@ class NostrTransport(
             // ОДНОГО реле не ломает синк — queryAllRelays() уже делает union-чтение по всем
             // активным реле параллельно, так что часть недоступных просто не участвует.
             "wss://relay.nostr.band",
-            "wss://purplepag.es"
+            "wss://purplepag.es",
+            // ⚠️ ДОБАВЛЕНО (репорт: "добавь больше реле для стабильности, 12 → 25"): ещё 13
+            // публичных реле — та же логика избыточности, что и выше. Список собран по
+            // известным долгоживущим публичным реле экосистемы Nostr (не проверялся вживую
+            // построчно в момент правки) — это НЕ проблема: как и весь остальной список,
+            // мёртвый/недоступный адрес просто не отвечает и не участвует в union-чтении
+            // (queryAllRelays), никак не ломая синк остальным. Со временем стоит сверить
+            // фактическую отвечаемость через экран «Соединение» (ConnectionStats) и убрать
+            // тех, кто стабильно молчит — не обязательно прямо сейчас.
+            "wss://atlas.nostr.land",
+            "wss://nostr.wine",
+            "wss://relay.nostriches.org",
+            "wss://eden.nostr.land",
+            "wss://nostr21.com",
+            "wss://relay.current.fyi",
+            "wss://relay.mostr.pub",
+            "wss://nostr.mutinywallet.com",
+            "wss://relayable.org",
+            "wss://brb.io",
+            "wss://nostr.fmt.wiz.biz",
+            "wss://relay.nostrplebs.com",
+            "wss://nostr.zebedee.cloud"
         )
 
         /** Фоновый scope для дослания публикаций на оставшиеся реле (не блокирует отправителя). */

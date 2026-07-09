@@ -3,6 +3,7 @@ package com.atrum.chat
 import com.atrum.chat.transport.ChatTransport
 import com.atrum.chat.transport.BluetoothTransport
 import com.atrum.chat.transport.NostrTransport
+import com.atrum.chat.transport.AllChannelData
 import com.atrum.chat.nostr.NostrRelayPool
 
 import android.animation.Keyframe
@@ -26,6 +27,7 @@ import com.atrum.chat.data.Chat
 import com.atrum.chat.databinding.ActivityJoinChatBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.SocketTimeoutException
@@ -297,52 +299,66 @@ class JoinChatActivity : SecureActivity() {
                 }
 
                 setProgress(getString(R.string.join_status_verifying))
-                val allData = withContext(Dispatchers.IO) {
-                    try {
-                        transport.loadAll()
-                    } catch (e: Throwable) {
-                        if (isTor) {
-                            TorSyncWatchdog.reportDeviation(
-                                applicationContext, invite.channelId, "JoinChatActivity.loadAll(group)", e
-                            )
-                        }
-                        null
-                    }
-                }
-                val membersParsed = allData?.membersContent
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { CryptoHelper.decrypt(it, invite.chatPassword, invite.channelId) }
-                    ?.let { MembersSync.parse(it) }
-
-                if (membersParsed != null) {
-                    // members.txt уже есть (админ его публиковал) — источник истины.
-                    val myEntry = membersParsed.participants.firstOrNull { it.userId == myUserId }
-                    if (myEntry?.banned == true) {
-                        showError(getString(R.string.join_err_banned))
-                        return
-                    }
-                    val activeCount = membersParsed.participants.count { !it.banned }
-                    val limit = invite.participantLimit
-                    if (myEntry == null && limit != null && activeCount >= limit) {
-                        showError(getString(R.string.join_err_group_full))
-                        return
-                    }
-                } else {
-                    // members.txt ещё не долетело (задержка реле) — приближённая проверка
-                    // по profiles.txt. Best-effort, не криптографическое принуждение —
-                    // см. ADR_GROUP_CHATS.md, тот же уровень доверия, что у самого инвайта.
-                    val profilesMap = withContext(Dispatchers.IO) {
+                var allData: AllChannelData? = null
+                var membersParsed: MembersSync.MembersFile? = null
+                // ⚠️ Bounded retry (см. companion.JOIN_PROFILE_MAX_ATTEMPTS) — не показываем
+                // "нашли"/не сохраняем чат, пока название+аватар группы не подтверждены сетью,
+                // но и не ждём бесконечно: после исчерпания попыток идём дальше с тем, что
+                // есть (сид-имя из инвайта, аватар подтянется позже через ChatActivity).
+                for (attempt in 0 until JOIN_PROFILE_MAX_ATTEMPTS) {
+                    allData = withContext(Dispatchers.IO) {
                         try {
-                            ProfileSync.pullProfiles(transport, invite.chatPassword)
-                        } catch (_: Throwable) {
-                            emptyMap()
+                            transport.loadAll()
+                        } catch (e: Throwable) {
+                            if (isTor) {
+                                TorSyncWatchdog.reportDeviation(
+                                    applicationContext, invite.channelId, "JoinChatActivity.loadAll(group)", e
+                                )
+                            }
+                            null
                         }
                     }
-                    val limit = invite.participantLimit
-                    if (!profilesMap.containsKey(myUserId) && limit != null && profilesMap.size >= limit) {
-                        showError(getString(R.string.join_err_group_full))
-                        return
+                    membersParsed = allData?.membersContent
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { CryptoHelper.decrypt(it, invite.chatPassword, invite.channelId) }
+                        ?.let { MembersSync.parse(it) }
+
+                    if (membersParsed != null) {
+                        // members.txt уже есть (админ его публиковал) — источник истины.
+                        val myEntry = membersParsed!!.participants.firstOrNull { it.userId == myUserId }
+                        if (myEntry?.banned == true) {
+                            showError(getString(R.string.join_err_banned))
+                            return
+                        }
+                        val activeCount = membersParsed!!.participants.count { !it.banned }
+                        val limit = invite.participantLimit
+                        if (myEntry == null && limit != null && activeCount >= limit) {
+                            showError(getString(R.string.join_err_group_full))
+                            return
+                        }
+                    } else {
+                        // members.txt ещё не долетело (задержка реле) — приближённая проверка
+                        // по profiles.txt. Best-effort, не криптографическое принуждение —
+                        // см. ADR_GROUP_CHATS.md, тот же уровень доверия, что у самого инвайта.
+                        val profilesMap = withContext(Dispatchers.IO) {
+                            try {
+                                ProfileSync.pullProfiles(transport, invite.chatPassword)
+                            } catch (_: Throwable) {
+                                emptyMap()
+                            }
+                        }
+                        val limit = invite.participantLimit
+                        if (!profilesMap.containsKey(myUserId) && limit != null && profilesMap.size >= limit) {
+                            showError(getString(R.string.join_err_group_full))
+                            return
+                        }
                     }
+
+                    val groupInfoReady = membersParsed?.groupName?.isNotBlank() == true ||
+                        membersParsed?.groupAvatarBase64?.isNotBlank() == true
+                    if (groupInfoReady || attempt == JOIN_PROFILE_MAX_ATTEMPTS - 1) break
+                    setProgress(getString(R.string.join_status_loading_profile))
+                    delay(JOIN_PROFILE_RETRY_DELAY_MS)
                 }
 
                 // Название/аватар группы, подтверждённые СЕТЬЮ (members.txt реально
@@ -354,11 +370,11 @@ class JoinChatActivity : SecureActivity() {
                 if (membersParsed?.groupName != null || membersParsed?.groupAvatarBase64 != null) {
                     withContext(Dispatchers.Main) {
                         showFoundInfo(
-                            name = membersParsed.groupName?.takeIf { it.isNotBlank() }
+                            name = membersParsed?.groupName?.takeIf { it.isNotBlank() }
                                 ?: invite.groupNameSeed?.takeIf { it.isNotBlank() }
                                 ?: getString(R.string.cc_group_default_name),
                             tag = null,
-                            avatarBase64 = membersParsed.groupAvatarBase64
+                            avatarBase64 = membersParsed?.groupAvatarBase64
                         )
                         triggerFoundPulse()
                     }
@@ -385,13 +401,17 @@ class JoinChatActivity : SecureActivity() {
 
                 // Уже полученный members.txt применяем сразу — мгновенный список участников
                 // без ожидания следующего опроса (§1.5 CLAUDE.md — всё грузится на месте).
-                if (allData != null && allData.membersContent.isNotBlank()) {
+                // val-снимок перед использованием внутри лямбды — allData теперь var
+                // (обновляется в retry-цикле выше), а Kotlin не даёт smart-cast для var,
+                // захваченного в closure.
+                val allDataSnapshot = allData
+                if (allDataSnapshot != null && allDataSnapshot.membersContent.isNotBlank()) {
                     withContext(Dispatchers.IO) {
                         try {
                             val freshChat = db.chatDao().getById(newGroupChatId)
                             if (freshChat != null) {
                                 MembersSync.applyIncoming(
-                                    freshChat, allData.membersContent, invite.chatPassword,
+                                    freshChat, allDataSnapshot.membersContent, invite.chatPassword,
                                     db.chatParticipantDao(), db.chatDao()
                                 )
                             }
@@ -420,32 +440,47 @@ class JoinChatActivity : SecureActivity() {
             // 3. Проверка "чат уже занят" — фетчим profiles.txt, если там 2+ профиля
             // и моего userId среди них нет, отказываем (чат рассчитан на двоих).
             setProgress(getString(R.string.join_status_verifying))
-            val profilesMap = withContext(Dispatchers.IO) {
-                try {
-                    ProfileSync.pullProfiles(transport, invite.chatPassword)
-                } catch (e: Throwable) {
-                    if (isTor) {
-                        TorSyncWatchdog.reportDeviation(
-                            applicationContext, invite.channelId, "JoinChatActivity.pullProfiles", e
-                        )
-                    }
-                    emptyMap()
-                }
-            }
+            var profilesMap: Map<String, Profile> = emptyMap()
+            var partnerProfileFound: Profile? = null
             val myUserId = prefs.myUserId
+            // ⚠️ Bounded retry (см. companion.JOIN_PROFILE_MAX_ATTEMPTS, тот же принцип, что
+            // и в групповой ветке выше) — не сохраняем чат/не открываем ChatActivity, пока
+            // ава+ник собеседника не подтверждены сетью, но и не ждём бесконечно: партнёр
+            // мог ещё не открыть чат/не опубликовать профиль вовсе — тогда идём дальше с
+            // дефолтным именем, аватар подтянется позже сам (см. ChatActivity.doSyncProfilesOnce).
+            for (attempt in 0 until JOIN_PROFILE_MAX_ATTEMPTS) {
+                profilesMap = withContext(Dispatchers.IO) {
+                    try {
+                        ProfileSync.pullProfiles(transport, invite.chatPassword)
+                    } catch (e: Throwable) {
+                        if (isTor) {
+                            TorSyncWatchdog.reportDeviation(
+                                applicationContext, invite.channelId, "JoinChatActivity.pullProfiles", e
+                            )
+                        }
+                        emptyMap()
+                    }
+                }
+                partnerProfileFound = profilesMap.values.firstOrNull { it.userId != myUserId }
+                val ready = partnerProfileFound != null &&
+                    partnerProfileFound!!.name.isNotBlank() &&
+                    !partnerProfileFound!!.avatarBase64.isNullOrBlank()
+                if (ready || attempt == JOIN_PROFILE_MAX_ATTEMPTS - 1) break
+                setProgress(getString(R.string.join_status_loading_profile))
+                delay(JOIN_PROFILE_RETRY_DELAY_MS)
+            }
             val alreadyInChat = profilesMap.containsKey(myUserId)
 
             // Показываем аватарку и имя собеседника, если нашли
-            val partnerProfileFound = profilesMap.values.firstOrNull { it.userId != myUserId }
             if (partnerProfileFound != null) {
                 if (isTor) {
                     TorSyncWatchdog.disarm(invite.channelId, "партнёр найден при первом pullProfiles (JoinChatActivity)")
                 }
                 withContext(Dispatchers.Main) {
                     showFoundInfo(
-                        name = partnerProfileFound.name,
-                        tag = partnerProfileFound.tag,
-                        avatarBase64 = partnerProfileFound.avatarBase64
+                        name = partnerProfileFound!!.name,
+                        tag = partnerProfileFound!!.tag,
+                        avatarBase64 = partnerProfileFound!!.avatarBase64
                     )
                     triggerFoundPulse()
                 }
@@ -759,5 +794,20 @@ class JoinChatActivity : SecureActivity() {
     companion object {
         /** Готовая invite-строка для автоподстановки (со сканера/экрана приглашения). */
         const val EXTRA_PREFILL = "prefill_invite"
+
+        // ⚠️ Фикс (репорт: "ава в окне ввода инвайта грузится с задержкой, но со временем
+        // подхватывается"). Раньше и 1:1-, и групповой путь делали РОВНО ОДНУ попытку
+        // прочитать profiles.txt/members.txt перед тем, как показать превью и сохранить
+        // чат — на нестабильном Tor-соединении она нередко возвращалась пустой (партнёр
+        // ещё не успел опубликовать профиль/сеть не ответила), и превью оставалось без
+        // авы/имени до тех пор, пока это не подхватит уже ChatActivity после открытия.
+        // Простое решение по запросу пользователя: не считать данные готовыми, пока
+        // ава+имя не пришли, и ПОКАЗЫВАТЬ ЗАГРУЗКУ, повторяя попытку в фоне — но
+        // ОГРАНИЧЕННО (не бесконечно), т.к. данные и так рано или поздно подхватятся
+        // самим ChatActivity после открытия чата (см. doSyncProfilesOnce/processChannelData).
+        // 6 попыток по 2.5с ≈ 15с — тот же порядок величины, что и остальные bounded-retry
+        // окна в проекте (см. GroupStatsActivity/UserStatsActivity.FIRST_LOAD_MAX_ATTEMPTS).
+        const val JOIN_PROFILE_MAX_ATTEMPTS = 6
+        const val JOIN_PROFILE_RETRY_DELAY_MS = 2_500L
     }
 }
