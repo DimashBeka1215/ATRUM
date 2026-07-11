@@ -57,6 +57,8 @@ class PartnerProfileActivity : AppCompatActivity() {
         const val EXTRA_DEMO_GROUP = "demo_group"
         /** true — этот чат реально групповой (ADR-001), см. setupRealGroupExtras(). */
         const val EXTRA_IS_GROUP = "is_group"
+        /** true — системный чат «Уведомления» (read-only инфо-экран, см. setupSystemNotifProfile). */
+        const val EXTRA_SYSTEM_NOTIF = "system_notif"
     }
 
     private var shieldPulse: android.animation.Animator? = null
@@ -79,6 +81,10 @@ class PartnerProfileActivity : AppCompatActivity() {
     // ── Групповой чат, реальные данные (ADR-001) ────────────────────────────────
     private var groupChatRoomId: Long = -1L
     private var groupIsAdmin: Boolean = false
+    /** Мультиподпись (Этап 2): я главный ИЛИ делегат с правом MODERATE — могу мутить/банить. */
+    private var groupCanModerate: Boolean = false
+    /** Я главный ИЛИ делегат с правом STATS — могу открыть статистику беседы. */
+    private var groupCanStats: Boolean = false
     private var groupChatCached: com.atrum.chat.data.Chat? = null
 
     /**
@@ -110,6 +116,14 @@ class PartnerProfileActivity : AppCompatActivity() {
         // подгрузка медиа по сети тут не запускаются вообще).
         if (intent.getBooleanExtra(EXTRA_DEMO_GROUP, false)) {
             setupDemoGroupProfile()
+            return
+        }
+
+        // Системный чат «Уведомления» — минимальный read-only инфо-экран: колокольчик,
+        // имя и карточка описания; всё остальное (участники, медиа, безопасность,
+        // редактирование) скрыто. Отдельная ветка, реальный 1:1-путь ниже не тронут.
+        if (intent.getBooleanExtra(EXTRA_SYSTEM_NOTIF, false)) {
+            setupSystemNotifProfile()
             return
         }
 
@@ -776,6 +790,55 @@ class PartnerProfileActivity : AppCompatActivity() {
         )
     }
 
+    /**
+     * Инфо-экран системного чата «Уведомления» (мокап одобрен): колокольчик, имя и
+     * карточка описания под ним — только чтение. Все секции беседы/1:1 (участники,
+     * медиа, безопасность, статус, редактирование) скрыты. Строки берутся из ресурсов
+     * (RU/EN автоматически по локали приложения/системы).
+     */
+    private fun setupSystemNotifProfile() {
+        findViewById<ImageButton>(R.id.btn_back).setOnClickListener { finish() }
+
+        findViewById<TextView>(R.id.tv_profile_name).text = getString(R.string.notif_chat_name)
+
+        // Аватар-колокольчик: фиолетовая заглушка уже под iv_profile_avatar, кладём
+        // иконку по центру (не centerCrop — маленький вектор растянулся бы).
+        findViewById<TextView>(R.id.tv_avatar_initial).visibility = View.GONE
+        findViewById<ShapeableImageView>(R.id.iv_profile_avatar).apply {
+            visibility = View.VISIBLE
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            // Колокольчик крупнее (репорт: «аватарка будто маленькая»): меньше отступ —
+            // иконка ~68dp на 112dp-круге, читается как полноценный аватар.
+            val pad = (resources.displayMetrics.density * 22).toInt()
+            setPadding(pad, pad, pad, pad)
+            setImageResource(R.drawable.ic_bell)
+            setColorFilter(ContextCompat.getColor(this@PartnerProfileActivity, R.color.white))
+        }
+
+        // Подпись «системные уведомления» — в поле тега под именем.
+        findViewById<TextView>(R.id.tv_profile_tag).apply {
+            text = getString(R.string.notif_chat_subtitle)
+            visibility = View.VISIBLE
+        }
+
+        // Карточка описания — переиспользуем группового описания, но БЕЗ карандаша.
+        findViewById<View>(R.id.card_group_description).visibility = View.VISIBLE
+        findViewById<TextView>(R.id.tv_group_description).text = getString(R.string.notif_chat_description)
+        findViewById<ImageButton>(R.id.btn_group_description_edit).visibility = View.GONE
+
+        // Всё остальное — скрыто (read-only инфо-экран).
+        findViewById<ImageButton>(R.id.btn_avatar_edit_demo).visibility = View.GONE
+        findViewById<ImageButton>(R.id.btn_name_edit_demo).visibility = View.GONE
+        findViewById<ImageButton>(R.id.btn_shield_status).visibility = View.GONE
+        findViewById<View>(R.id.card_status).visibility = View.GONE
+        findViewById<View>(R.id.section_members).visibility = View.GONE
+        findViewById<View>(R.id.card_security).visibility = View.GONE
+        findViewById<View>(R.id.section_photos).visibility = View.GONE
+        findViewById<View>(R.id.section_voice).visibility = View.GONE
+        findViewById<View>(R.id.section_links).visibility = View.GONE
+        findViewById<View>(R.id.demo_role_toggle)?.visibility = View.GONE
+    }
+
     private fun setupDemoGroupProfile() {
         findViewById<ImageButton>(R.id.btn_back).setOnClickListener { finish() }
 
@@ -1010,28 +1073,66 @@ class PartnerProfileActivity : AppCompatActivity() {
     // здесь только специфичное для групп: список участников, бан, ре-публикация
     // имени/аватара группы через тот же подписанный канал.
 
+    // freshMembersVersion() удалена: версию members.txt теперь читает воркер
+    // PublishScheduler из Room в момент публикации — стало невозможно опубликовать
+    // устаревший номер в принципе (сериализация очередью).
+
     /**
-     * Актуальная версия members.txt из БД — читать ПЕРЕД публикацией вместо
-     * `chat.membersVersion` напрямую.
+     * Единая публикация members.txt от лица админа — все do*Real этого экрана обязаны
+     * ходить только сюда. Чинит сразу два бага из репорта пользователя:
      *
-     * ⚠️ Фикс (репорт: "после мута у админа статус не сохраняется, жёлтая надпись
-     * теряется"). `chat: Chat`, который приходит параметром во все doMuteReal/
-     * doUnmuteReal/doBanReal/doUnbanReal/doEditGroupDescriptionReal/renameGroupReal — это ОДИН
-     * снимок, захваченный один раз при открытии экрана (setupRealGroupExtras) и
-     * никогда не обновляемый локально после публикаций (даже `groupChatCached`,
-     * который часть функций обновляет сам, копируется через `.copy()` БЕЗ бампа
-     * membersVersion). Если за один визит на экран выполнить больше одного
-     * административного действия (мут, потом бан, потом снова мут другого и т.п.),
-     * каждое следующее считало бы newVersion от ОДНОЙ и той же устаревшей версии —
-     * анти-откат (MembersSync.applyIncoming, версия <= уже применённой) тихо
-     * отбрасывал бы второе и последующие действия у ВСЕХ клиентов, включая самого
-     * админа на следующем опросе: статус визуально "терялся" без единой ошибки.
-     * Читаем версию из Room прямо перед публикацией — она всегда отражает
-     * реальное текущее состояние независимо от того, какой именно (возможно,
-     * устаревший) объект `chat` держит вызывающий код.
+     * 1. «Плашка мута появляется поздно / не появляется». Раньше каждый вызов строил
+     *    NostrTransport(preferTor = true) НАПРЯМУЮ, игнорируя реальный transportToken
+     *    чата. Для direct-чатов (nostrdirect) публикация насильно уходила в Tor, причём
+     *    TorManager.start() здесь никто не вызывал — если демон Tor не был запущен,
+     *    publish висел до таймаутов (десятки секунд) или падал, и заглушённый узнавал
+     *    о муте с большим опозданием. TransportFactory.forChat повторяет ровно тот путь,
+     *    которым ходит сам чат (и стартует Tor, когда он действительно нужен).
+     *
+     * 2. Гонка версий с maybeAdminEnrollNewMembers (ChatActivity). Раньше новая версия
+     *    НЕ сохранялась локально до обратного чтения собственного members.txt с реле
+     *    (eventual consistency — несколько тиков). Всё это время enroll-путь считал
+     *    newVersion от СТАРОГО значения и мог опубликовать другой members.txt с ТЕМ ЖЕ
+     *    номером — replaceable-событие на реле перекрывало мут/бан, а анти-откат у
+     *    клиентов молча отбрасывал второй вариант: статус «терялся» без единой ошибки.
+     *    Persist сразу после успешной публикации (тот же приём, что уже применён в
+     *    maybeAdminEnrollNewMembers).
      */
-    private suspend fun freshMembersVersion(chat: com.atrum.chat.data.Chat, database: com.atrum.chat.data.AppDatabase): Int =
-        withContext(Dispatchers.IO) { database.chatDao().getById(chat.id)?.membersVersion ?: chat.membersVersion }
+    private suspend fun publishMembersAsAdmin(
+        chat: com.atrum.chat.data.Chat,
+        database: com.atrum.chat.data.AppDatabase,
+        participants: List<MembersSync.Entry>,
+        groupName: String? = chat.groupName,
+        groupAvatarBase64: String? = chat.groupAvatarBase64,
+        groupDescription: String? = chat.groupDescription
+    ) {
+        val adminUserId = chat.adminUserId ?: return
+        // Мультиподпись (Этап 2): публиковать может главный ИЛИ делегат с MODERATE. Планировщик
+        // (PublishScheduler.publishMembers) сам решит — главный двигает роль-версию и пишет
+        // ростер, делегат публикует свой слот только с мут/бан (верховенство главного). EDIT-
+        // действия (имя/ава/описание) вызывают это лишь у главного — они гейтятся в своих do*.
+        if (!groupCanModerate) return
+        // ⚠️ ВСЯ публикация — через планировщик (PublishScheduler, запрос пользователя:
+        // «планировщик событий, чтобы ставил действия в очередь»). Room уже обновлён
+        // вызывающим do*Real ДО этого вызова (§1.5) — воркер очереди публикует СНИМОК
+        // из Room с версией из Room, строго последовательно. Это разом закрывает:
+        //  • гонку версий «сменил имя и аву подряд — одно из двух потерялось у всех»
+        //    (два параллельных launch публиковали одинаковый номер версии);
+        //  • «мут лагает при быстрых мутах» — быстрые действия коалесцируются в одну
+        //    публикацию со всеми изменениями;
+        //  • потерю недоставленного при смерти процесса (флаги персистентны).
+        // [participants]/[database] сохранены в сигнатуре для совместимости вызовов —
+        // снимок воркер строит сам, свежее любого аргумента.
+        PublishScheduler.markMembersDirty(applicationContext, chat.chatId)
+        // Профиль беседы — только когда имя/ава/описание реально изменились этим
+        // действием (мут/бан остаются ровно одним крошечным событием members.txt).
+        val profileChanged = groupName != chat.groupName ||
+            groupAvatarBase64 != chat.groupAvatarBase64 ||
+            groupDescription != chat.groupDescription
+        if (profileChanged && (groupName != null || groupAvatarBase64 != null || groupDescription != null)) {
+            PublishScheduler.markProfileDirty(applicationContext, chat.chatId)
+        }
+    }
 
     private fun setupRealGroupExtras(chatRoomId: Long, networkChatId: String, password: String) {
         // ECDH-сверка (fingerprint/QR/identity badge) не применима — группа шифруется
@@ -1048,6 +1149,12 @@ class PartnerProfileActivity : AppCompatActivity() {
             val chat = withContext(Dispatchers.IO) { database.chatDao().getById(chatRoomId) } ?: return@launch
             groupChatCached = chat
             groupIsAdmin = !chat.adminUserId.isNullOrBlank() && chat.adminUserId == prefs.myUserId
+            // Мультиподпись (Этап 2): делегированные права из моей записи участника.
+            val myPerms = withContext(Dispatchers.IO) {
+                database.chatParticipantDao().getOne(chat.id, prefs.myUserId)?.permissions ?: 0
+            }
+            groupCanModerate = groupIsAdmin || AdminPermissions.has(myPerms, AdminPermissions.MODERATE)
+            groupCanStats = groupIsAdmin || AdminPermissions.has(myPerms, AdminPermissions.STATS)
 
             val avatarEditBtn = findViewById<ImageButton>(R.id.btn_avatar_edit_demo)
             val nameEditBtn = findViewById<ImageButton>(R.id.btn_name_edit_demo)
@@ -1057,12 +1164,18 @@ class PartnerProfileActivity : AppCompatActivity() {
             // в шапку и переключается в ОДНОМ блоке с карандашами редактирования (тем же
             // проверенным условием groupIsAdmin), чтобы не повторить тот же баг.
             val statsBtn = findViewById<ImageButton>(R.id.btn_group_stats)
+            // Карандаши правки имени/авы — право EDIT (пока только главный, см. Этап 2 «основа»).
             if (groupIsAdmin) {
                 avatarEditBtn.visibility = View.VISIBLE
                 nameEditBtn.visibility = View.VISIBLE
                 avatarEditBtn.setOnClickListener { pickRealGroupAvatar.launch("image/*") }
                 nameEditBtn.setOnClickListener { renameGroupReal() }
-
+            } else {
+                avatarEditBtn.visibility = View.GONE
+                nameEditBtn.visibility = View.GONE
+            }
+            // Статистика — право STATS (главный или делегат с этим правом).
+            if (groupCanStats) {
                 statsBtn.visibility = View.VISIBLE
                 statsBtn.setOnClickListener {
                     startActivity(android.content.Intent(this@PartnerProfileActivity, GroupStatsActivity::class.java).apply {
@@ -1070,8 +1183,6 @@ class PartnerProfileActivity : AppCompatActivity() {
                     })
                 }
             } else {
-                avatarEditBtn.visibility = View.GONE
-                nameEditBtn.visibility = View.GONE
                 statsBtn.visibility = View.GONE
             }
 
@@ -1148,19 +1259,10 @@ class PartnerProfileActivity : AppCompatActivity() {
             groupChatCached = updated
             renderGroupDescription(updated)
             try {
-                val password = prefs.getChatPassword(chat.chatId)
-                val transport = com.atrum.chat.transport.NostrTransport(
-                    sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
-                    preferTor = true, adminUserId = adminUserId
-                )
                 val participants = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
-                    .map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds)) }
-                MembersSync.publish(
-                    transport = transport,
-                    password = password,
-                    chatId = chat.chatId,
-                    adminUserId = adminUserId,
-                    newVersion = freshMembersVersion(chat, database) + 1,
+                    .map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions) }
+                publishMembersAsAdmin(
+                    chat, database,
                     participants = participants,
                     groupName = chat.groupName,
                     groupAvatarBase64 = chat.groupAvatarBase64,
@@ -1240,12 +1342,12 @@ class PartnerProfileActivity : AppCompatActivity() {
         // периодического опроса (см. ниже, раз в 3с). Один и тот же держащийся
         // "тёплым" транспорт (как у ChatActivity — там он один на весь сеанс экрана)
         // дешевле переиспользовать, чем поднимать заново каждые несколько секунд.
-        val profilesTransport = com.atrum.chat.transport.NostrTransport(
-            sourceId = networkChatId,
-            chatPassword = password,
-            myUserId = prefs.myUserId,
-            preferTor = true,
-            adminUserId = chat.adminUserId
+        // ⚠️ Тот же фикс, что и в publishMembersAsAdmin: транспорт через фабрику с реальным
+        // transportToken чата (direct-чат читает напрямую, а не через насильный Tor).
+        val profilesTransport = TransportFactory.forChat(
+            this, networkChatId,
+            mtransportToken.ifBlank { prefs.getChatToken(networkChatId) },
+            password, prefs.myUserId, adminUserId = chat.adminUserId
         )
         suspend fun pullAndRenderProfiles(current: List<com.atrum.chat.data.ChatParticipant>) {
             try {
@@ -1351,6 +1453,10 @@ class PartnerProfileActivity : AppCompatActivity() {
                 // не перерисовывало бы строку, если больше ничего не изменилось
                 // (ранний выход по сигнатуре считал бы состояние прежним).
                 append(member.mutedUntilMs ?: -1).append(':').append(member.mutedReason ?: "")
+                // ⚠️ Права в сигнатуре: без них назначение/снятие роли (0↔маска) не меняло
+                // сигнатуру → ранний выход не перерисовывал строку → метка «админ» не
+                // появлялась у нового делегата, хотя права в Room уже применены.
+                append(':').append(member.permissions)
                 append('|')
             }
             append("admin=").append(chat.adminUserId).append(",meAdmin=").append(groupIsAdmin)
@@ -1424,8 +1530,14 @@ class PartnerProfileActivity : AppCompatActivity() {
             val nameTv = TextView(this).apply {
                 textSize = 14f
                 setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_primary))
-                text = if (isAdminRow) {
-                    val suffix = "  · " + getString(R.string.demo_role_admin_suffix)
+                // Создатель беседы → «создатель»; делегированный админ (есть права) → «админ».
+                val roleSuffix = when {
+                    isAdminRow -> getString(R.string.role_creator_suffix)
+                    AdminPermissions.isAdmin(member.permissions) -> getString(R.string.role_admin_suffix)
+                    else -> null
+                }
+                text = if (roleSuffix != null) {
+                    val suffix = "  · $roleSuffix"
                     android.text.SpannableStringBuilder(displayName + suffix).apply {
                         setSpan(
                             android.text.style.ForegroundColorSpan(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_tertiary)),
@@ -1475,7 +1587,7 @@ class PartnerProfileActivity : AppCompatActivity() {
                 row.addView(statsBtn)
             }
 
-            if (groupIsAdmin && !isAdminRow && !member.banned) {
+            if (groupCanModerate && !isAdminRow && !member.banned) {
                 val rippleVal = android.util.TypedValue()
                 theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, rippleVal, true)
 
@@ -1513,7 +1625,7 @@ class PartnerProfileActivity : AppCompatActivity() {
                     setOnClickListener { confirmBanReal(member, displayName, chat) }
                 }
                 row.addView(banBtn)
-            } else if (groupIsAdmin && !isAdminRow && member.banned) {
+            } else if (groupCanModerate && !isAdminRow && member.banned) {
                 val rippleVal = android.util.TypedValue()
                 theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, rippleVal, true)
                 val unbanBtn = ImageButton(this).apply {
@@ -1567,29 +1679,30 @@ class PartnerProfileActivity : AppCompatActivity() {
      */
     private fun doUnbanReal(member: com.atrum.chat.data.ChatParticipant, chat: com.atrum.chat.data.Chat) {
         val adminUserId = chat.adminUserId ?: return
-        if (adminUserId != prefs.myUserId) return
+        if (!groupCanModerate) return // главный или делегат с MODERATE (Этап 2)
         lifecycleScope.launch {
             val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
             withContext(Dispatchers.IO) {
                 database.chatParticipantDao().unban(chat.id, member.userId)
+                // История модерации: разбан.
+                database.muteHistoryDao().insert(
+                    com.atrum.chat.data.MuteHistoryEntry(
+                        ownerId = chat.id,
+                        type = com.atrum.chat.data.MuteHistoryEntry.TYPE_UNBAN,
+                        userId = member.userId,
+                        issuedByUserId = prefs.myUserId,
+                        mutedUntilMs = 0L
+                    )
+                )
             }
             // Перерисовываем сразу из локального кэша — оптимистично, не ждём сети (§1.5).
             val fresh = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
             renderGroupMembersRows(fresh, emptyMap(), chat)
 
             try {
-                val password = prefs.getChatPassword(chat.chatId)
-                val transport = com.atrum.chat.transport.NostrTransport(
-                    sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
-                    preferTor = true, adminUserId = adminUserId
-                )
-                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds)) }
-                MembersSync.publish(
-                    transport = transport,
-                    password = password,
-                    chatId = chat.chatId,
-                    adminUserId = adminUserId,
-                    newVersion = freshMembersVersion(chat, database) + 1,
+                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions) }
+                publishMembersAsAdmin(
+                    chat, database,
                     participants = entries,
                     groupName = chat.groupName,
                     groupAvatarBase64 = chat.groupAvatarBase64,
@@ -1626,7 +1739,7 @@ class PartnerProfileActivity : AppCompatActivity() {
     /** Досрочное снятие мута — тот же принцип публикации, что и doUnbanReal/doBanReal. */
     private fun doUnmuteReal(member: com.atrum.chat.data.ChatParticipant, chat: com.atrum.chat.data.Chat) {
         val adminUserId = chat.adminUserId ?: return
-        if (adminUserId != prefs.myUserId) return
+        if (!groupCanModerate) return // главный или делегат с MODERATE (Этап 2)
         lifecycleScope.launch {
             val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
             withContext(Dispatchers.IO) {
@@ -1637,18 +1750,9 @@ class PartnerProfileActivity : AppCompatActivity() {
             renderGroupMembersRows(fresh, emptyMap(), chat)
 
             try {
-                val password = prefs.getChatPassword(chat.chatId)
-                val transport = com.atrum.chat.transport.NostrTransport(
-                    sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
-                    preferTor = true, adminUserId = adminUserId
-                )
-                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds)) }
-                MembersSync.publish(
-                    transport = transport,
-                    password = password,
-                    chatId = chat.chatId,
-                    adminUserId = adminUserId,
-                    newVersion = freshMembersVersion(chat, database) + 1,
+                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions) }
+                publishMembersAsAdmin(
+                    chat, database,
                     participants = entries,
                     groupName = chat.groupName,
                     groupAvatarBase64 = chat.groupAvatarBase64,
@@ -1967,7 +2071,7 @@ class PartnerProfileActivity : AppCompatActivity() {
     /** Мут — тот же принцип публикации, что и doBanReal/doUnbanReal. */
     private fun doMuteReal(member: com.atrum.chat.data.ChatParticipant, chat: com.atrum.chat.data.Chat, untilMs: Long, reason: String?, evidenceMsgIds: List<String> = emptyList()) {
         val adminUserId = chat.adminUserId ?: return
-        if (adminUserId != prefs.myUserId) return
+        if (!groupCanModerate) return // главный или делегат с MODERATE (Этап 2)
         lifecycleScope.launch {
             val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
             withContext(Dispatchers.IO) {
@@ -1987,18 +2091,9 @@ class PartnerProfileActivity : AppCompatActivity() {
             renderGroupMembersRows(fresh, emptyMap(), chat)
 
             try {
-                val password = prefs.getChatPassword(chat.chatId)
-                val transport = com.atrum.chat.transport.NostrTransport(
-                    sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
-                    preferTor = true, adminUserId = adminUserId
-                )
-                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds)) }
-                MembersSync.publish(
-                    transport = transport,
-                    password = password,
-                    chatId = chat.chatId,
-                    adminUserId = adminUserId,
-                    newVersion = freshMembersVersion(chat, database) + 1,
+                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions) }
+                publishMembersAsAdmin(
+                    chat, database,
                     participants = entries,
                     groupName = chat.groupName,
                     groupAvatarBase64 = chat.groupAvatarBase64,
@@ -2029,29 +2124,30 @@ class PartnerProfileActivity : AppCompatActivity() {
 
     private fun doBanReal(member: com.atrum.chat.data.ChatParticipant, chat: com.atrum.chat.data.Chat) {
         val adminUserId = chat.adminUserId ?: return
-        if (adminUserId != prefs.myUserId) return
+        if (!groupCanModerate) return // главный или делегат с MODERATE (Этап 2)
         lifecycleScope.launch {
             val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
             withContext(Dispatchers.IO) {
                 database.chatParticipantDao().ban(chat.id, member.userId)
+                // История модерации (объединена с мутами, по запросу пользователя): бан.
+                database.muteHistoryDao().insert(
+                    com.atrum.chat.data.MuteHistoryEntry(
+                        ownerId = chat.id,
+                        type = com.atrum.chat.data.MuteHistoryEntry.TYPE_BAN,
+                        userId = member.userId,
+                        issuedByUserId = prefs.myUserId,
+                        mutedUntilMs = 0L
+                    )
+                )
             }
             // Перерисовываем сразу из локального кэша — оптимистично, не ждём сети (§1.5).
             val fresh = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
             renderGroupMembersRows(fresh, emptyMap(), chat)
 
             try {
-                val password = prefs.getChatPassword(chat.chatId)
-                val transport = com.atrum.chat.transport.NostrTransport(
-                    sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
-                    preferTor = true, adminUserId = adminUserId
-                )
-                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds)) }
-                MembersSync.publish(
-                    transport = transport,
-                    password = password,
-                    chatId = chat.chatId,
-                    adminUserId = adminUserId,
-                    newVersion = freshMembersVersion(chat, database) + 1,
+                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions) }
+                publishMembersAsAdmin(
+                    chat, database,
                     participants = entries,
                     groupName = chat.groupName,
                     groupAvatarBase64 = chat.groupAvatarBase64,
@@ -2092,19 +2188,10 @@ class PartnerProfileActivity : AppCompatActivity() {
             }
             groupChatCached = chat.copy(groupName = newName)
             try {
-                val password = prefs.getChatPassword(chat.chatId)
-                val transport = com.atrum.chat.transport.NostrTransport(
-                    sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
-                    preferTor = true, adminUserId = adminUserId
-                )
                 val participants = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
-                    .map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds)) }
-                MembersSync.publish(
-                    transport = transport,
-                    password = password,
-                    chatId = chat.chatId,
-                    adminUserId = adminUserId,
-                    newVersion = freshMembersVersion(chat, database) + 1,
+                    .map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions) }
+                publishMembersAsAdmin(
+                    chat, database,
                     participants = participants,
                     groupName = newName,
                     groupAvatarBase64 = chat.groupAvatarBase64,
@@ -2169,7 +2256,9 @@ class PartnerProfileActivity : AppCompatActivity() {
                 }
                 return@launch
             }
-            val newAvatarB64 = AvatarUtils.toBase64(bmp)
+            // Бюджет авы группы (см. AvatarUtils.boundedGroupAvatarBase64): тяжёлая ава
+            // раздувала members.txt за порог чанкования и убивала весь синк членства.
+            val newAvatarB64 = AvatarUtils.boundedGroupAvatarBase64(AvatarUtils.toBase64(bmp)) ?: AvatarUtils.toBase64(bmp)
             withContext(Dispatchers.Main) {
                 groupAvatarPendingBitmap = bmp
                 findViewById<ShapeableImageView>(R.id.iv_profile_avatar).apply {
@@ -2182,19 +2271,10 @@ class PartnerProfileActivity : AppCompatActivity() {
             database.chatDao().updateGroupProfile(chat.id, chat.groupName, newAvatarB64, chat.groupDescription)
             groupChatCached = chat.copy(groupAvatarBase64 = newAvatarB64)
             try {
-                val password = prefs.getChatPassword(chat.chatId)
-                val transport = com.atrum.chat.transport.NostrTransport(
-                    sourceId = chat.chatId, chatPassword = password, myUserId = prefs.myUserId,
-                    preferTor = true, adminUserId = adminUserId
-                )
                 val participants = database.chatParticipantDao().getForChat(chat.id)
-                    .map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds)) }
-                MembersSync.publish(
-                    transport = transport,
-                    password = password,
-                    chatId = chat.chatId,
-                    adminUserId = adminUserId,
-                    newVersion = freshMembersVersion(chat, database) + 1,
+                    .map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions) }
+                publishMembersAsAdmin(
+                    chat, database,
                     participants = participants,
                     groupName = chat.groupName,
                     groupAvatarBase64 = newAvatarB64,
@@ -2308,17 +2388,4 @@ class PartnerProfileActivity : AppCompatActivity() {
             val icon = ImageView(this).apply {
                 setImageResource(R.drawable.ic_link)
                 setColorFilter(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_tertiary))
-                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).also { it.marginEnd = dp(10) }
-            }
-            val tv = TextView(this).apply {
-                text = url
-                textSize = 12.5f
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, R.color.accent_light))
-            }
-            row.addView(icon); row.addView(tv)
-            container.addView(row)
-        }
-    }
-}
+                layoutParams = LinearLayout.LayoutPar

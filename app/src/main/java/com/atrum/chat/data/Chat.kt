@@ -151,7 +151,22 @@ data class Chat(
      * экране профиля скрыта (кроме админа — там всегда виден плейсхолдер-приглашение).
      * Идёт тем же путём, что имя/аватар группы — через подписанный members.txt.
      */
-    val groupDescription: String? = null
+    val groupDescription: String? = null,
+
+    /**
+     * Закреплённые сообщения (Этап 3, DB v21) — ПОКАЗЫВАЕМЫЙ набор msgId через запятую
+     * (слитые пины главного и делегатов с правом PIN, см. MembersSync.mergeSlots).
+     * null/пусто — ничего не закреплено. Обновляется применением members.txt.
+     */
+    val pinnedMsgIds: String? = null,
+
+    /**
+     * МОИ вклады в закрепления (Этап 3, DB v21) — msgId через запятую, которые публикует
+     * мой слот members.txt. Отделены от [pinnedMsgIds] (показываемого слияния), чтобы я мог
+     * открепить только СВОЁ, не затирая пины других уполномоченных. null/пусто — я ничего
+     * не закреплял.
+     */
+    val myPinnedMsgIds: String? = null
 )
 
 /**
@@ -169,4 +184,10 @@ fun Chat.displayName(): String =
 
 /** См. [displayName] — тот же принцип для аватара. */
 fun Chat.displayAvatarBase64(): String? =
-    if (isGroup) groupAvatarBase64 ?: partnerAvatarBase64 else partnerAvatarBase64
+    // ⚠️ Фикс (репорт: «вместо авы чата у человека может быть ава админа»): раньше для
+    // группы был fallback groupAvatarBase64 ?: partnerAvatarBase64. В partnerAvatarBase64
+    // для группы мог попасть профиль произвольного участника (обычно админа — см. фикс в
+    // ChatActivity.doSyncProfilesOnce/processParsedProfiles), и пока настоящая ава группы
+    // не доехала через members.txt, список чатов показывал аву АДМИНА как аву группы.
+    // Нет авы группы — показываем плейсхолдер (инициал), а не чужое лицо.
+    if (isGroup) groupAvatarBase64 else partnerAvatarBase64

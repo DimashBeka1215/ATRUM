@@ -96,7 +96,22 @@ class ChatsAdapter(
             time.text = formattedTime
             pinIcon.visibility = if (chat.isPinned) View.VISIBLE else View.GONE
 
-            if (chat.isFavorites) {
+            if (chat.isSystemNotifications) {
+                // Системный чат «Уведомления» (SystemNotifications, мокап одобрен):
+                // колокольчик на фиолетовой заглушке, имя/подпись из ресурсов.
+                initial.setBackgroundResource(R.drawable.bg_avatar_placeholder)
+                initial.visibility = View.VISIBLE
+                avatarIcon.visibility = View.VISIBLE
+                avatarIcon.setImageResource(R.drawable.ic_bell)
+                avatar.visibility = View.GONE
+                initial.text = ""
+                name.text = itemView.context.getString(R.string.notif_chat_name)
+                lastMessage.text = chat.lastMessage.ifBlank {
+                    itemView.context.getString(R.string.notif_chat_subtitle)
+                }
+                name.setTextColor(itemView.context.getColor(R.color.text_primary))
+                lastMessage.setTextColor(itemView.context.getColor(R.color.text_secondary))
+            } else if (chat.isFavorites) {
                 initial.setBackgroundResource(R.drawable.bg_avatar_favorites)
                 initial.visibility = View.VISIBLE
                 avatarIcon.visibility = View.VISIBLE

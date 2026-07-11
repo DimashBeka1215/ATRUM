@@ -63,9 +63,18 @@ class MessageWatchService : Service() {
             try {
                 if (prefs.pushEnabled) {
                     ensureWatches()          // открыть стрим-подписки на новые чаты
-                    // Экономия батареи: полную сетевую сверку делаем ТОЛЬКО когда стрим
-                    // оборвался (иначе он уже всё принёс) или изредка для страховки. Пока
-                    // приложение открыто — не сверяем (там свой цикл в ChatActivity).
+                    // ⚠️ Членство групп (баны/муты → системные уведомления + пропагация
+                    // бана) синкается РЕГУЛЯРНО и НЕЗАВИСИМО от foreground (репорт: «бан не
+                    // пришёл»/«уведомления не приходят, когда ты в чате уведомлений»).
+                    // Раньше это жило внутри networkSync, который работал ТОЛЬКО в фоне —
+                    // пока пользователь на любом другом экране (напр. чат «Уведомления»),
+                    // чужие группы никто не опрашивал, и уведомления не появлялись. Файлы
+                    // членства крошечные (~1-2КБ), так что частый опрос дёшев.
+                    syncAllGroupMembership()
+                    // Истечение срока моего мута — нет события members.txt, ловим по времени.
+                    SystemNotifications.checkMuteExpiry(applicationContext)
+                    // Догрузка истории 1:1 для счётчика непрочитанных — только в фоне
+                    // (батарея): на переднем плане этим занимается открытый ChatActivity.
                     if (!App.inForeground) {
                         val now = System.currentTimeMillis()
                         if (!watchesHealthy() || now - lastFullSyncMs >= SAFETY_SYNC_MS) {
@@ -78,7 +87,14 @@ class MessageWatchService : Service() {
             } catch (_: Throwable) {
                 // Фоновый цикл не должен падать.
             }
-            delay(FALLBACK_MS)
+            // Интервал: на переднем плане чуть реже (беседа грузится без конкуренции за
+            // Tor), в фоне чаще. НО если скоро истекает мой мут — просыпаемся ровно к
+            // сроку (+буфер), чтобы «мут истёк» пришло точно вовремя, а не с задержкой.
+            val base = if (App.inForeground) MEMBERSHIP_SYNC_FG_MS else MEMBERSHIP_SYNC_MS
+            val nextExpiry = runCatching { SystemNotifications.nearestFutureMuteExpiry(applicationContext) }.getOrDefault(Long.MAX_VALUE)
+            val untilExpiry = if (nextExpiry == Long.MAX_VALUE) base
+                else (nextExpiry - System.currentTimeMillis() + 300L).coerceIn(500L, base)
+            delay(untilExpiry)
         }
     }
 
@@ -109,7 +125,10 @@ class MessageWatchService : Service() {
                 val password = prefs.getChatPassword(chat.chatId).takeIf { it.isNotEmpty() }
                     ?: @Suppress("DEPRECATION") chat.chatPassword
 
-                val t = TransportFactory.forChat(applicationContext, chat.chatId, token, password, myUserId)
+                // adminUserId — иначе NostrTransport.adminPubkeyHex = null и members.txt/
+                // groupprofile.txt никогда не проходят проверку подписи в ФОНОВОМ сервисе
+                // (см. networkSync ниже: фон применяет мут/бан, пока приложение закрыто).
+                val t = TransportFactory.forChat(applicationContext, chat.chatId, token, password, myUserId, chat.adminUserId)
                 transports[chat.id] = t
                 watches[chat.id] = t.watchMessages { onStreamEvent() }
             } catch (e: Exception) {
@@ -135,12 +154,98 @@ class MessageWatchService : Service() {
         return transports.values.all { runCatching { it.isWatchHealthy() }.getOrDefault(false) }
     }
 
-    /** Редкая сетевая сверка: подтягивает историю в стор (через ChatTransport). */
+    /** Догрузка истории 1:1-чатов в стор для счётчика непрочитанных (только в фоне). */
     private suspend fun networkSync() {
         for ((id, t) in transports) {
-            if (db.chatDao().getById(id)?.isFavorites != false) continue
+            val chat = db.chatDao().getById(id) ?: continue
+            if (chat.isFavorites || chat.isGroup) continue // группы — в syncAllGroupMembership
             try { t.loadContent() } catch (_: Exception) {}
         }
+    }
+
+    /**
+     * Синк членства ВСЕХ групп: применяет members.txt (баны/муты → системные уведомления,
+     * см. MembersSync.applyIncoming) и профиль беседы, пропагирует бан. Вызывается на
+     * КАЖДОМ тике сервиса независимо от foreground — иначе, пока пользователь на другом
+     * экране, уведомления о чужих группах не генерируются (репорт). Файлы крошечные.
+     */
+    private suspend fun syncAllGroupMembership() {
+        for ((id, t) in transports) {
+            val chat = db.chatDao().getById(id) ?: continue
+            if (chat.isFavorites || !chat.isGroup) continue
+            // Открытый прямо сейчас чат опрашивает свой ChatActivity (1с) — не дублируем
+            // тяжёлый loadAll через Tor, чтобы не тормозить загрузку самой беседы (репорт).
+            if (chat.chatId == App.currentOpenChatId) continue
+            runCatching {
+                val all = t.loadAll()
+                val password = prefs.getChatPassword(chat.chatId).takeIf { it.isNotEmpty() }
+                    ?: @Suppress("DEPRECATION") chat.chatPassword
+                runCatching {
+                    GroupProfileSync.applyIncoming(chat, all.groupProfileContent, password, db.chatDao(), prefs)
+                }
+                runCatching {
+                    MembersSync.applyIncoming(
+                        chat = chat,
+                        membersContentEncrypted = all.membersContent,
+                        password = password,
+                        participantDao = db.chatParticipantDao(),
+                        chatDao = db.chatDao(),
+                        myUserId = prefs.myUserId,
+                        appContext = applicationContext,
+                        groupEventDao = db.groupEventDao(),
+                        memberSlots = all.memberSlots,
+                        pubkeyForUserId = t::pubkeyForUserId
+                    )
+                }
+                // Бан больше НЕ удаляет чат — он сохраняется и продолжает опрашиваться,
+                // чтобы разбан оставался наблюдаемым (репорт: «забаненные невидимы»).
+                // Из списка забаненный чат прячется по флагу (см. ChatsListActivity),
+                // уведомление о бане/разбане пишет applyIncoming выше.
+
+                // ⚠️ Фоновый ЭНРОЛЛ (репорт: «число участников у людей меняется только
+                // после захода админа»). Раньше добавление новичков в members.txt жило ТОЛЬКО
+                // в ChatActivity (открытый чат), поэтому у остальных счётчик обновлялся лишь
+                // когда админ сам заходил. Теперь админ дозаписывает новичков и в фоне, для
+                // чатов, которые прямо сейчас НЕ открыты (открытый обслуживает ChatActivity,
+                // см. continue выше — конфликта нет). Публикация — тем же планировщиком.
+                runCatching { maybeAdminEnrollBackground(chat, all, password, t) }
+            }
+        }
+    }
+
+    /**
+     * Админский энролл в фоне: добавляет в members.txt участников, которые уже опубликовали
+     * свой профиль (profiles.txt), но ещё не в ростере. Только для МОИХ (админских) групп и
+     * только когда ростер уже непустой (самолечение «с нуля» — задача ChatActivity, чтобы
+     * фон не опубликовал вырожденную версию). Публикация — через PublishScheduler (версия+1,
+     * снимок из Room), как и в ChatActivity.maybeAdminEnrollNewMembers.
+     */
+    private suspend fun maybeAdminEnrollBackground(
+        chat: com.atrum.chat.data.Chat,
+        all: com.atrum.chat.transport.AllChannelData,
+        password: String,
+        transport: com.atrum.chat.transport.ChatTransport
+    ) {
+        if (chat.adminUserId != prefs.myUserId) return
+        val profiles = if (ChatActivity.SLOT_UNION_PROFILES && all.profileSlots.isNotEmpty())
+            ProfileSync.unionProfileSlots(all.profileSlots, password, transport.chatId)
+        else ProfileSync.parseProfiles(all.profilesContent, password, transport.chatId)
+        if (profiles.isEmpty()) return
+        val current = db.chatParticipantDao().getForChat(chat.id)
+        if (current.isEmpty()) return // «с нуля» не заводим в фоне — это делает ChatActivity
+        val knownIds = current.map { it.userId }.toSet()
+        val bannedIds = current.filter { it.banned }.map { it.userId }.toSet()
+        val activeCount = current.count { !it.banned }
+        val candidates = profiles.keys.filter { it != prefs.myUserId && it !in knownIds && it !in bannedIds }
+        if (candidates.isEmpty()) return
+        val limit = chat.participantLimit
+        val freeSlots = limit?.let { (it - activeCount).coerceAtLeast(0) } ?: candidates.size
+        if (freeSlots <= 0) return
+        val toAdd = candidates.take(freeSlots)
+        db.chatParticipantDao().upsertAll(
+            toAdd.map { com.atrum.chat.data.ChatParticipant(ownerId = chat.id, userId = it, banned = false) }
+        )
+        PublishScheduler.markMembersDirty(applicationContext, chat.chatId)
     }
 
     /**
@@ -155,6 +260,10 @@ class MessageWatchService : Service() {
         var totalUnread = 0
         for (chat in db.chatDao().getAll()) {
             if (chat.isFavorites) continue
+            // Забаненный чат сохраняется (для наблюдения разбана), но пуши/непрочитанные
+            // по нему НЕ считаем — иначе прилетали бы уведомления из группы, откуда
+            // пользователя исключили.
+            if (chat.isGroup && db.chatParticipantDao().getOne(chat.id, myUserId)?.banned == true) continue
             val t = transports[chat.id] ?: continue
             try {
                 val password = prefs.getChatPassword(chat.chatId).takeIf { it.isNotEmpty() }
@@ -234,6 +343,16 @@ class MessageWatchService : Service() {
         private const val FALLBACK_MS = 90_000L
         /** Страховочная полная сверка, даже если стрим считается живым (silent-fail реле). */
         private const val SAFETY_SYNC_MS = 5 * 60_000L
+        /**
+         * Тик синка членства групп (баны/муты → уведомления). Частый и независимый от
+         * foreground — уведомления должны приходить на любом экране (репорт). Файлы
+         * членства крошечные, поэтому опрос дёшев.
+         */
+        private const val MEMBERSHIP_SYNC_MS = 8_000L
+        /** Тот же синк на переднем плане — чуть реже фона, но открытый чат пропускается
+         *  (skip в syncAllGroupMembership), так что конкуренции за Tor нет. 10с — баланс
+         *  между скоростью уведомлений и нагрузкой. */
+        private const val MEMBERSHIP_SYNC_FG_MS = 10_000L
 
         fun start(ctx: Context) {
             if (!Prefs(ctx).pushEnabled) return

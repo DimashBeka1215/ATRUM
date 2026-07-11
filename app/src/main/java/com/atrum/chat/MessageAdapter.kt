@@ -524,6 +524,13 @@ class MessageAdapter(
                 return
             }
             frame.visibility = View.VISIBLE
+            // Системный отправитель «Уведомлений» (ATRUM) — иконка приложения вместо буквы.
+            if (msg.senderUserId == SystemNotifications.SENDER_USER_ID) {
+                avatarImage?.setImageResource(R.mipmap.ic_launcher_round)
+                avatarImage?.visibility = View.VISIBLE
+                avatarInitial?.visibility = View.GONE
+                return
+            }
             val bmp = AvatarUtils.fromBase64(avatarBase64)
             if (bmp != null) {
                 avatarImage?.setImageBitmap(bmp)

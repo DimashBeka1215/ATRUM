@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Активная иконка в пилюле статистики: фиолетовый светящийся кружок (accent_glow fill +
+     accent_light обводка). Неактивные — без фона (прозрачные). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#3D9D4EDD" />
+    <stroke android:width="1dp" android:color="#80C77DFF" />
+</shape>

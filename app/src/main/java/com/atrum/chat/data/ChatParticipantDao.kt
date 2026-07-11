@@ -58,4 +58,13 @@ interface ChatParticipantDao {
     /** Досрочное снятие мута администратором. */
     @Query("UPDATE chat_participants SET mutedUntilMs = NULL, mutedReason = NULL, mutedEvidenceIds = NULL WHERE ownerId = :ownerId AND userId = :userId")
     suspend fun unmute(ownerId: Long, userId: String)
+
+    /**
+     * Права делегированного администратора (см. AdminPermissions). 0 — снятие роли.
+     * Назначает только главный админ; публикация members.txt с новой маской — отдельно
+     * (PublishScheduler.markMembersDirty). На устройстве назначенного новая маска
+     * применяется MembersSync.applyIncoming и рождает уведомление о роли (§14, 1d).
+     */
+    @Query("UPDATE chat_participants SET permissions = :permissions WHERE ownerId = :ownerId AND userId = :userId")
+    suspend fun setPermissions(ownerId: Long, userId: String, permissions: Int)
 }

@@ -32,6 +32,14 @@ object AvatarUtils {
     private const val JPEG_QUALITY = 70
 
     /**
+     * Бюджет base64-авы группы в метаданных. Запас до NOSTR_CHUNK_CHARS (48 000):
+     * ава + имя + описание + участники в JSON, затем V4-шифрование раздувает ещё
+     * ~×1.34 base64 — 26 000 сырых символов авы держат итоговое событие < 40К даже
+     * с большим списком участников.
+     */
+    const val GROUP_AVATAR_MAX_B64_CHARS = 26_000
+
+    /**
      * Загружает картинку из Uri, ресайзит и сжимает в JPEG.
      * Возвращает Bitmap который можно сразу показать или закодировать.
      */
@@ -70,6 +78,34 @@ object AvatarUtils {
         val out = ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
         return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+    }
+
+    /**
+     * ⚠️ Гарантированно ограниченный по размеру base64-аватар для метаданных ГРУППЫ
+     * (members.txt / groupprofile.txt — см. репорт «бан не работает, перезаход не
+     * помогает»). Тяжёлая ава (256px JPEG q70 бывает 30-40К base64) раздувала
+     * зашифрованный members.txt за NOSTR_CHUNK_CHARS (48 000) — транспорт молча
+     * ЧАНКОВАЛ его, а приёмники читают только само replaceable-событие: получали
+     * манифест "CHUNKED:N", парсинг падал, и ВЕСЬ синк членства (бан/мут/имя/ава)
+     * умирал для всей группы без единой ошибки. Пережимаем по лесенке
+     * качество→размер, пока не влезет в [maxChars]; совсем безнадёжное — null
+     * (лучше группа без авы, чем группа без бана).
+     */
+    fun boundedGroupAvatarBase64(base64: String?, maxChars: Int = GROUP_AVATAR_MAX_B64_CHARS): String? {
+        if (base64.isNullOrBlank()) return null
+        if (base64.length <= maxChars) return base64
+        val src = fromBase64(base64) ?: return null
+        for ((size, quality) in listOf(
+            256 to 55, 224 to 55, 192 to 50, 160 to 45, 128 to 40, 96 to 35
+        )) {
+            val scaled = if (src.width > size || src.height > size)
+                Bitmap.createScaledBitmap(src, size, size, true) else src
+            val out = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, quality, out)
+            val b64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+            if (b64.length <= maxChars) return b64
+        }
+        return null
     }
 
     /** base64 → Bitmap. Возвращает null если строка повреждена. */

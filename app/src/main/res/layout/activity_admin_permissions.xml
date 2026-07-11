@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/bg">
+
+    <!-- Шапка -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="10dp"
+        android:background="@color/bg">
+
+        <ImageButton
+            android:id="@+id/btn_back"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="8dp"
+            android:src="@drawable/ic_arrow_back"
+            app:tint="@color/text_primary"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/btn_back_desc" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="10dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:text="@string/admin_perms_title"
+                android:textColor="@color/text_primary"
+                android:textSize="17sp"
+                android:fontFamily="sans-serif-medium" />
+
+            <TextView
+                android:id="@+id/tv_subtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0.5dp"
+        android:background="@color/border" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true"
+        android:overScrollMode="never">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="16dp"
+            android:paddingTop="16dp"
+            android:paddingBottom="24dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                android:text="@string/admin_perms_hint"
+                android:textColor="@color/text_secondary"
+                android:textSize="12.5sp"
+                android:lineSpacingExtra="2dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_settings_card">
+
+                <!-- Изменение данных беседы -->
+                <LinearLayout style="@style/PermRow" android:id="@+id/row_edit">
+                    <ImageView style="@style/PermIcon" android:src="@drawable/ic_pencil" />
+                    <LinearLayout style="@style/PermText">
+                        <TextView style="@style/PermTitle" android:text="@string/perm_edit_title" />
+                        <TextView style="@style/PermDesc" android:text="@string/perm_edit_desc" />
+                    </LinearLayout>
+                    <androidx.appcompat.widget.SwitchCompat android:id="@+id/sw_edit" style="@style/PermSwitch" />
+                </LinearLayout>
+
+                <View style="@style/PermDivider" />
+
+                <!-- Мут и бан -->
+                <LinearLayout style="@style/PermRow" android:id="@+id/row_moderate">
+                    <ImageView style="@style/PermIcon" android:src="@drawable/ic_ban" />
+                    <LinearLayout style="@style/PermText">
+                        <TextView style="@style/PermTitle" android:text="@string/perm_moderate_title" />
+                        <TextView style="@style/PermDesc" android:text="@string/perm_moderate_desc" />
+                    </LinearLayout>
+                    <androidx.appcompat.widget.SwitchCompat android:id="@+id/sw_moderate" style="@style/PermSwitch" />
+                </LinearLayout>
+
+                <View style="@style/PermDivider" />
+
+                <!-- Удаление и восстановление сообщений -->
+                <LinearLayout style="@style/PermRow" android:id="@+id/row_delete">
+                    <ImageView style="@style/PermIcon" android:src="@drawable/ic_trash_menu" />
+                    <LinearLayout style="@style/PermText">
+                        <TextView style="@style/PermTitle" android:text="@string/perm_delete_title" />
+                        <TextView style="@style/PermDesc" android:text="@string/perm_delete_desc" />
+                    </LinearLayout>
+                    <androidx.appcompat.widget.SwitchCompat android:id="@+id/sw_delete" style="@style/PermSwitch" />
+                </LinearLayout>
+
+                <View style="@style/PermDivider" />
+
+                <!-- Статистика -->
+                <LinearLayout style="@style/PermRow" android:id="@+id/row_stats">
+                    <ImageView style="@style/PermIcon" android:src="@drawable/ic_chart_trend" />
+                    <LinearLayout style="@style/PermText">
+                        <TextView style="@style/PermTitle" android:text="@string/perm_stats_title" />
+                        <TextView style="@style/PermDesc" android:text="@string/perm_stats_desc" />
+                    </LinearLayout>
+                    <androidx.appcompat.widget.SwitchCompat android:id="@+id/sw_stats" style="@style/PermSwitch" />
+                </LinearLayout>
+
+                <View style="@style/PermDivider" />
+
+                <!-- Закрепление -->
+                <LinearLayout style="@style/PermRow" android:id="@+id/row_pin">
+                    <ImageView style="@style/PermIcon" android:src="@drawable/ic_pin" />
+                    <LinearLayout style="@style/PermText">
+                        <TextView style="@style/PermTitle" android:text="@string/perm_pin_title" />
+                        <TextView style="@style/PermDesc" android:text="@string/perm_pin_desc" />
+                    </LinearLayout>
+                    <androidx.appcompat.widget.SwitchCompat android:id="@+id/sw_pin" style="@style/PermSwitch" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Компактная кнопка «Назначить» / «Сохранить» -->
+            <TextView
+                android:id="@+id/btn_assign"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="20dp"
+                android:minWidth="180dp"
+                android:gravity="center"
+                android:paddingHorizontal="28dp"
+                android:background="@drawable/bg_button"
+                android:text="@string/admin_perms_assign"
+                android:textColor="@color/white"
+                android:textSize="15sp"
+                android:fontFamily="sans-serif-medium" />
+
+            <!-- Снять права (только при редактировании существующего админа) -->
+            <TextView
+                android:id="@+id/btn_revoke"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="14dp"
+                android:padding="8dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:text="@string/admin_perms_revoke"
+                android:textColor="@color/error"
+                android:textSize="14sp"
+                android:visibility="gone" />
+        </LinearLayout>
+    </ScrollView>
+
+</LinearLayout>

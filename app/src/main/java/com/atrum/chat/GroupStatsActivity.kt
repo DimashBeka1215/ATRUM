@@ -57,6 +57,8 @@ class GroupStatsActivity : AppCompatActivity() {
         val name: String,
         val avatarBase64: String?,
         val isAdmin: Boolean,
+        /** Права делегированного админа (маска). isAdmin=true — это создатель (главный). */
+        val permissions: Int,
         val messageCount: Int,
         val lastMessageAtMs: Long
     )
@@ -75,14 +77,46 @@ class GroupStatsActivity : AppCompatActivity() {
 
     private lateinit var adapter: UsersAdapter
     private lateinit var muteHistoryAdapter: MuteHistoryAdapter
+    private lateinit var adminsAdapter: AdminsAdapter
     private lateinit var swipeRefresh: SwipeRefreshLayout
     private lateinit var sectionUsers: View
     private lateinit var sectionMuteHistory: View
-    private lateinit var tabUsers: View
-    private lateinit var tabMuteHistory: View
-    private lateinit var tabUsersUnderline: View
-    private lateinit var tabMuteHistoryUnderline: View
+    private lateinit var sectionChat: View
+    private lateinit var sectionAdmins: View
+    private lateinit var pillUsers: ImageButton
+    private lateinit var pillModeration: ImageButton
+    private lateinit var pillChat: ImageButton
+    private lateinit var pillAdmins: ImageButton
     private var chatRoomId: Long = -1L
+    /** Я — ГЛАВНЫЙ админ этого чата? Управление админами («+»/правка) только для него. */
+    private var isPrimaryAdmin: Boolean = false
+
+    /** Одна строка списка «Админы»: главный (с щитком) или делегированный (с правами). */
+    data class AdminInfo(
+        val userId: String,
+        val name: String,
+        val avatarBase64: String?,
+        val isPrimary: Boolean,
+        val permissions: Int
+    )
+
+    /** Снимок участников/имён/аватаров с последнего refreshStats — питает список админов и пикер. */
+    private var lastParticipants: List<com.atrum.chat.data.ChatParticipant> = emptyList()
+    private val nameMap = HashMap<String, String>()
+    private val avatarMap = HashMap<String, String?>()
+
+    /** Все события группы (join/leave), отсортированы по времени — источник раздела «Беседа». */
+    private var allEvents: List<com.atrum.chat.data.GroupEventEntry> = emptyList()
+    /** Период отчёта: 0 — с создания, иначе миллисекунды окна (7/30 дней) или кастом. */
+    private var periodStartMs: Long = 0L
+    private var periodEndMs: Long = Long.MAX_VALUE
+    private var calMonth = java.util.Calendar.getInstance()
+    private var customStartMs: Long? = null
+    private val dayFmt = java.text.SimpleDateFormat("dd.MM.yy", java.util.Locale.getDefault())
+    /** userId → отображаемое имя (для таймлайна событий). Обновляется в refreshStats. */
+    private val lastKnownNames = HashMap<String, String>()
+    /** Актуальное число участников (ground truth) — для счётчика «сейчас», не зависит от периода. */
+    private var currentMemberCount = 0
 
     /** id (MuteHistoryEntry.id) развёрнутых карточек — переживает пересборку списка на тике. */
     private val expandedMuteHistoryIds = HashSet<Long>()
@@ -129,14 +163,28 @@ class GroupStatsActivity : AppCompatActivity() {
             adapter = muteHistoryAdapter
         }
 
+        adminsAdapter = AdminsAdapter { info -> onAdminClick(info) }
+        findViewById<RecyclerView>(R.id.rv_admins).apply {
+            layoutManager = LinearLayoutManager(this@GroupStatsActivity)
+            adapter = adminsAdapter
+        }
+        findViewById<ImageButton>(R.id.btn_add_admin).setOnClickListener { showAppointPicker() }
+
         sectionUsers = findViewById(R.id.section_users)
         sectionMuteHistory = findViewById(R.id.section_mute_history)
-        tabUsers = findViewById(R.id.tab_users)
-        tabMuteHistory = findViewById(R.id.tab_mute_history)
-        tabUsersUnderline = findViewById(R.id.v_tab_users_underline)
-        tabMuteHistoryUnderline = findViewById(R.id.v_tab_mute_history_underline)
-        tabUsers.setOnClickListener { showSection(users = true) }
-        tabMuteHistory.setOnClickListener { showSection(users = false) }
+        sectionChat = findViewById(R.id.section_chat)
+        sectionAdmins = findViewById(R.id.section_admins)
+        pillUsers = findViewById(R.id.pill_users)
+        pillModeration = findViewById(R.id.pill_moderation)
+        pillChat = findViewById(R.id.pill_chat)
+        pillAdmins = findViewById(R.id.pill_admins)
+        pillUsers.setOnClickListener { showSection(0) }
+        pillModeration.setOnClickListener { showSection(1) }
+        pillChat.setOnClickListener { showSection(2) }
+        pillAdmins.setOnClickListener { showSection(3) }
+        setupChatSection()
+        highlightChips()
+        showSection(0) // стартуем с «Участников» + подсветка активной иконки пилюли
 
         swipeRefresh = findViewById(R.id.swipe_refresh)
         swipeRefresh.setColorSchemeResources(R.color.accent)
@@ -155,6 +203,22 @@ class GroupStatsActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (transportReady) startLiveRefreshLoop()
+        // §1.5: возврат с экрана назначения прав (AdminPermissionsActivity) — сразу
+        // перечитать участников из Room и перерисовать список «Админы», не дожидаясь
+        // сетевого тика (6с). Локально, без сети: назначение уже записано в Room.
+        refreshAdminsLocal()
+    }
+
+    /** Быстрое локальное обновление списка «Админы» из Room (после назначения/снятия прав). */
+    private fun refreshAdminsLocal() {
+        if (!::chatEntity.isInitialized) return
+        lifecycleScope.launch {
+            val db = AppDatabase.get(this@GroupStatsActivity)
+            val participants = withContext(Dispatchers.IO) { db.chatParticipantDao().getForChat(chatEntity.id) }
+            lastParticipants = participants
+            participants.forEach { p -> if (!nameMap.containsKey(p.userId)) nameMap[p.userId] = p.userId.take(8) }
+            if (sectionAdmins.visibility == View.VISIBLE) renderAdmins()
+        }
     }
 
     override fun onPause() {
@@ -184,10 +248,18 @@ class GroupStatsActivity : AppCompatActivity() {
             val db = AppDatabase.get(this@GroupStatsActivity)
             val entity = withContext(Dispatchers.IO) { db.chatDao().getById(chatRoomId) }
             if (entity == null || !entity.isGroup) { finish(); return@launch }
-            // Защита от прямого запуска Intent'ом в обход кнопки (которая уже admin-only) —
-            // тот же принцип, что и остальные admin-действия в PartnerProfileActivity.
-            val isAdmin = !entity.adminUserId.isNullOrBlank() && entity.adminUserId == prefs.myUserId
-            if (!isAdmin) { finish(); return@launch }
+            // Защита от прямого запуска Intent'ом в обход кнопки. Доступ: ГЛАВНЫЙ админ ИЛИ
+            // делегат с правом STATS (мультиподпись, Этап 2). Управление админами («+»
+            // назначить) остаётся только у главного — прячем кнопку ниже (isPrimaryAdmin).
+            isPrimaryAdmin = !entity.adminUserId.isNullOrBlank() && entity.adminUserId == prefs.myUserId
+            val myPerms = withContext(Dispatchers.IO) {
+                db.chatParticipantDao().getOne(entity.id, prefs.myUserId)?.permissions ?: 0
+            }
+            val canStats = isPrimaryAdmin || AdminPermissions.has(myPerms, AdminPermissions.STATS)
+            if (!canStats) { finish(); return@launch }
+            // «+» назначения админа — только у главного.
+            findViewById<ImageButton>(R.id.btn_add_admin).visibility =
+                if (isPrimaryAdmin) View.VISIBLE else View.GONE
             chatEntity = entity
 
             networkChatId = entity.chatId
@@ -235,9 +307,52 @@ class GroupStatsActivity : AppCompatActivity() {
     private suspend fun refreshStats(isFirstLoad: Boolean = false) {
         try {
             val db = AppDatabase.get(this@GroupStatsActivity)
-            val participants = withContext(Dispatchers.IO) { db.chatParticipantDao().getForChat(chatEntity.id) }
             val allData = if (isFirstLoad) fetchFirstFresh()
                 else withContext(Dispatchers.IO) { runCatching { transport.loadAll() }.getOrNull() }
+
+            // ⚡ Реалтайм раздела «Беседа» при ОТКРЫТОМ окне: сам применяем свежий
+            // members.txt (членство + журнал приходов/уходов + уведомления), не полагаясь
+            // только на фоновый сервис. Так события/счётчики/графики обновляются каждый
+            // тик обновления экрана (6с) и по live-подписке, а не с задержкой сервиса.
+            // Анти-откат по версии внутри applyIncoming делает повтор безопасным.
+            if (allData != null) withContext(Dispatchers.IO) {
+                runCatching {
+                    GroupProfileSync.applyIncoming(chatEntity, allData.groupProfileContent, chatPassword, db.chatDao(), prefs)
+                }
+                runCatching {
+                    MembersSync.applyIncoming(
+                        chat = chatEntity,
+                        membersContentEncrypted = allData.membersContent,
+                        password = chatPassword,
+                        participantDao = db.chatParticipantDao(),
+                        chatDao = db.chatDao(),
+                        myUserId = prefs.myUserId,
+                        appContext = applicationContext,
+                        groupEventDao = db.groupEventDao(),
+                        memberSlots = allData.memberSlots,
+                        pubkeyForUserId = transport::pubkeyForUserId
+                    )
+                }
+            }
+            // Свежий chatEntity — чтобы membersVersion/имя не устаревали между тиками
+            // (иначе applyIncoming повторно применял бы один и тот же members.txt).
+            withContext(Dispatchers.IO) { db.chatDao().getById(chatEntity.id) }?.let { chatEntity = it }
+            // Участники — ПОСЛЕ применения members.txt, чтобы список и «сейчас» были свежими.
+            val participants = withContext(Dispatchers.IO) { db.chatParticipantDao().getForChat(chatEntity.id) }
+            // Seed журнала при первом открытии устоявшейся группы: если members.txt давно
+            // не менялся, applyIncoming не сработал (анти-откат) и не засеял приходы — тогда
+            // графики были бы пустыми. Засеиваем сами из дат присоединения (идемпотентно —
+            // тот же гвард countForChat==0, что и в applyIncoming).
+            withContext(Dispatchers.IO) {
+                if (db.groupEventDao().countForChat(chatEntity.id) == 0 && participants.isNotEmpty()) {
+                    db.groupEventDao().insertAll(participants.map {
+                        com.atrum.chat.data.GroupEventEntry(
+                            ownerId = chatEntity.id, userId = it.userId,
+                            type = com.atrum.chat.data.GroupEventEntry.TYPE_JOIN, atMs = it.joinedAtMs
+                        )
+                    })
+                }
+            }
 
             // unionAndRemember (не сырой parse) — та же причина, что и в ChatActivity/
             // PartnerProfileActivity (репорт «у собеседника пропадает ава»): при флаки-чтении
@@ -293,6 +408,7 @@ class GroupStatsActivity : AppCompatActivity() {
                         ?: (if (isMe) prefs.myName else p.userId.take(8)),
                     avatarBase64 = prof?.avatarBase64 ?: (if (isMe) prefs.myAvatarBase64 else null),
                     isAdmin = p.userId == chatEntity.adminUserId,
+                    permissions = p.permissions,
                     messageCount = counts[p.userId] ?: 0,
                     lastMessageAtMs = lastTs[p.userId] ?: 0L
                 )
@@ -301,23 +417,277 @@ class GroupStatsActivity : AppCompatActivity() {
             findViewById<TextView>(R.id.tv_subtitle).text =
                 resources.getQuantityString(R.plurals.group_stats_participants_count, stats.size, stats.size)
             adapter.submit(stats)
+
+            // Снимок для раздела «Админы» и пикера назначения (имена/аватары/права).
+            lastParticipants = participants
+            stats.forEach { nameMap[it.userId] = it.name; avatarMap[it.userId] = it.avatarBase64 }
+            if (sectionAdmins.visibility == View.VISIBLE) renderAdmins()
+
+            // Раздел «Беседа»: журнал событий + карта имён для таймлайна.
+            currentMemberCount = participants.size
+            allEvents = withContext(Dispatchers.IO) { db.groupEventDao().getForChat(chatEntity.id) }
+            stats.forEach { lastKnownNames[it.userId] = it.name }
+            allEvents.forEach { if (!lastKnownNames.containsKey(it.userId)) lastKnownNames[it.userId] = nameFor(it.userId) }
+            if (sectionChat.visibility == View.VISIBLE) renderChatStats()
         } finally {
             swipeRefresh.isRefreshing = false
         }
     }
 
-    /** Переключение разделов «Участники» / «История мутов» — чисто локальное состояние экрана. */
-    private fun showSection(users: Boolean) {
-        sectionUsers.visibility = if (users) View.VISIBLE else View.GONE
-        sectionMuteHistory.visibility = if (users) View.GONE else View.VISIBLE
-        findViewById<TextView>(R.id.tv_tab_users).setTextColor(
-            resources.getColor(if (users) R.color.accent else R.color.text_secondary, theme)
+    /** Переключение разделов пилюли (0 участники / 1 модерация / 2 беседа / 3 админы). */
+    private fun showSection(which: Int) {
+        sectionUsers.visibility = if (which == 0) View.VISIBLE else View.GONE
+        sectionMuteHistory.visibility = if (which == 1) View.VISIBLE else View.GONE
+        sectionChat.visibility = if (which == 2) View.VISIBLE else View.GONE
+        sectionAdmins.visibility = if (which == 3) View.VISIBLE else View.GONE
+        // Подсветка активной иконки: кружок-фон + accent tint, остальные приглушены.
+        listOf(pillUsers, pillModeration, pillChat, pillAdmins).forEachIndexed { i, btn ->
+            val active = i == which
+            btn.setBackgroundResource(if (active) R.drawable.bg_stats_pill_active else android.R.color.transparent)
+            btn.setColorFilter(ContextCompat.getColor(this, if (active) R.color.accent_light else R.color.text_tertiary))
+        }
+        if (which == 2) renderChatStats()
+        if (which == 3) renderAdmins()
+    }
+
+    // ── Раздел «Админы» ──────────────────────────────────────────────────────────
+
+    /** Человекочитаемая маска прав → строка «изменение данных беседы, мут и бан, …». */
+    private fun permNames(mask: Int): String = AdminPermissions.names(mask).joinToString(", ") {
+        getString(
+            when (it) { // индексы = порядок AdminPermissions.names()
+                0 -> R.string.perm_edit; 1 -> R.string.perm_moderate; 2 -> R.string.perm_stats
+                3 -> R.string.perm_pin; else -> R.string.perm_delete
+            }
         )
-        findViewById<TextView>(R.id.tv_tab_mute_history).setTextColor(
-            resources.getColor(if (users) R.color.text_secondary else R.color.accent, theme)
-        )
-        tabUsersUnderline.visibility = if (users) View.VISIBLE else View.INVISIBLE
-        tabMuteHistoryUnderline.visibility = if (users) View.INVISIBLE else View.VISIBLE
+    }
+
+    /** Пересобирает список админов из последнего снимка участников. */
+    private fun renderAdmins() {
+        if (!::chatEntity.isInitialized) return
+        val primaryId = chatEntity.adminUserId
+        val list = lastParticipants
+            .filter { !it.banned && (it.userId == primaryId || AdminPermissions.isAdmin(it.permissions)) }
+            .map {
+                AdminInfo(
+                    userId = it.userId,
+                    name = nameMap[it.userId] ?: it.userId.take(8),
+                    avatarBase64 = avatarMap[it.userId],
+                    isPrimary = it.userId == primaryId,
+                    permissions = it.permissions
+                )
+            }
+            .sortedWith(compareByDescending<AdminInfo> { it.isPrimary }.thenBy { it.name.lowercase() })
+        adminsAdapter.submit(list)
+    }
+
+    /** Тап по строке админа: главного не трогаем, делегированному — экран правки прав.
+     *  Правка/назначение доступны только ГЛАВНОМУ (делегат со STATS лишь смотрит список). */
+    private fun onAdminClick(info: AdminInfo) {
+        if (!isPrimaryAdmin) return
+        if (info.isPrimary) {
+            android.widget.Toast.makeText(this, getString(R.string.admins_primary_note), android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        openPermissions(info.userId, info.name, info.permissions)
+    }
+
+    /** «+»: выбрать участника (не админа, не забаненного) для назначения. */
+    private fun showAppointPicker() {
+        if (!isPrimaryAdmin) return
+        if (!::chatEntity.isInitialized) return
+        val primaryId = chatEntity.adminUserId
+        val candidates = lastParticipants.filter {
+            !it.banned && it.userId != primaryId && !AdminPermissions.isAdmin(it.permissions)
+        }
+        if (candidates.isEmpty()) {
+            android.widget.Toast.makeText(this, getString(R.string.admins_no_candidates), android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val items = candidates.map { p ->
+            NeonDialog.Item(label = nameMap[p.userId] ?: p.userId.take(8)) {
+                openPermissions(p.userId, nameMap[p.userId] ?: p.userId.take(8), 0)
+            }
+        }
+        NeonDialog.showMenu(this, title = getString(R.string.admins_pick_title), items = items)
+    }
+
+    private fun openPermissions(userId: String, name: String, permissions: Int) {
+        startActivity(Intent(this, AdminPermissionsActivity::class.java).apply {
+            putExtra(AdminPermissionsActivity.EXTRA_CHAT_ID, chatRoomId)
+            putExtra(AdminPermissionsActivity.EXTRA_USER_ID, userId)
+            putExtra(AdminPermissionsActivity.EXTRA_USER_NAME, name)
+            putExtra(AdminPermissionsActivity.EXTRA_PERMISSIONS, permissions)
+        })
+    }
+
+    // ── Раздел «Беседа» — статистика по журналу событий (GroupEventEntry) ──
+
+    private fun setupChatSection() {
+        findViewById<View>(R.id.chip_all).setOnClickListener { setPeriod(0L) }
+        findViewById<View>(R.id.chip_month).setOnClickListener { setPeriod(30L * 24 * 3600_000L) }
+        findViewById<View>(R.id.chip_week).setOnClickListener { setPeriod(7L * 24 * 3600_000L) }
+        findViewById<ImageButton>(R.id.btn_calendar).setOnClickListener {
+            val c = findViewById<View>(R.id.cal_container)
+            c.visibility = if (c.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            if (c.visibility == View.VISIBLE) renderCalendar()
+        }
+        findViewById<ImageButton>(R.id.cal_prev).setOnClickListener { calMonth.add(java.util.Calendar.MONTH, -1); renderCalendar() }
+        findViewById<ImageButton>(R.id.cal_next).setOnClickListener { calMonth.add(java.util.Calendar.MONTH, 1); renderCalendar() }
+        findViewById<StatsChartView>(R.id.chart_line).onBucketClick = { i -> onBucketSelected(i) }
+        findViewById<StatsChartView>(R.id.chart_bars).onBucketClick = { i -> onBucketSelected(i) }
+    }
+
+    private var chipSel = 0L
+    private fun setPeriod(windowMs: Long) {
+        chipSel = windowMs
+        customStartMs = null
+        val now = System.currentTimeMillis()
+        periodEndMs = Long.MAX_VALUE
+        periodStartMs = if (windowMs <= 0L) 0L else now - windowMs
+        highlightChips()
+        renderChatStats()
+    }
+
+    private fun highlightChips() {
+        val map = mapOf(R.id.tv_chip_all to 0L, R.id.tv_chip_month to 30L * 24 * 3600_000L, R.id.tv_chip_week to 7L * 24 * 3600_000L)
+        map.forEach { (id, w) ->
+            val on = customStartMs == null && chipSel == w
+            findViewById<TextView>(id).setTextColor(ContextCompat.getColor(this, if (on) R.color.accent_light else R.color.text_secondary))
+            (findViewById<TextView>(id).parent as? View)?.setBackgroundResource(if (on) R.drawable.bg_chip_selected else R.drawable.bg_pill)
+        }
+    }
+
+    /** Бакеты по дням в выбранном периоде: (label, members-на-конец-дня, joins, leaves). */
+    private var currentBuckets: List<StatsChartView.Bucket> = emptyList()
+
+    private fun renderChatStats() {
+        val evts = allEvents.filter { it.type == com.atrum.chat.data.GroupEventEntry.TYPE_JOIN || it.type == com.atrum.chat.data.GroupEventEntry.TYPE_LEAVE }
+        val createdMs = evts.minOfOrNull { it.atMs } ?: System.currentTimeMillis()
+        val startMs = if (periodStartMs <= 0L) createdMs else maxOf(periodStartMs, createdMs)
+        val endMs = if (periodEndMs == Long.MAX_VALUE) System.currentTimeMillis() else periodEndMs
+
+        // Диапазон дней.
+        val dayMs = 24 * 3600_000L
+        fun dayStart(ms: Long): Long { val c = java.util.Calendar.getInstance(); c.timeInMillis = ms; c.set(java.util.Calendar.HOUR_OF_DAY,0); c.set(java.util.Calendar.MINUTE,0); c.set(java.util.Calendar.SECOND,0); c.set(java.util.Calendar.MILLISECOND,0); return c.timeInMillis }
+        val d0 = dayStart(startMs); val d1 = dayStart(endMs)
+        val nDays = (((d1 - d0) / dayMs).toInt() + 1).coerceIn(1, 60)
+
+        // members на начало периода = join'ы до startMs минус leave'ы до startMs.
+        var running = evts.count { it.type == "join" && it.atMs < d0 } - evts.count { it.type == "leave" && it.atMs < d0 }
+        if (running < 0) running = 0
+
+        val buckets = ArrayList<StatsChartView.Bucket>(nDays)
+        for (i in 0 until nDays) {
+            val ds = d0 + i * dayMs; val de = ds + dayMs
+            val j = evts.count { it.type == "join" && it.atMs in ds until de }
+            val l = evts.count { it.type == "leave" && it.atMs in ds until de }
+            running += j - l; if (running < 0) running = 0
+            val label = if (i == nDays - 1 && d1 >= dayStart(System.currentTimeMillis())) getString(R.string.chat_today_short) else dayFmt.format(java.util.Date(ds))
+            buckets.add(StatsChartView.Bucket(label, running, j, l))
+        }
+        currentBuckets = buckets
+
+        val totalJoin = evts.count { it.type == "join" && it.atMs in d0..(d1 + dayMs) }
+        val totalLeft = evts.count { it.type == "leave" && it.atMs in d0..(d1 + dayMs) }
+
+        // «Сейчас» — актуальное число участников (ground truth), не зависит от периода.
+        findViewById<TextView>(R.id.tv_now).text = currentMemberCount.toString()
+        findViewById<TextView>(R.id.tv_joined).text = totalJoin.toString()
+        findViewById<TextView>(R.id.tv_left).text = totalLeft.toString()
+        findViewById<TextView>(R.id.tv_created).text = dayFmt.format(java.util.Date(createdMs))
+        findViewById<TextView>(R.id.tv_range_label).text = if (customStartMs == null && chipSel <= 0L)
+            getString(R.string.stats_range_all_fmt, dayFmt.format(java.util.Date(createdMs)))
+        else getString(R.string.stats_range_custom_fmt, dayFmt.format(java.util.Date(startMs)), dayFmt.format(java.util.Date(endMs)))
+
+        findViewById<StatsChartView>(R.id.chart_line).setData(buckets, StatsChartView.MODE_LINE)
+        findViewById<StatsChartView>(R.id.chart_bars).setData(buckets, StatsChartView.MODE_BARS)
+
+        // Таймлайн событий (последние сверху).
+        val container = findViewById<LinearLayout>(R.id.events_container)
+        container.removeAllViews()
+        val periodEvents = evts.filter { it.atMs in d0..(d1 + dayMs) }.sortedByDescending { it.atMs }.take(60)
+        if (periodEvents.isEmpty()) {
+            val tv = TextView(this).apply { text = getString(R.string.stats_events_empty); setTextColor(ContextCompat.getColor(this@GroupStatsActivity, R.color.text_tertiary)); textSize = 12f; setPadding(0, 8, 0, 8) }
+            container.addView(tv)
+        } else {
+            val evDateFmt = java.text.SimpleDateFormat("dd.MM, HH:mm", java.util.Locale.getDefault())
+            periodEvents.forEach { e -> container.addView(buildEventRow(e, evDateFmt)) }
+        }
+        // Сброс детали.
+        findViewById<TextView>(R.id.tv_detail_title).text = getString(R.string.stats_detail_hint_title)
+        findViewById<TextView>(R.id.tv_detail_body).text = getString(R.string.stats_detail_hint_body)
+    }
+
+    private fun buildEventRow(e: com.atrum.chat.data.GroupEventEntry, fmt: java.text.SimpleDateFormat): View {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.TOP; setPadding(0, (5 * resources.displayMetrics.density).toInt(), 0, (5 * resources.displayMetrics.density).toInt()) }
+        val join = e.type == com.atrum.chat.data.GroupEventEntry.TYPE_JOIN
+        val icon = ImageView(this).apply {
+            setImageResource(if (join) R.drawable.ic_arrow_down_left else R.drawable.ic_arrow_up_right)
+            setColorFilter(ContextCompat.getColor(this@GroupStatsActivity, if (join) R.color.accent_light else R.color.accent_dark))
+            val s = (14 * resources.displayMetrics.density).toInt(); layoutParams = LinearLayout.LayoutParams(s, s).apply { marginEnd = (8 * resources.displayMetrics.density).toInt(); topMargin = (1 * resources.displayMetrics.density).toInt() }
+        }
+        val name = lastKnownNames[e.userId] ?: e.userId.take(8)
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(TextView(this).apply { text = getString(if (join) R.string.stats_event_joined_fmt else R.string.stats_event_left_fmt, name); setTextColor(ContextCompat.getColor(this@GroupStatsActivity, R.color.text_primary)); textSize = 12f })
+        col.addView(TextView(this).apply { text = fmt.format(java.util.Date(e.atMs)); setTextColor(ContextCompat.getColor(this@GroupStatsActivity, R.color.text_tertiary)); textSize = 9f })
+        row.addView(icon); row.addView(col)
+        return row
+    }
+
+    private fun onBucketSelected(i: Int) {
+        val b = currentBuckets.getOrNull(i) ?: return
+        findViewById<StatsChartView>(R.id.chart_line).setSelected(i)
+        findViewById<StatsChartView>(R.id.chart_bars).setSelected(i)
+        findViewById<TextView>(R.id.tv_detail_title).text = getString(R.string.stats_detail_fmt, b.label, b.members)
+        findViewById<TextView>(R.id.tv_detail_body).text = getString(R.string.stats_detail_body_fmt, b.joins, b.leaves, b.members)
+    }
+
+    private fun renderCalendar() {
+        findViewById<TextView>(R.id.cal_month).text = java.text.SimpleDateFormat("LLLL yyyy", java.util.Locale.getDefault()).format(calMonth.time)
+        val grid = findViewById<LinearLayout>(R.id.cal_grid)
+        grid.removeAllViews()
+        val c = calMonth.clone() as java.util.Calendar
+        c.set(java.util.Calendar.DAY_OF_MONTH, 1)
+        val firstDow = (c.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7 // Пн=0
+        val daysInMonth = c.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+        var day = 1
+        val dp = resources.displayMetrics.density
+        var week: LinearLayout? = null
+        for (cell in 0 until 42) {
+            if (cell % 7 == 0) { week = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }; grid.addView(week) }
+            val tv = TextView(this).apply {
+                layoutParams = LinearLayout.LayoutParams(0, (30 * dp).toInt(), 1f); gravity = android.view.Gravity.CENTER; textSize = 11f
+            }
+            if (cell >= firstDow && day <= daysInMonth) {
+                val d = day
+                val cc = calMonth.clone() as java.util.Calendar
+                cc.set(java.util.Calendar.DAY_OF_MONTH, d); cc.set(java.util.Calendar.HOUR_OF_DAY, 0); cc.set(java.util.Calendar.MINUTE, 0); cc.set(java.util.Calendar.SECOND, 0); cc.set(java.util.Calendar.MILLISECOND, 0)
+                val ms = cc.timeInMillis
+                tv.text = d.toString()
+                val inRange = customStartMs != null && ms in (customStartMs!!)..(periodEndMs.takeIf { it != Long.MAX_VALUE } ?: customStartMs!!)
+                tv.setTextColor(ContextCompat.getColor(this, if (inRange) R.color.accent_light else R.color.text_primary))
+                if (inRange) tv.setBackgroundResource(R.drawable.bg_stats_pill_active)
+                tv.setOnClickListener { onCalendarDay(ms) }
+                day++
+            }
+            week!!.addView(tv)
+        }
+    }
+
+    private fun onCalendarDay(ms: Long) {
+        val start = customStartMs
+        if (start == null || periodEndMs != Long.MAX_VALUE) {
+            // Начинаем новый выбор.
+            customStartMs = ms; periodStartMs = ms; periodEndMs = Long.MAX_VALUE
+        } else {
+            // Второй тап — конец периода.
+            if (ms >= start) { periodStartMs = start; periodEndMs = ms + 24 * 3600_000L - 1 }
+            else { periodStartMs = ms; periodEndMs = start + 24 * 3600_000L - 1; customStartMs = ms }
+        }
+        highlightChips()
+        renderCalendar()
+        renderChatStats()
     }
 
     private fun openUser(stat: UserStat) {
@@ -369,9 +739,11 @@ class GroupStatsActivity : AppCompatActivity() {
                     letterTv.visibility = View.VISIBLE
                     letterTv.text = stat.name.trim().firstOrNull()?.uppercase() ?: "?"
                 }
-                nameTv.text = if (stat.isAdmin)
-                    itemView.context.getString(R.string.group_stats_name_with_admin, stat.name)
-                else stat.name
+                nameTv.text = when {
+                    stat.isAdmin -> itemView.context.getString(R.string.group_stats_name_with_admin, stat.name) // создатель
+                    AdminPermissions.isAdmin(stat.permissions) -> itemView.context.getString(R.string.group_stats_name_with_delegate, stat.name) // админ
+                    else -> stat.name
+                }
                 subTv.text = if (stat.lastMessageAtMs > 0)
                     itemView.context.getString(
                         R.string.group_stats_last_active,
@@ -380,6 +752,61 @@ class GroupStatsActivity : AppCompatActivity() {
                 else itemView.context.getString(R.string.group_stats_no_messages)
                 countTv.text = stat.messageCount.toString()
                 itemView.setOnClickListener { onClick(stat) }
+            }
+        }
+    }
+
+    /**
+     * Список раздела «Админы»: главный админ (со щитком, подпись «Главный администратор»)
+     * и делегированные (с перечислением выданных прав). Тап по делегированному ведёт в
+     * [AdminPermissionsActivity]; по главному — нейтральный тост (его права снять нельзя).
+     */
+    private inner class AdminsAdapter(
+        private val onClick: (AdminInfo) -> Unit
+    ) : RecyclerView.Adapter<AdminsAdapter.VH>() {
+
+        private var items: List<AdminInfo> = emptyList()
+
+        fun submit(list: List<AdminInfo>) {
+            items = list
+            notifyDataSetChanged()
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+            val v = LayoutInflater.from(parent.context).inflate(R.layout.item_stats_admin, parent, false)
+            return VH(v)
+        }
+
+        override fun getItemCount(): Int = items.size
+
+        override fun onBindViewHolder(holder: VH, position: Int) = holder.bind(items[position])
+
+        inner class VH(v: View) : RecyclerView.ViewHolder(v) {
+            private val avatarImg: ShapeableImageView = v.findViewById(R.id.iv_avatar)
+            private val letterTv: TextView = v.findViewById(R.id.tv_letter)
+            private val nameTv: TextView = v.findViewById(R.id.tv_name)
+            private val ownerIv: ImageView = v.findViewById(R.id.iv_owner)
+            private val subTv: TextView = v.findViewById(R.id.tv_sub)
+            private val chevronIv: ImageView = v.findViewById(R.id.iv_chevron)
+
+            fun bind(info: AdminInfo) {
+                val ctx = itemView.context
+                val bmp = AvatarUtils.fromBase64(info.avatarBase64)
+                if (bmp != null) {
+                    avatarImg.setImageBitmap(bmp)
+                    avatarImg.visibility = View.VISIBLE
+                    letterTv.visibility = View.GONE
+                } else {
+                    avatarImg.visibility = View.GONE
+                    letterTv.visibility = View.VISIBLE
+                    letterTv.text = info.name.trim().firstOrNull()?.uppercase() ?: "?"
+                }
+                nameTv.text = info.name
+                ownerIv.visibility = if (info.isPrimary) View.VISIBLE else View.GONE
+                chevronIv.visibility = if (info.isPrimary) View.GONE else View.VISIBLE
+                subTv.text = if (info.isPrimary) ctx.getString(R.string.admins_primary_label)
+                    else permNames(info.permissions).ifBlank { ctx.getString(R.string.admins_no_rights) }
+                itemView.setOnClickListener { onClick(info) }
             }
         }
     }
@@ -444,6 +871,28 @@ class GroupStatsActivity : AppCompatActivity() {
                 }
                 nameTv.text = stat.userName
                 issuedAtTv.text = ctx.getString(R.string.mute_history_issued_at_fmt, dateFmt.format(java.util.Date(e.issuedAtMs)))
+
+                // ── Бан / разбан (объединённая история модерации) — отдельный рендер:
+                // нет срока/причины/оснований, только статус-чип и «кто выдал». ──
+                if (e.type == MuteHistoryEntry.TYPE_BAN || e.type == MuteHistoryEntry.TYPE_UNBAN) {
+                    val isBan = e.type == MuteHistoryEntry.TYPE_BAN
+                    statusTv.setBackgroundResource(if (isBan) R.drawable.bg_mute_status_active else R.drawable.bg_mute_status_inactive)
+                    statusTv.setTextColor(ContextCompat.getColor(ctx, if (isBan) R.color.error else R.color.accent_light))
+                    statusTv.text = ctx.getString(if (isBan) R.string.mute_history_status_banned else R.string.mute_history_status_unbanned)
+
+                    val expandedBan = expandedMuteHistoryIds.contains(e.id)
+                    expandedContainer.visibility = if (expandedBan) View.VISIBLE else View.GONE
+                    chevronIv.setImageResource(if (expandedBan) R.drawable.ic_chevron_down else R.drawable.ic_chevron_right)
+                    header.setOnClickListener { onToggle(e.id) }
+
+                    issuedByTv.text = ctx.getString(R.string.mute_history_issued_by_fmt, stat.issuedByName)
+                    untilTv.text = ctx.getString(if (isBan) R.string.mute_history_event_ban else R.string.mute_history_event_unban)
+                    reasonLabelTv.visibility = View.GONE
+                    reasonTv.visibility = View.GONE
+                    evidenceLabelTv.visibility = View.GONE
+                    evidenceList.removeAllViews()
+                    return
+                }
 
                 val isActiveNow = e.unmutedEarlyAtMs == null && e.mutedUntilMs > now
                 if (isActiveNow) {

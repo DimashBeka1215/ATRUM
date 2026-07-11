@@ -1042,14 +1042,45 @@
         <item quantity="one">%1$d member</item>
         <item quantity="other">%1$d members</item>
     </plurals>
-    <string name="group_stats_name_with_admin">%1$s · admin</string>
+    <string name="group_stats_name_with_admin">%1$s · creator</string>
+    <string name="group_stats_name_with_delegate">%1$s · admin</string>
     <string name="group_stats_last_active">last active %1$s</string>
     <string name="group_stats_no_messages">no messages</string>
 
     <!-- Stats screen — "Mute history" section -->
     <string name="group_stats_tab_users">Members</string>
-    <string name="group_stats_tab_mute_history">Mute history</string>
-    <string name="mute_history_empty">No mutes yet</string>
+    <string name="group_stats_tab_mute_history">Moderation history</string>
+    <string name="mute_history_empty">No moderation events yet</string>
+    <string name="mute_history_status_banned">Removed</string>
+    <string name="mute_history_status_unbanned">Reinstated</string>
+    <string name="mute_history_event_ban">Removed from group</string>
+    <string name="mute_history_event_unban">Reinstated to group</string>
+
+    <!-- Chat stats section -->
+    <string name="stats_tab_chat">Chat</string>
+    <string name="stats_chip_all">Since start</string>
+    <string name="stats_chip_month">Month</string>
+    <string name="stats_chip_week">Week</string>
+    <string name="stats_pick_range">Pick range</string>
+    <string name="stats_now">now</string>
+    <string name="stats_joined">joined</string>
+    <string name="stats_left">left</string>
+    <string name="stats_created">Created</string>
+    <string name="stats_members_over_time">Members over time · tap a point</string>
+    <string name="stats_joins_leaves">Joins and leaves · tap a bar</string>
+    <string name="stats_legend_joins">▮ joined</string>
+    <string name="stats_legend_leaves">▮ left</string>
+    <string name="stats_events">Events</string>
+    <string name="stats_detail_hint_title">Pick a day on the chart</string>
+    <string name="stats_detail_hint_body">Tap a line point or a bar — I\'ll show joins, leaves and the member count for that day.</string>
+    <string name="stats_detail_fmt">%1$s · %2$d members</string>
+    <string name="stats_detail_body_fmt">Joined: %1$d · Left: %2$d\nMembers at end of day: %3$d</string>
+    <string name="stats_range_all_fmt">%1$s — today · since group start</string>
+    <string name="stats_range_custom_fmt">%1$s — %2$s</string>
+    <string name="stats_event_joined_fmt">%1$s joined</string>
+    <string name="stats_event_left_fmt">%1$s left</string>
+    <string name="stats_events_empty">No events yet</string>
+    <string name="chat_today_short">today</string>
     <string name="mute_history_status_active_fmt">Until %1$s</string>
     <string name="mute_history_status_expired">Expired</string>
     <string name="mute_history_status_unmuted_early">Unmuted early</string>
@@ -1094,4 +1125,71 @@
     <string name="stats_time_other">%1$s, %2$s</string>
 
     <string name="action_delete_for_all_admin">Delete for everyone</string>
+
+    <!-- System "Notifications" chat (SystemNotifications) -->
+    <string name="notif_sender_name">ATRUM</string>
+    <string name="notif_chat_name">Notifications</string>
+    <string name="notif_chat_subtitle">system notifications</string>
+    <string name="notif_readonly_hint">Read-only — system notifications arrive here</string>
+    <string name="notif_muted_fmt">You are muted in group "%1$s" until %2$s</string>
+    <string name="notif_muted_reason_fmt">Reason: %1$s</string>
+    <string name="notif_unmuted_fmt">Your mute in group "%1$s" has been lifted</string>
+    <string name="notif_mute_expired_fmt">Your mute in group "%1$s" has expired</string>
+    <string name="notif_banned_fmt">You have been removed from group "%1$s"</string>
+    <string name="notif_unbanned_fmt">You have been reinstated in group "%1$s"</string>
+    <string name="notif_role_granted_fmt">You have been made an admin in group "%1$s"</string>
+    <string name="notif_role_perms_fmt">Rights: %1$s</string>
+    <string name="notif_role_revoked_fmt">Your admin rights in group "%1$s" have been removed</string>
+    <!-- Admin permission names (AdminPermissions) -->
+    <string name="perm_edit">edit chat data</string>
+    <string name="perm_moderate">mute and ban</string>
+    <string name="perm_delete">delete messages</string>
+    <string name="perm_stats">statistics</string>
+    <string name="perm_pin">pinning</string>
+
+    <string name="notif_chat_description">System notifications about bans and mutes in group chats — why, when and for how long.</string>
+    <string name="notif_chat_empty">No notifications yet</string>
+
+    <!-- Admins section (GroupStatsActivity) -->
+    <string name="admins_section_label">Administrators</string>
+    <string name="admins_add">Appoint administrator</string>
+    <string name="admins_primary_label">Creator</string>
+    <string name="admins_primary_note">Creator — rights can\'t be removed</string>
+    <string name="role_creator_suffix">creator</string>
+    <string name="role_admin_suffix">admin</string>
+    <string name="admins_no_rights">No rights</string>
+    <string name="admins_no_candidates">No one to appoint</string>
+    <string name="admins_pick_title">Whom to appoint</string>
+
+    <!-- Admin permissions screen (AdminPermissionsActivity) -->
+    <string name="admin_perms_title">Administrator rights</string>
+    <string name="admin_perms_hint">Choose what this member can do in the chat.</string>
+    <string name="perm_edit_title">Chat data</string>
+    <string name="perm_edit_desc">Change name, description and avatar</string>
+    <string name="perm_moderate_title">Mute and ban</string>
+    <string name="perm_moderate_desc">Restrict and remove members</string>
+    <string name="perm_delete_title">Delete messages</string>
+    <string name="perm_delete_desc">Delete and restore messages</string>
+    <string name="perm_stats_title">Statistics</string>
+    <string name="perm_stats_desc">Access to chat statistics</string>
+    <string name="perm_pin_title">Pinning</string>
+    <string name="perm_pin_desc">Pin messages in the chat</string>
+    <string name="admin_perms_assign">Appoint</string>
+    <string name="admin_perms_save">Save</string>
+    <string name="admin_perms_revoke">Remove rights</string>
+    <string name="admin_perms_none_selected">Select at least one right</string>
+    <string name="admin_perms_revoke_title">Remove rights?</string>
+    <string name="admin_perms_revoke_msg">%1$s will no longer be a chat administrator.</string>
+    <string name="admin_perms_saved_toast">Rights saved</string>
+    <string name="admin_perms_revoked_toast">Rights removed</string>
+    <string name="admin_perms_error">Failed to save</string>
+
+    <!-- Pinned messages (Stage 3). action_pin/action_unpin already defined above — no dup. -->
+    <string name="pinned_label_single">Pinned message</string>
+    <string name="pinned_label_counted">Pinned · %1$d of %2$d</string>
+    <string name="pinned_generic">Pinned message</string>
+    <string name="pinned_show_all">Pinned messages</string>
+    <string name="pinned_unpin">Unpin</string>
+    <string name="pinned_done">Pinned</string>
+    <string name="unpinned_done">Unpinned</string>
 </resources>

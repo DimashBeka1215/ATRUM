@@ -26,7 +26,14 @@ data class MuteHistoryEntry(
     /** FK на Chat.id (локальный Room id, НЕ сетевой channelId). */
     val ownerId: Long,
 
-    /** userId заглушённого участника. */
+    /**
+     * Тип события модерации (объединённая история мутов И банов, по запросу пользователя):
+     * [TYPE_MUTE] — выдан мут (mutedUntilMs осмыслен), [TYPE_BAN] — исключён из группы,
+     * [TYPE_UNBAN] — возвращён в группу. Старые записи (до миграции) = "mute" по дефолту.
+     */
+    val type: String = TYPE_MUTE,
+
+    /** userId участника (заглушённого/забаненного). */
     val userId: String,
 
     /** userId админа, выдавшего мут (обычно = текущий пользователь, т.к. пишется только у него). */
@@ -46,4 +53,10 @@ data class MuteHistoryEntry(
 
     /** Момент досрочного снятия мута администратором. null — мут не снимался досрочно (истёк сам или ещё активен). */
     val unmutedEarlyAtMs: Long? = null
-)
+) {
+    companion object {
+        const val TYPE_MUTE = "mute"
+        const val TYPE_BAN = "ban"
+        const val TYPE_UNBAN = "unban"
+    }
+}

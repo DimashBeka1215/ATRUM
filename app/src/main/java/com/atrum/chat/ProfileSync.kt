@@ -96,7 +96,13 @@ object ProfileSync {
                 onlineTs      = p.onlineTs,
                 typingTs      = p.typingTs,
                 recordingTs   = p.recordingTs,
-                lastReadIndex = maxOf(cur.lastReadIndex, p.lastReadIndex)
+                lastReadIndex = maxOf(cur.lastReadIndex, p.lastReadIndex),
+                // ⚠️ Аватар/имя «липкие» (репорт: «ава пропадает, если участник не в сети»).
+                // При РАВНОМ updatedAt побеждает свежее чтение (>=); если оффлайн-участник
+                // пришёл из чужого блоба БЕЗ авы, известная ава затиралась. Не даём копии
+                // без авы/имени перетереть уже известную — берём непустое из любой стороны.
+                avatarBase64  = profileBase.avatarBase64 ?: cur.avatarBase64 ?: p.avatarBase64,
+                name          = profileBase.name.ifBlank { cur.name.ifBlank { p.name } }
             )
         }
         return result
@@ -199,7 +205,11 @@ object ProfileSync {
                     onlineTs      = maxOf(cur.onlineTs, p.onlineTs),
                     typingTs      = maxOf(cur.typingTs, p.typingTs),
                     recordingTs   = maxOf(cur.recordingTs, p.recordingTs),
-                    lastReadIndex = maxOf(cur.lastReadIndex, p.lastReadIndex)
+                    lastReadIndex = maxOf(cur.lastReadIndex, p.lastReadIndex),
+                    // Аватар/имя «липкие» — см. unionWithKnown: копия без авы/имени не
+                    // должна перетирать уже известную (иначе ава пропадает у оффлайн-участника).
+                    avatarBase64  = base.avatarBase64 ?: cur.avatarBase64 ?: p.avatarBase64,
+                    name          = base.name.ifBlank { cur.name.ifBlank { p.name } }
                 )
             }
         }

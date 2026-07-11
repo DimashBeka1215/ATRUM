@@ -63,7 +63,12 @@ interface ChatDao {
     @Query("UPDATE chats SET isPinned = :pinned WHERE id = :id")
     suspend fun updatePinned(id: Long, pinned: Boolean)
 
-    @Query("SELECT * FROM chats WHERE isFavorites = 1 LIMIT 1")
+    // channelId = 'favorites' — с появлением системного чата «Уведомления»
+    // (SystemNotifications, тоже isFavorites = 1 ради переиспользования локальных
+    // гвардов) один лишь флаг неоднозначен: без уточнения запрос мог бы вернуть чат
+    // уведомлений, и создание «Избранного» при старте пропустилось бы. В SQL — ИМЯ
+    // КОЛОНКИ (channelId), а не Kotlin-свойство chatId (см. Chat.@ColumnInfo).
+    @Query("SELECT * FROM chats WHERE isFavorites = 1 AND channelId = 'favorites' LIMIT 1")
     suspend fun getFavoritesChat(): Chat?
 
     @Query("UPDATE chats SET myEphemeralPrivKeyB64 = :priv, myEphemeralPubKeyB64 = :pub WHERE id = :id")
@@ -84,4 +89,12 @@ interface ChatDao {
     /** Обновляет версию members.txt только если новая версия строго больше — анти-откат. */
     @Query("UPDATE chats SET membersVersion = :version WHERE id = :id AND membersVersion < :version")
     suspend fun updateMembersVersionIfNewer(id: Long, version: Int)
+
+    /** Показываемый набор закреплённых (Этап 3) — слитые пины (см. MembersSync.applyIncoming). */
+    @Query("UPDATE chats SET pinnedMsgIds = :csv WHERE id = :id")
+    suspend fun updatePinnedMsgIds(id: Long, csv: String?)
+
+    /** Мои вклады в закрепления (публикуются моим слотом members.txt). */
+    @Query("UPDATE chats SET myPinnedMsgIds = :csv WHERE id = :id")
+    suspend fun updateMyPinnedMsgIds(id: Long, csv: String?)
 }

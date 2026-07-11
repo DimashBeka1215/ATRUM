@@ -33,9 +33,20 @@ class LocalTransport(
         } catch (_: Exception) { }
     }
 
-    override suspend fun loadContent(): String = localContent
+    // ⚠️ Чтение и дозапись — всегда через СВЕЖЕЕ состояние диска, а не кэш конструктора:
+    // у локального чата теперь может быть НЕСКОЛЬКО писателей через РАЗНЫЕ экземпляры
+    // LocalTransport — системные уведомления (SystemNotifications) пишут из открытого
+    // чата, списка чатов и фонового сервиса, каждый своим экземпляром. Кэш конструктора
+    // у открытого экрана никогда бы не увидел эти строки до перезахода, а дозапись
+    // поверх устаревшего кэша ТЕРЯЛА бы чужие строки. Файл крошечный — перечитывание
+    // на тике (2с) незаметно.
+    override suspend fun loadContent(): String {
+        localContent = loadFromDisk()
+        return localContent
+    }
 
     override suspend fun loadAll(): AllGistData {
+        localContent = loadFromDisk()
         return AllGistData(
             chatContent = localContent,
             reactionsContent = loadFile("reactions.txt"),
@@ -53,8 +64,9 @@ class LocalTransport(
         extraFiles: Map<String, String>,
         onFileProgress: ((fileName: String, current: Int, total: Int) -> Unit)?
     ) {
-        localContent = if (localContent.isEmpty()) encryptedLine
-                       else "$localContent\n$encryptedLine"
+        localContent = loadFromDisk().let { fresh ->
+            if (fresh.isEmpty()) encryptedLine else "$fresh\n$encryptedLine"
+        }
         saveToDisk()
         
         // В локальном чате стикеры и другие файлы тоже нужно сохранять на диск,

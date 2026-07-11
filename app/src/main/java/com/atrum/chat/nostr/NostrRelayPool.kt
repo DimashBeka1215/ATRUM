@@ -58,6 +58,43 @@ object NostrRelayPool {
         }
     }
 
+    // ── Раннее включение фрагментации по СТАБИЛЬНО НИЗКОМУ покрытию (не только по нулю) ──
+    // Идея (из обсуждения репорта «от друга доходило долго»): при ЧАСТИЧНОЙ DPI-блокировке
+    // прямой путь отвечает не нулём, а 1-2 реле — enableDirectFragmentation по «ноль ответов»
+    // тогда не срабатывает, и покрытие реле у пользователя остаётся узким (события из чужой
+    // сети редко пересекаются). Сэмплируем покрытие КАЖДОГО union-чтения (частый, точный
+    // сигнал — см. NostrTransport.queryAllRelays) и, если несколько замеров подряд стабильно
+    // низкие, включаем фрагментацию превентивно. Порог мягкий, включение одноразовое и
+    // необратимое (как и по нулю) — ложное срабатывание в редкой сети максимум добавит
+    // фрагментацию, которая корректной доставке не мешает.
+    private const val LOW_COVERAGE_RELAYS = 2      // ≤2 ответивших реле — «узкое» покрытие
+    private const val LOW_COVERAGE_SAMPLES = 6     // столько подряд низких замеров подряд
+    private val coverageWindow = ArrayDeque<Int>()
+    private val coverageLock = Any()
+
+    /**
+     * Сообщает о покрытии одного прямого (не-Tor) union-чтения: [responders] реле ответило
+     * из [totalRelays] опрошенных. Копит скользящее окно; при [LOW_COVERAGE_SAMPLES] подряд
+     * замеров с покрытием ≤ [LOW_COVERAGE_RELAYS] включает SNI-фрагментацию. Пустой опрос
+     * (никто не ответил) сюда не попадает — его обрабатывает прямой путь «ноль ответов» в
+     * queryAllRelays; здесь именно ЧАСТИЧНАЯ блокировка.
+     */
+    fun recordDirectReadCoverage(responders: Int, totalRelays: Int) {
+        if (directFragmentationEnabled) return
+        if (totalRelays <= LOW_COVERAGE_RELAYS) return // мало реле в списке — сигнал недостоверен
+        if (responders <= 0) return                    // ноль — отдельный путь (см. выше)
+        val trigger = synchronized(coverageLock) {
+            coverageWindow.addLast(responders)
+            while (coverageWindow.size > LOW_COVERAGE_SAMPLES) coverageWindow.removeFirst()
+            coverageWindow.size >= LOW_COVERAGE_SAMPLES &&
+                coverageWindow.all { it <= LOW_COVERAGE_RELAYS }
+        }
+        if (trigger) {
+            android.util.Log.i("AtrumNostr", "SNI-фрагментация включена превентивно: покрытие реле стабильно низкое")
+            enableDirectFragmentation()
+        }
+    }
+
     private fun buildClient(useTor: Boolean): OkHttpClient {
         val b = OkHttpClient.Builder()
             .connectTimeout(if (useTor) 45L else 15L, TimeUnit.SECONDS) // Tor дольше; direct — быстрый фейл

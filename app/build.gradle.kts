@@ -43,8 +43,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 394
-        versionName = "3.22.9-beta309-my-stats"
+        versionCode = 441
+        versionName = "3.33.2-beta356-sticky-avatar"
 
         // Включаем multidex чтобы не упереться в лимит 65k методов
         // когда много AndroidX/Material/Room/uCrop/browser библиотек

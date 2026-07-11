@@ -20,6 +20,7 @@ import org.json.JSONObject
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import com.atrum.chat.CryptoHelper
+import com.atrum.chat.GroupProfileSync
 import com.atrum.chat.RelayListStore
 import com.atrum.chat.ImageChunker
 import java.security.MessageDigest
@@ -103,7 +104,7 @@ class NostrTransport(
      * сообщение" на экране статистики (см. NostrMessageStore.DeletedMessage): сверяем
      * pubkey события-надгробия с pubkeyForUserId(автор) и pubkeyForUserId(admin).
      */
-    fun pubkeyForUserId(userId: String): String =
+    override fun pubkeyForUserId(userId: String): String =
         com.atrum.chat.nostr.Schnorr.pubkeyFromPrivkey(sha256("atrum_nostr_v1_${chatPassword}_$userId")).toHex()
 
     /** Удалённые сообщения этого канала (для экрана статистики админа), см. NostrMessageStore.DeletedMessage. */
@@ -280,22 +281,46 @@ class NostrTransport(
                 .filter { ev -> eventHasFileName(ev, "profiles.txt") }
                 .sortedByDescending { it.created_at }
                 .map { it.content },
-            membersContent = latestVerifiedMembersFile(events)
+            membersContent = latestVerifiedAdminFile(events, "members.txt"),
+            // Мультиподпись (Этап 2): ВСЕ подписанные слоты members.txt — по одному
+            // новейшему на подписанта. Доверие/слияние решает слой синхронизации по
+            // ростеру главного (см. AllChannelData.memberSlots, MembersSync.mergeSlots).
+            memberSlots = verifiedMemberSlots(events),
+            // «Профиль беседы» — тот же уровень доверия, что и members.txt (подпись
+            // админа), но отдельное МАЛЕНЬКОЕ по частоте замены событие: не затирается
+            // энроллом участников. См. AllChannelData.groupProfileContent и GroupProfileSync.
+            groupProfileContent = latestVerifiedAdminFile(events, GroupProfileSync.FILE_NAME)
         )
     }
 
     /**
-     * Content members.txt (ADR-001) от САМОГО СВЕЖЕГО события, чей pubkey совпадает
-     * с вычисленным [adminPubkeyHex] И чья подпись валидна. Любые "members.txt" от
-     * других участников (даже валидно зашифрованные — они все знают общий пароль
-     * группы) молча отбрасываются: единственный источник доверия — подпись админа,
-     * тот же принцип, что и в RelayListStore.tryApply(). Пусто, если adminUserId
-     * не задан, подходящих событий нет или все не прошли проверку.
+     * Мультиподпись (Этап 2 «Админы»): все проверенные по подписи слоты members.txt,
+     * по ОДНОМУ новейшему на подписанта (pubkey). Транспорт НЕ решает, кому доверять
+     * (он не расшифровывает контент) — только гарантирует подлинность подписи каждого
+     * слота. Кого из них применять (главный + делегаты с правом MODERATE) и как слить —
+     * задача MembersSync.mergeSlots (верховенство главного). Для 1:1-чатов и там, где
+     * членства нет, список пуст и всё поведение прежнее.
      */
-    private fun latestVerifiedMembersFile(events: List<NostrEvent>): String {
+    private fun verifiedMemberSlots(events: List<NostrEvent>): List<MemberSlot> =
+        events
+            .filter { ev -> eventHasFileName(ev, "members.txt") }
+            .filter { ev -> NostrEvent.verifySignature(ev) }
+            .groupBy { it.pubkey.lowercase() }
+            .mapNotNull { (_, evs) -> evs.maxByOrNull { it.created_at } }
+            .map { MemberSlot(it.pubkey, it.content) }
+
+    /**
+     * Content файла [name] (members.txt / groupprofile.txt) от САМОГО СВЕЖЕГО события,
+     * чей pubkey совпадает с вычисленным [adminPubkeyHex] И чья подпись валидна. Любые
+     * копии от других участников (даже валидно зашифрованные — они все знают общий
+     * пароль группы) молча отбрасываются: единственный источник доверия — подпись
+     * админа, тот же принцип, что и в RelayListStore.tryApply(). Пусто, если
+     * adminUserId не задан, подходящих событий нет или все не прошли проверку.
+     */
+    private fun latestVerifiedAdminFile(events: List<NostrEvent>, name: String): String {
         val trustedPubkey = adminPubkeyHex ?: return ""
         return events
-            .filter { ev -> eventHasFileName(ev, "members.txt") }
+            .filter { ev -> eventHasFileName(ev, name) }
             .filter { ev -> ev.pubkey.equals(trustedPubkey, ignoreCase = true) }
             .filter { ev -> NostrEvent.verifySignature(ev) }
             .maxByOrNull { it.created_at }
@@ -333,7 +358,14 @@ class NostrTransport(
      */
     private fun hashAll(d: AllChannelData): String =
         sha256(d.chatContent + " : " + d.reactionsContent + " : " + d.profilesContent +
-            " : " + d.profileSlots.joinToString("|") + " : " + d.membersContent).toHex()
+            " : " + d.profileSlots.joinToString("|") + " : " + d.membersContent +
+            // groupProfileContent — по той же причине, что и membersContent выше:
+            // иначе смена ТОЛЬКО профиля беседы не эмиттится SyncEngine'ом.
+            " : " + d.groupProfileContent +
+            // ⚠️ Мультиподпись (Этапы 2–3): слоты делегатов ОБЯЗАНЫ входить в хеш —
+            // иначе мут/бан/пин от делегата (меняющий только его слот, а не members.txt
+            // главного) не детектится loadAllIfChanged → «доходит только после перезахода».
+            " : " + d.memberSlots.joinToString("|") { it.signerPubkey + "#" + it.content }).toHex()
 
     // ─── запись ──────────────────────────────────────────────────────────────────
 
@@ -740,13 +772,34 @@ class NostrTransport(
             }
             // Хеджированное чтение: доставка сообщения партнёру НЕ должна упираться в самый
             // медленный/мёртвый узел. Как только ответило ПЕРВОЕ реле — даём остальным
-            // короткое окно [graceMs] добрать события и выходим, не дожидаясь полного
-            // дедлайна. Полнота союза не страдает: пропущенное на этом тике реле подберётся
-            // на следующем (поллинг ~1с), а долговечный стор ничего не теряет. Жёсткий
-            // потолок [hardDeadline] остаётся для случая, когда не ответил вообще никто.
+            // короткое окно [graceMs] добрать события.
+            //
+            // ⚠️ Фикс (репорт: «друг из другой сети замутил/писал — доходило долго, а в
+            // моей сети всё быстро»): выход по «первый ответ + grace» СИСТЕМАТИЧЕСКИ
+            // терял события, лежащие на реле, которое стабильно медленнее самого быстрого
+            // (у отправителя и получателя разные сети → события друга оседают на реле,
+            // быстрых ДЛЯ НЕГО, но медленных ДЛЯ МЕНЯ; кворум публикации — всего 2 реле).
+            // Старый комментарий «пропущенное реле подберётся на следующем тике» — неправда:
+            // на каждом тике та же гонка с тем же исходом, событие не попадало в
+            // объединение ВООБЩЕ, пока медленное реле однажды случайно не успевало. Теперь
+            // после grace ждём МИНИМУМ [MIN_UNION_RESPONDERS] ответивших реле (в пределах
+            // жёсткого дедлайна): в здоровой сети 3 быстрых ответа приходят почти
+            // одновременно (скорость не меняется), в несимметричной — объединение честно
+            // дожидается носителей данных вместо вечного «быстрого, но пустого» ответа.
             withTimeoutOrNull(hardDeadline) {
                 firstResponse.await()
                 withTimeoutOrNull(graceMs) { jobs.joinAll() }
+                // Доожидание кворума читателя ограничено отдельным потолком
+                // [EXTRA_UNION_WAIT_MS]: в вырожденной сети, где живы всего 1-2 реле,
+                // каждый тик НЕ растягивается до полного дедлайна — платим максимум
+                // несколько секунд и идём дальше (следующий тик повторит).
+                val extraDeadlineAt = System.currentTimeMillis() + EXTRA_UNION_WAIT_MS
+                while (responded.get() < MIN_UNION_RESPONDERS &&
+                    jobs.any { it.isActive } &&
+                    System.currentTimeMillis() < extraDeadlineAt
+                ) {
+                    delay(150L)
+                }
             }
             // Отменяем оставшиеся «висящие» запросы (медленные/мёртвые реле).
             this@coroutineScope.coroutineContext.cancelChildren()
@@ -760,6 +813,11 @@ class NostrTransport(
             if (!useTor) NostrRelayPool.enableDirectFragmentation()
             return null
         }
+        // Превентивная фрагментация по стабильно НИЗКОМУ покрытию (ЧАСТИЧНАЯ блокировка:
+        // ответило 1-2 реле, но не ноль) — см. NostrRelayPool.recordDirectReadCoverage.
+        // Расширяет пересечение реле с сетью собеседника, чтобы события из чужой сети
+        // доходили быстрее (продолжение фикса union-кворума этой же сессии).
+        if (!useTor) NostrRelayPool.recordDirectReadCoverage(responded.get(), relays.size)
         val seen = HashSet<String>()
         return collected.filter { seen.add(it.id) }
     }
@@ -851,6 +909,18 @@ class NostrTransport(
          * union read (остальные события подберутся на следующем тике поллинга).
          */
         private const val READ_GRACE_MS = 700L
+
+        /**
+         * Минимум ответивших реле для завершения union-чтения (после первого ответа и
+         * grace-окна, в пределах жёсткого дедлайна). 3 — «кворум читателя»: события
+         * публикуются с кворумом 2 писателя, значит хотя бы одно из ответивших трёх
+         * почти наверняка пересекается с носителями данных отправителя из ДРУГОЙ сети
+         * (см. фикс в queryAllRelays: «от друга доходило долго, в своей сети быстро»).
+         */
+        private const val MIN_UNION_RESPONDERS = 3
+
+        /** Потолок доожидания кворума читателя сверх grace-окна (см. queryAllRelays). */
+        private const val EXTRA_UNION_WAIT_MS = 3_000L
         /** Для Tor окно «добора» шире: round-trip через цепочку медленнее. */
         private const val READ_GRACE_TOR_MS = 1_500L
         /** Как часто сторож проверяет, что стрим-подписка жива (переоткрыть после обрыва). */

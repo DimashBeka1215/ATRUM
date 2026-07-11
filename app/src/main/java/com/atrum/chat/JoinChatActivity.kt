@@ -301,6 +301,7 @@ class JoinChatActivity : SecureActivity() {
                 setProgress(getString(R.string.join_status_verifying))
                 var allData: AllChannelData? = null
                 var membersParsed: MembersSync.MembersFile? = null
+                var groupProfileParsed: GroupProfileSync.GroupProfile? = null
                 // ⚠️ Bounded retry (см. companion.JOIN_PROFILE_MAX_ATTEMPTS) — не показываем
                 // "нашли"/не сохраняем чат, пока название+аватар группы не подтверждены сетью,
                 // но и не ждём бесконечно: после исчерпания попыток идём дальше с тем, что
@@ -322,6 +323,15 @@ class JoinChatActivity : SecureActivity() {
                         ?.takeIf { it.isNotBlank() }
                         ?.let { CryptoHelper.decrypt(it, invite.chatPassword, invite.channelId) }
                         ?.let { MembersSync.parse(it) }
+                    // «Профиль беседы» (groupprofile.txt, GroupProfileSync) — приходит в том
+                    // же loadAll(): маленькое стабильное событие с именем/авой/описанием,
+                    // не затирается энроллами (в отличие от members.txt) — самый надёжный
+                    // и быстрый источник данных группы для новичка.
+                    groupProfileParsed = allData?.groupProfileContent
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { CryptoHelper.decrypt(it, invite.chatPassword, invite.channelId) }
+                        ?.let { GroupProfileSync.parse(it) }
+                        ?: groupProfileParsed
 
                     if (membersParsed != null) {
                         // members.txt уже есть (админ его публиковал) — источник истины.
@@ -354,7 +364,9 @@ class JoinChatActivity : SecureActivity() {
                         }
                     }
 
-                    val groupInfoReady = membersParsed?.groupName?.isNotBlank() == true ||
+                    val groupInfoReady = groupProfileParsed?.groupName?.isNotBlank() == true ||
+                        groupProfileParsed?.groupAvatarBase64?.isNotBlank() == true ||
+                        membersParsed?.groupName?.isNotBlank() == true ||
                         membersParsed?.groupAvatarBase64?.isNotBlank() == true
                     if (groupInfoReady || attempt == JOIN_PROFILE_MAX_ATTEMPTS - 1) break
                     setProgress(getString(R.string.join_status_loading_profile))
@@ -367,14 +379,17 @@ class JoinChatActivity : SecureActivity() {
                 // проверок выше: если группа забанила/переполнена, мы уже вышли по
                 // return и не показываем "нашли" + не запускаем радостный пульс для
                 // чата, в который на самом деле не попали.
-                if (membersParsed?.groupName != null || membersParsed?.groupAvatarBase64 != null) {
+                if (groupProfileParsed?.groupName != null || groupProfileParsed?.groupAvatarBase64 != null ||
+                    membersParsed?.groupName != null || membersParsed?.groupAvatarBase64 != null) {
                     withContext(Dispatchers.Main) {
                         showFoundInfo(
-                            name = membersParsed?.groupName?.takeIf { it.isNotBlank() }
+                            name = groupProfileParsed?.groupName?.takeIf { it.isNotBlank() }
+                                ?: membersParsed?.groupName?.takeIf { it.isNotBlank() }
                                 ?: invite.groupNameSeed?.takeIf { it.isNotBlank() }
                                 ?: getString(R.string.cc_group_default_name),
                             tag = null,
-                            avatarBase64 = membersParsed?.groupAvatarBase64
+                            avatarBase64 = groupProfileParsed?.groupAvatarBase64
+                                ?: membersParsed?.groupAvatarBase64
                         )
                         triggerFoundPulse()
                     }
@@ -394,8 +409,22 @@ class JoinChatActivity : SecureActivity() {
                     isGroup = true,
                     participantLimit = invite.participantLimit,
                     adminUserId = invite.adminUserId,
-                    groupName = invite.groupNameSeed
+                    // ⚠️ Фикс (репорт: «при заходе по приглашению ава чата подхватывается
+                    // не всегда»): имя/аву группы, УЖЕ подтверждённые сетью выше
+                    // (members.txt получен в retry-цикле), кладём в строку чата сразу при
+                    // создании — не полагаясь только на applyIncoming ниже (он может не
+                    // примениться, если конкретная копия members.txt не расшифровалась/
+                    // оказалась битой с одного из реле) и тем более не дожидаясь
+                    // следующего опроса уже открытого чата.
+                    groupName = groupProfileParsed?.groupName?.takeIf { it.isNotBlank() }
+                        ?: membersParsed?.groupName?.takeIf { it.isNotBlank() }
+                        ?: invite.groupNameSeed,
+                    groupAvatarBase64 = groupProfileParsed?.groupAvatarBase64?.takeIf { it.isNotBlank() }
+                        ?: membersParsed?.groupAvatarBase64?.takeIf { it.isNotBlank() }
                 )
+                // Анти-откат профиля беседы стартует с реально применённого ts (см.
+                // GroupProfileSync.applyIncoming) — отставшее реле не откатит имя/аву.
+                groupProfileParsed?.let { gp -> prefs.setGroupProfileTs(invite.channelId, gp.ts) }
                 prefs.saveChatSecrets(invite.channelId, invite.transportToken, invite.chatPassword)
                 val newGroupChatId = withContext(Dispatchers.IO) { db.chatDao().insert(groupChat) }
 

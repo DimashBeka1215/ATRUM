@@ -608,7 +608,9 @@ class CreateChatActivity : SecureActivity() {
         val expiresAt = if (selectedDuration.days < 0) null
             else System.currentTimeMillis() + selectedDuration.days * 24L * 60 * 60 * 1000
         val adminUserId = prefs.myUserId
-        val groupAvatarB64 = groupAvatarBitmap?.let { AvatarUtils.toBase64(it) }
+        // Бюджет авы группы (см. AvatarUtils.boundedGroupAvatarBase64): тяжёлая ава
+        // раздувала members.txt за порог чанкования и убивала весь синк членства.
+        val groupAvatarB64 = groupAvatarBitmap?.let { AvatarUtils.boundedGroupAvatarBase64(AvatarUtils.toBase64(it)) }
 
         setLoading(true)
         lifecycleScope.launch {
@@ -684,14 +686,13 @@ class CreateChatActivity : SecureActivity() {
                         adminUserId = adminUserId
                     )
                     ProfileSync.pushMyProfile(transport, password, myProfile)
-                    MembersSync.publish(
-                        transport = transport,
-                        password = password,
-                        chatId = channelId,
-                        adminUserId = adminUserId,
-                        newVersion = 1,
-                        participants = listOf(MembersSync.Entry(adminUserId, banned = false))
-                    )
+                    // Первичные members.txt (v1: админ + имя группы) и профиль беседы
+                    // (имя/ава) — через планировщик (PublishScheduler): снимок строится
+                    // из Room (строка чата и участник-админ уже записаны выше),
+                    // сериализация/персистентный ретрай/без гонок — как у всех
+                    // остальных админ-публикаций.
+                    PublishScheduler.markMembersDirty(applicationContext, channelId)
+                    PublishScheduler.markProfileDirty(applicationContext, channelId)
                 } catch (e: Exception) {
                     if (selectedTor) {
                         TorSyncWatchdog.reportDeviation(applicationContext, channelId, "CreateChatActivity.createGroupChat", e)

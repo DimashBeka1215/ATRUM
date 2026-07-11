@@ -389,7 +389,79 @@ class Prefs(private val context: Context) {
             .remove("chat_pwd_$chatId")
             .remove("eph_priv_$chatId")
             .remove("eph_rot_$chatId")
+            .remove("group_profile_ts_$chatId")
             .apply()
+    }
+
+    // ─── Планировщик публикаций (PublishScheduler) ───────────────────────────────
+    // Персистентные «dirty»-наборы chatId: какие members.txt / groupprofile.txt ещё
+    // не опубликованы успешно. Переживают перезапуск процесса — недоставленное
+    // действие админа дочищается при следующем старте (см. PublishScheduler.resume).
+
+    fun getPublishDirtySet(kind: String): Set<String> =
+        (prefs.getString("publish_dirty_$kind", "") ?: "")
+            .split(',').filter { it.isNotBlank() }.toSet()
+
+    fun setPublishDirtySet(kind: String, ids: Set<String>) {
+        prefs.edit().putString("publish_dirty_$kind", ids.joinToString(",")).apply()
+    }
+
+    // ─── Отслеживание МОЕГО мута для уведомления об ИСТЕЧЕНИИ срока ──────────────
+    // Истечение мута по времени — НЕ событие members.txt (файл не меняется), поэтому
+    // MembersSync.applyIncoming его не ловит. Храним «до какого времени я заглушён»
+    // локально; периодический checkMuteExpiry (см. SystemNotifications) при наступлении
+    // срока шлёт уведомление ровно один раз (значение сбрасывается в 0). Досрочное
+    // снятие/бан тоже сбрасывают его в 0, чтобы не было двойного уведомления.
+
+    fun getMyMuteUntil(chatId: String): Long = prefs.getLong("my_mute_until_$chatId", 0L)
+
+    fun setMyMuteUntil(chatId: String, untilMs: Long) {
+        prefs.edit().putLong("my_mute_until_$chatId", untilMs).apply()
+    }
+
+    // ─── Профиль беседы (groupprofile.txt, см. GroupProfileSync) ─────────────────
+    // Метка времени последнего ПРИМЕНЁННОГО профиля беседы — локальный анти-откат
+    // (отставшее реле не «откатит» имя/аву группы старой копией). В Prefs, а не в
+    // Room — чтобы не менять схему БД (миграция) ради одного long.
+
+    fun getGroupProfileTs(chatId: String): Long =
+        prefs.getLong("group_profile_ts_$chatId", 0L)
+
+    fun setGroupProfileTs(chatId: String, ts: Long) {
+        prefs.edit().putLong("group_profile_ts_$chatId", ts).apply()
+    }
+
+    // ─── Дедуп системных уведомлений (SystemNotifications) ───────────────────────
+    // Версия members.txt, за которую уже выдано уведомление о МОЁМ статусе. applyIncoming
+    // вызывается из трёх мест (чат/список/фон) — без этого guard'а одну смену статуса
+    // могли бы записать несколько гонщиков. Персистентно: переживает перезапуск.
+
+    fun getNotifiedMembersVersion(chatId: String): Int =
+        prefs.getInt("notified_members_ver_$chatId", 0)
+
+    fun setNotifiedMembersVersion(chatId: String, version: Int) {
+        prefs.edit().putInt("notified_members_ver_$chatId", version).apply()
+    }
+
+    // ─── Мультиподпись членства (Этап 2 «Админы», MembersSync.mergeSlots) ─────────
+    // Слитое состояние (главный + муты/баны делегатов) может меняться БЕЗ роста версии
+    // главного members.txt, поэтому анти-повтор применения и дедуп уведомлений здесь
+    // ведутся по подписи слитого состояния (строка), а не по числовой версии.
+
+    /** Подпись последнего ПРИМЕНЁННОГО слитого состояния членства (gate против лишних ребайндов). */
+    fun getMembersMergeSig(chatId: String): String =
+        prefs.getString("members_merge_sig_$chatId", "") ?: ""
+
+    fun setMembersMergeSig(chatId: String, sig: String) {
+        prefs.edit().putString("members_merge_sig_$chatId", sig).apply()
+    }
+
+    /** Токен последнего слитого состояния, за который уже выдано уведомление о МОЁМ статусе. */
+    fun getNotifiedMembersToken(chatId: String): String =
+        prefs.getString("notified_members_tok_$chatId", "") ?: ""
+
+    fun setNotifiedMembersToken(chatId: String, token: String) {
+        prefs.edit().putString("notified_members_tok_$chatId", token).apply()
     }
 
     // ─── Forward secrecy: эфемерный приватный X25519-ключ ────────────────────────

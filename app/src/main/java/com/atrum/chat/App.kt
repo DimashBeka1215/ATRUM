@@ -54,6 +54,10 @@ class App : Application() {
             } catch (_: Throwable) {}
         }
 
+        // Планировщик публикаций: дочищаем недоставленные админ-публикации прошлой
+        // сессии (dirty-флаги персистентны — см. PublishScheduler.resume).
+        PublishScheduler.resume(this)
+
         val prefs = Prefs(this)
         BatteryUtils.animatePersistOverride = prefs.lowBattAnimate
         ConnectionPrefs.loadFrom(prefs)
@@ -116,6 +120,11 @@ class App : Application() {
         /** true пока хотя бы один экран на переднем плане. Фоновый сервис пушей по
          *  этому флагу НЕ опрашивает сеть, пока приложение открыто. */
         @Volatile var inForeground: Boolean = false
+
+        /** chatId открытого сейчас чата (или null). Фоновый синк членделения групп
+         *  пропускает его — этот чат и так поллится своим ChatActivity (1с), а лишний
+         *  параллельный loadAll через Tor замедлял бы загрузку самой беседы (репорт). */
+        @Volatile var currentOpenChatId: String? = null
 
         /** Transition state for smooth circular reveal theme switching. */
         var screenshot: Bitmap? = null

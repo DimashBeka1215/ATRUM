@@ -1064,14 +1064,45 @@
         <item quantity="many">%1$d участников</item>
         <item quantity="other">%1$d участников</item>
     </plurals>
-    <string name="group_stats_name_with_admin">%1$s · админ</string>
+    <string name="group_stats_name_with_admin">%1$s · создатель</string>
+    <string name="group_stats_name_with_delegate">%1$s · админ</string>
     <string name="group_stats_last_active">последнее %1$s</string>
     <string name="group_stats_no_messages">нет сообщений</string>
 
     <!-- Экран статистики — раздел «История мутов» -->
     <string name="group_stats_tab_users">Участники</string>
-    <string name="group_stats_tab_mute_history">История мутов</string>
-    <string name="mute_history_empty">Мутов ещё не было</string>
+    <string name="group_stats_tab_mute_history">История модерации</string>
+    <string name="mute_history_empty">Событий модерации ещё не было</string>
+    <string name="mute_history_status_banned">Исключён</string>
+    <string name="mute_history_status_unbanned">Возвращён</string>
+    <string name="mute_history_event_ban">Исключение из группы</string>
+    <string name="mute_history_event_unban">Возврат в группу</string>
+
+    <!-- Раздел «Беседа» статистики -->
+    <string name="stats_tab_chat">Беседа</string>
+    <string name="stats_chip_all">С создания</string>
+    <string name="stats_chip_month">Месяц</string>
+    <string name="stats_chip_week">Неделя</string>
+    <string name="stats_pick_range">Выбрать период</string>
+    <string name="stats_now">сейчас</string>
+    <string name="stats_joined">пришло</string>
+    <string name="stats_left">ушло</string>
+    <string name="stats_created">Создана</string>
+    <string name="stats_members_over_time">Участники со временем · нажми на точку</string>
+    <string name="stats_joins_leaves">Приходы и уходы · нажми на столбик</string>
+    <string name="stats_legend_joins">▮ пришло</string>
+    <string name="stats_legend_leaves">▮ ушло</string>
+    <string name="stats_events">События</string>
+    <string name="stats_detail_hint_title">Выбери день на графике</string>
+    <string name="stats_detail_hint_body">Нажми на точку линии или на столбик — покажу приходы, уходы и число участников того дня.</string>
+    <string name="stats_detail_fmt">%1$s · %2$d участников</string>
+    <string name="stats_detail_body_fmt">Пришло: %1$d · Ушло: %2$d\nНа конец дня в беседе: %3$d</string>
+    <string name="stats_range_all_fmt">%1$s — сегодня · с создания беседы</string>
+    <string name="stats_range_custom_fmt">%1$s — %2$s</string>
+    <string name="stats_event_joined_fmt">%1$s присоединился</string>
+    <string name="stats_event_left_fmt">%1$s вышел</string>
+    <string name="stats_events_empty">Событий пока нет</string>
+    <string name="chat_today_short">сегодня</string>
     <string name="mute_history_status_active_fmt">До %1$s</string>
     <string name="mute_history_status_expired">Истёк</string>
     <string name="mute_history_status_unmuted_early">Снят досрочно</string>
@@ -1116,4 +1147,71 @@
     <string name="stats_time_other">%1$s, %2$s</string>
 
     <string name="action_delete_for_all_admin">Удалить у всех</string>
+
+    <!-- Системный чат «Уведомления» (SystemNotifications) -->
+    <string name="notif_sender_name">ATRUM</string>
+    <string name="notif_chat_name">Уведомления</string>
+    <string name="notif_chat_subtitle">системные уведомления</string>
+    <string name="notif_readonly_hint">Только чтение — сюда приходят системные уведомления</string>
+    <string name="notif_muted_fmt">Вы заглушены в группе «%1$s» до %2$s</string>
+    <string name="notif_muted_reason_fmt">Причина: %1$s</string>
+    <string name="notif_unmuted_fmt">Мут в группе «%1$s» снят</string>
+    <string name="notif_mute_expired_fmt">Срок мута в группе «%1$s» истёк</string>
+    <string name="notif_banned_fmt">Вас исключили из группы «%1$s»</string>
+    <string name="notif_unbanned_fmt">Вас вернули в группу «%1$s»</string>
+    <string name="notif_role_granted_fmt">Вас назначили администратором в группе «%1$s»</string>
+    <string name="notif_role_perms_fmt">Права: %1$s</string>
+    <string name="notif_role_revoked_fmt">С вас сняты права администратора в группе «%1$s»</string>
+    <!-- Названия прав администратора (AdminPermissions) -->
+    <string name="perm_edit">изменение данных беседы</string>
+    <string name="perm_moderate">мут и бан</string>
+    <string name="perm_delete">удаление сообщений</string>
+    <string name="perm_stats">статистика</string>
+    <string name="perm_pin">закрепление</string>
+
+    <string name="notif_chat_description">Сюда приходят системные уведомления о банах и мутах в беседах — за что, когда и на какой срок.</string>
+    <string name="notif_chat_empty">Пока уведомлений нет</string>
+
+    <!-- Раздел «Админы» (GroupStatsActivity) -->
+    <string name="admins_section_label">Администраторы</string>
+    <string name="admins_add">Назначить администратора</string>
+    <string name="admins_primary_label">Создатель</string>
+    <string name="admins_primary_note">Создатель — права снять нельзя</string>
+    <string name="role_creator_suffix">создатель</string>
+    <string name="role_admin_suffix">админ</string>
+    <string name="admins_no_rights">Без прав</string>
+    <string name="admins_no_candidates">Некого назначить</string>
+    <string name="admins_pick_title">Кого назначить</string>
+
+    <!-- Экран прав администратора (AdminPermissionsActivity) -->
+    <string name="admin_perms_title">Права администратора</string>
+    <string name="admin_perms_hint">Выберите, что этот участник сможет делать в беседе.</string>
+    <string name="perm_edit_title">Данные беседы</string>
+    <string name="perm_edit_desc">Изменять название, описание и аватар</string>
+    <string name="perm_moderate_title">Мут и бан</string>
+    <string name="perm_moderate_desc">Ограничивать и исключать участников</string>
+    <string name="perm_delete_title">Удаление сообщений</string>
+    <string name="perm_delete_desc">Удалять и восстанавливать сообщения</string>
+    <string name="perm_stats_title">Статистика</string>
+    <string name="perm_stats_desc">Доступ к статистике беседы</string>
+    <string name="perm_pin_title">Закрепление</string>
+    <string name="perm_pin_desc">Закреплять сообщения в беседе</string>
+    <string name="admin_perms_assign">Назначить</string>
+    <string name="admin_perms_save">Сохранить</string>
+    <string name="admin_perms_revoke">Снять права</string>
+    <string name="admin_perms_none_selected">Выберите хотя бы одно право</string>
+    <string name="admin_perms_revoke_title">Снять права?</string>
+    <string name="admin_perms_revoke_msg">%1$s перестанет быть администратором беседы.</string>
+    <string name="admin_perms_saved_toast">Права сохранены</string>
+    <string name="admin_perms_revoked_toast">Права сняты</string>
+    <string name="admin_perms_error">Не удалось сохранить</string>
+
+    <!-- Закреплённые сообщения (Этап 3). action_pin/action_unpin уже есть выше — не дублируем. -->
+    <string name="pinned_label_single">Закреплённое сообщение</string>
+    <string name="pinned_label_counted">Закреплённое · %1$d из %2$d</string>
+    <string name="pinned_generic">Закреплённое сообщение</string>
+    <string name="pinned_show_all">Закреплённые сообщения</string>
+    <string name="pinned_unpin">Открепить</string>
+    <string name="pinned_done">Закреплено</string>
+    <string name="unpinned_done">Откреплено</string>
 </resources>

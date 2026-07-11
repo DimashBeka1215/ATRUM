@@ -54,5 +54,12 @@ data class ChatParticipant(
      * находит их локально по msgId и показывает в баннере (см. MembersSync.Entry.mutedEvidenceIds,
      * ChatActivity.applySelfMuteState).
      */
-    val mutedEvidenceIds: String? = null
+    val mutedEvidenceIds: String? = null,
+
+    /**
+     * Битовая маска прав администратора (делегированные роли, см. AdminPermissions).
+     * 0 — обычный участник. Источник истины — members.txt (публикует главный админ).
+     * Главный админ (Chat.adminUserId) имеет все права независимо от этого поля.
+     */
+    val permissions: Int = 0
 )

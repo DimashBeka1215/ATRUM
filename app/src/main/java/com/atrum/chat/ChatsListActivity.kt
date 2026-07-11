@@ -140,6 +140,12 @@ class ChatsListActivity : SecureActivity() {
                     )
                 }
             }
+            // Системный чат «Уведомления» — создаём сразу при старте (тем же приёмом,
+            // что и «Избранное» выше), не дожидаясь первого события модерации: пользователь
+            // видит, куда будут приходить новости (см. SystemNotifications).
+            withContext(Dispatchers.IO) {
+                runCatching { SystemNotifications.ensureChat(applicationContext) }
+            }
         }
     }
 
@@ -339,7 +345,18 @@ class ChatsListActivity : SecureActivity() {
     private fun observeChats() {
         lifecycleScope.launch {
             db.chatDao().observeAll().collectLatest { list ->
-                allChats = list
+                // Прячем группы, где Я забанен: бан больше не удаляет чат (чтобы разбан
+                // остался наблюдаемым, см. MembersSync/ChatActivity.checkSelfBanned), а
+                // просто скрывает его из списка по флагу participant.banned. Пересчёт на
+                // каждый re-emit Flow; applyIncoming бампает membersVersion и на бане, и на
+                // разбане → чат исчезает/возвращается сам, без ручного обновления.
+                val myUserId = prefs.myUserId
+                val visible = withContext(Dispatchers.IO) {
+                    list.filter { c ->
+                        !c.isGroup || db.chatParticipantDao().getOne(c.id, myUserId)?.banned != true
+                    }
+                }
+                allChats = visible
                 applySearchFilter(binding.etSearch.text?.toString() ?: "")
             }
         }
@@ -538,15 +555,36 @@ class ChatsListActivity : SecureActivity() {
                 // список чатов тоже применяет members.txt на каждом фоновом опросе —
                 // данные уже приходят в том же all.loadAll() выше, без лишнего запроса.
                 if (chat.isGroup) {
+                    // «Профиль беседы» (groupprofile.txt, GroupProfileSync) — быстрый
+                    // источник имени/авы группы в списке: маленькое стабильное событие,
+                    // не затирается энроллами. Room Flow сам перерисует строку.
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            GroupProfileSync.applyIncoming(
+                                chat, all.groupProfileContent, chatPassword, db.chatDao(), prefs
+                            )
+                        }
+                    }
                     withContext(Dispatchers.IO) {
                         MembersSync.applyIncoming(
                             chat = chat,
                             membersContentEncrypted = all.membersContent,
                             password = chatPassword,
                             participantDao = db.chatParticipantDao(),
-                            chatDao = db.chatDao()
+                            chatDao = db.chatDao(),
+                            myUserId = myUserId,
+                            appContext = applicationContext,
+                            groupEventDao = db.groupEventDao(),
+                            memberSlots = all.memberSlots,
+                            pubkeyForUserId = api::pubkeyForUserId
                         )
                     }
+                    // ⚠️ Бан больше НЕ удаляет чат (репорт: «забаненные невидимы системе»).
+                    // Забаненный чат остаётся в БД (секреты сохранены) и продолжает
+                    // опрашиваться — бан/разбан наблюдаемы и уведомляются. Из СПИСКА он
+                    // просто прячется по флагу participant.banned (см. observeChats-фильтр),
+                    // при разбане возвращается сам через тот же фильтр (Room Flow re-emit
+                    // на updateMembersVersionIfNewer). Уведомление о бане пишет applyIncoming.
                 }
 
                 // FS: устанавливаем сессионный ключ, чтобы список мог расшифровать V4-S
@@ -624,7 +662,11 @@ class ChatsListActivity : SecureActivity() {
 
         NeonDialog.showMenu(
             ctx = this,
-            title = if (chat.isFavorites) getString(R.string.favorites_name) else chat.displayName(),
+            title = when {
+                chat.isSystemNotifications -> getString(R.string.notif_chat_name)
+                chat.isFavorites -> getString(R.string.favorites_name)
+                else -> chat.displayName()
+            },
             items = mutableListOf<NeonDialog.Item>().apply {
                 add(NeonDialog.Item(pinLabel) {
                     togglePin(chat)
