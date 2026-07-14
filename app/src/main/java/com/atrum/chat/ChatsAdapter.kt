@@ -90,6 +90,7 @@ class ChatsAdapter(
         private val lastMessage: TextView = itemView.findViewById(R.id.tv_last_message)
         private val time: TextView = itemView.findViewById(R.id.tv_time)
         private val unreadBadge: TextView = itemView.findViewById(R.id.tv_unread_badge)
+        private val mentionBadge: TextView = itemView.findViewById(R.id.tv_mention_badge)
         private val pinIcon: View = itemView.findViewById(R.id.iv_pin)
 
         fun bind(chat: Chat, formattedTime: String, query: String = "") {
@@ -187,9 +188,23 @@ class ChatsAdapter(
                 }
             }
 
+            // Непрочитанные @упоминания — акцентный бейдж «@N» слева от счётчика.
+            val mentionCount = chat.mentionMsgIds?.split(",")?.count { it.isNotBlank() } ?: 0
+            if (mentionCount > 0) {
+                mentionBadge.text = "@" + (if (mentionCount > 99) "99+" else mentionCount.toString())
+                mentionBadge.visibility = View.VISIBLE
+            } else {
+                mentionBadge.visibility = View.GONE
+            }
+
             if (chat.unreadCount > 0) {
                 unreadBadge.text = if (chat.unreadCount > 99) "99+" else chat.unreadCount.toString()
                 unreadBadge.visibility = View.VISIBLE
+                // При наличии @-бейджа счётчик непрочитанных приглушаем в серый — чтобы «@» выделялся.
+                unreadBadge.backgroundTintList = if (mentionCount > 0)
+                    android.content.res.ColorStateList.valueOf(
+                        androidx.core.content.ContextCompat.getColor(itemView.context, R.color.text_quaternary))
+                else null
             } else {
                 unreadBadge.visibility = View.GONE
             }

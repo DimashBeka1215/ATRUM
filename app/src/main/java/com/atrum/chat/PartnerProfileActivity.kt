@@ -2388,4 +2388,17 @@ class PartnerProfileActivity : AppCompatActivity() {
             val icon = ImageView(this).apply {
                 setImageResource(R.drawable.ic_link)
                 setColorFilter(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_tertiary))
-                layoutParams = LinearLayout.LayoutPar
+                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).also { it.marginEnd = dp(10) }
+            }
+            val tv = TextView(this).apply {
+                text = url
+                textSize = 12.5f
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, R.color.accent_light))
+            }
+            row.addView(icon); row.addView(tv)
+            container.addView(row)
+        }
+    }
+}

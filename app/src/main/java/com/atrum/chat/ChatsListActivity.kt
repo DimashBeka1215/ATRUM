@@ -24,9 +24,12 @@ import com.atrum.chat.data.displayName
 import com.atrum.chat.databinding.ActivityChatsListBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 class ChatsListActivity : SecureActivity() {
@@ -472,171 +475,181 @@ class ChatsListActivity : SecureActivity() {
         }
     }
 
-    private suspend fun checkUnreadAllChats() {
+    /**
+     * Ограничитель одновременных сетевых опросов чатов. Обход стал ПАРАЛЛЕЛЬНЫМ (см.
+     * checkUnreadAllChats), чтобы один тяжёлый чат (беседа: расшифровка слотов, members.txt,
+     * ростер) не задерживал обновление бейджа у остальных — раньше последовательный цикл
+     * растягивал эффективный интервал каждого чата на сумму времени ВСЕХ, и бейдж беседы
+     * появлялся с задержкой в десятки секунд (репорт). Потолок 6 — чтобы не устроить шторм
+     * запросов к реле при большом числе чатов (union-чтение всё равно мультиплексируется
+     * по subId на общих сокетах, см. NostrRelayPool).
+     */
+    private val unreadPollSemaphore = Semaphore(6)
+
+    private suspend fun checkUnreadAllChats() = coroutineScope {
         val chats = withContext(Dispatchers.IO) { db.chatDao().getAll() }
         val myName = prefs.myName
         val myUserId = prefs.myUserId
         val aliases = prefs.nameHistory
 
-        for (chat in chats) {
-            if (chat.isFavorites) continue
-
-            try {
-                val chatToken = prefs.getChatToken(chat.chatId)
-                    .takeIf { it.isNotEmpty() }
-                    ?: @Suppress("DEPRECATION") chat.transportToken
-                val chatPassword = prefs.getChatPassword(chat.chatId)
-                    .takeIf { it.isNotEmpty() }
-                    ?: @Suppress("DEPRECATION") chat.chatPassword
-                // adminUserId — иначе NostrTransport.adminPubkeyHex всегда null и
-                // MembersSync.applyIncoming ниже получает membersContent = "" (no-op) даже
-                // для группы: счётчик участников/имя/аватар группы не обновлялись в списке.
-                val api = TransportFactory.forChat(applicationContext, chat.chatId, chatToken, chatPassword, myUserId, chat.adminUserId)
-                // Один запрос на всё (chat + profiles) — надёжнее и легче для реле, чем
-                // loadContent + отдельный pull profiles.txt. Аватар/профиль обновляются в
-                // том же снапшоте, что и сообщения → авто-обновление аватара в списке.
-                val all = withContext(Dispatchers.IO) { api.loadAll() }
-                val content = all.chatContent
-                val lines = content.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-                val totalLines = lines.size
-
-                // В параллель: подтянуть профиль собеседника.
-                // ⚠️ ТОЛЬКО для 1:1 — у группового чата нет одного "партнёра".
-                // findPartner() подобрал бы СЛУЧАЙНОГО участника группы и затёр бы
-                // chat.partnerName/partnerAvatarBase64/partnerLastReadIndex/partnerDeleted
-                // его личными данными на каждом фоновом опросе — это и было причиной
-                // бага "переименование/смена авы группы не видны в списке чатов"
-                // (см. ChatsAdapter → Chat.displayName()/displayAvatarBase64(), §16 CLAUDE.md).
-                // Для групп имя/аватар идут только через members.txt, а FS-сессия не
-                // используется вовсе (см. ADR_GROUP_CHATS.md) — партнёрский блок тут
-                // просто пропускается.
-                val partnerEphPub = if (chat.isGroup) null else withContext(Dispatchers.IO) {
-                    // Фаза 1: union всех слотов profiles.txt (за флагом) — надёжный аватар/ник.
-                    val parsedProfiles = if (ChatActivity.SLOT_UNION_PROFILES && all.profileSlots.isNotEmpty())
-                        ProfileSync.unionProfileSlots(all.profileSlots, chatPassword, api.chatId)
-                    else ProfileSync.parseProfiles(all.profilesContent, chatPassword, api.chatId)
-                    // «Липкий» партнёр: флаки-чтение profiles.txt не теряет аву/ник.
-                    val allProfiles = ProfileSync.unionAndRemember(api.chatId, parsedProfiles)
-                    val partner = ProfileSync.findPartner(allProfiles, myUserId, myName)
-                    var ephPub: String? = chat.partnerEphemeralPubKeyB64
-                    if (partner != null) {
-                        val profileChanged = partner.name != chat.partnerName ||
-                                partner.avatarBase64 != chat.partnerAvatarBase64
-                        if (profileChanged) {
-                            db.chatDao().updatePartnerProfile(chat.id, partner.name, partner.tag, partner.avatarBase64)
-                        }
-                        if (partner.lastReadIndex != chat.partnerLastReadIndex) {
-                            db.chatDao().updatePartnerLastRead(chat.id, partner.lastReadIndex)
-                        }
-                        // Обновляем флаг удалённого профиля — если поменялся
-                        if (partner.deleted != chat.partnerDeleted) {
-                            db.chatDao().updatePartnerDeleted(chat.id, partner.deleted)
-                        }
-                        // СОХРАНЯЕМ эфемерный ключ партнёра — чтобы фон (список/пуши) строил
-                        // сессионный ключ и расшифровывал FS-сообщения БЕЗ захода в чат.
-                        if (!partner.ephemeralPubKey.isNullOrBlank() &&
-                            partner.ephemeralPubKey != chat.partnerEphemeralPubKeyB64) {
-                            db.chatDao().updatePartnerEphemeralKey(chat.id, partner.ephemeralPubKey)
-                        }
-                        if (!partner.ephemeralPubKey.isNullOrBlank()) ephPub = partner.ephemeralPubKey
-                    }
-                    ephPub
+        // Каждый чат опрашивается СВОЕЙ корутиной под общим потолком — независимо, чтобы
+        // тяжёлая беседа не блокировала обновление бейджа у 1:1 и наоборот (§1.5).
+        chats.filter { !it.isFavorites }.map { chat ->
+            launch {
+                unreadPollSemaphore.withPermit {
+                    runCatching { checkUnreadForChat(chat, myName, myUserId, aliases) }
                 }
+            }
+        }.forEach { it.join() }
+    }
 
-                // Групповой чат: имя/аватар/описание/список участников идут ТОЛЬКО через
-                // members.txt (см. комментарий выше про findPartner). Баг, найденный
-                // пользователем: до этого фикса синхронизация members.txt была завязана
-                // ИСКЛЮЧИТЕЛЬНО на открытый ChatActivity + одноразовый best-effort в
-                // момент джойна (JoinChatActivity.kt) — если та попытка не успевала
-                // (админ ещё не опубликовал members.txt на момент джойна, гонка) и
-                // пользователь ни разу не открывал сам чат, имя/аватар оставались на
-                // seed-значении из инвайта (или пустыми), а ChatParticipant — пустой
-                // таблицей → счётчик участников 0 везде (шапка чата, профиль). Теперь
-                // список чатов тоже применяет members.txt на каждом фоновом опросе —
-                // данные уже приходят в том же all.loadAll() выше, без лишнего запроса.
-                if (chat.isGroup) {
-                    // «Профиль беседы» (groupprofile.txt, GroupProfileSync) — быстрый
-                    // источник имени/авы группы в списке: маленькое стабильное событие,
-                    // не затирается энроллами. Room Flow сам перерисует строку.
-                    withContext(Dispatchers.IO) {
-                        runCatching {
-                            GroupProfileSync.applyIncoming(
-                                chat, all.groupProfileContent, chatPassword, db.chatDao(), prefs
-                            )
-                        }
-                    }
-                    withContext(Dispatchers.IO) {
-                        MembersSync.applyIncoming(
-                            chat = chat,
-                            membersContentEncrypted = all.membersContent,
-                            password = chatPassword,
-                            participantDao = db.chatParticipantDao(),
-                            chatDao = db.chatDao(),
-                            myUserId = myUserId,
-                            appContext = applicationContext,
-                            groupEventDao = db.groupEventDao(),
-                            memberSlots = all.memberSlots,
-                            pubkeyForUserId = api::pubkeyForUserId
-                        )
-                    }
-                    // ⚠️ Бан больше НЕ удаляет чат (репорт: «забаненные невидимы системе»).
-                    // Забаненный чат остаётся в БД (секреты сохранены) и продолжает
-                    // опрашиваться — бан/разбан наблюдаемы и уведомляются. Из СПИСКА он
-                    // просто прячется по флагу participant.banned (см. observeChats-фильтр),
-                    // при разбане возвращается сам через тот же фильтр (Room Flow re-emit
-                    // на updateMembersVersionIfNewer). Уведомление о бане пишет applyIncoming.
+    /**
+     * Опрос одного чата: непрочитанные, превью, профиль партнёра (1:1) / members.txt+ростер
+     * (беседа). ⚠️ ПОРЯДОК (фикс задержки бейджа): счётчик непрочитанных и превью пишутся
+     * СРАЗУ после установки сессионного ключа — ДО тяжёлого группового блока (members.txt,
+     * ростер), чтобы бейдж «N» появлялся мгновенно, а не ждал модерационной синхронизации.
+     */
+    private suspend fun checkUnreadForChat(
+        chat: Chat,
+        myName: String,
+        myUserId: String,
+        aliases: Set<String>
+    ) {
+        val chatToken = prefs.getChatToken(chat.chatId)
+            .takeIf { it.isNotEmpty() }
+            ?: @Suppress("DEPRECATION") chat.transportToken
+        val chatPassword = prefs.getChatPassword(chat.chatId)
+            .takeIf { it.isNotEmpty() }
+            ?: @Suppress("DEPRECATION") chat.chatPassword
+        // adminUserId — иначе NostrTransport.adminPubkeyHex всегда null и
+        // MembersSync.applyIncoming ниже получает membersContent = "" (no-op) даже
+        // для группы: счётчик участников/имя/аватар группы не обновлялись в списке.
+        val api = TransportFactory.forChat(applicationContext, chat.chatId, chatToken, chatPassword, myUserId, chat.adminUserId)
+        // Один запрос на всё (chat + profiles) — надёжнее и легче для реле, чем
+        // loadContent + отдельный pull profiles.txt. Аватар/профиль обновляются в
+        // том же снапшоте, что и сообщения → авто-обновление аватара в списке.
+        val all = withContext(Dispatchers.IO) { api.loadAll() }
+        val content = all.chatContent
+        val lines = content.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+        val totalLines = lines.size
+
+        // ── 1:1: профиль собеседника (нужен для сессионного ключа) ──
+        // ⚠️ ТОЛЬКО для 1:1 — у группового чата нет одного «партнёра». findPartner()
+        // подобрал бы СЛУЧАЙНОГО участника и затёр бы partner*-поля чата (см. §16). Для
+        // групп имя/аватар идут через members.txt/groupprofile, FS-сессия не используется.
+        val partnerEphPub = if (chat.isGroup) null else withContext(Dispatchers.IO) {
+            val parsedProfiles = if (ChatActivity.SLOT_UNION_PROFILES && all.profileSlots.isNotEmpty())
+                ProfileSync.unionProfileSlots(all.profileSlots, chatPassword, api.chatId)
+            else ProfileSync.parseProfiles(all.profilesContent, chatPassword, api.chatId)
+            val allProfiles = ProfileSync.unionAndRemember(api.chatId, parsedProfiles)
+            val partner = ProfileSync.findPartner(allProfiles, myUserId, myName)
+            var ephPub: String? = chat.partnerEphemeralPubKeyB64
+            if (partner != null) {
+                val profileChanged = partner.name != chat.partnerName ||
+                        partner.avatarBase64 != chat.partnerAvatarBase64
+                if (profileChanged) {
+                    db.chatDao().updatePartnerProfile(chat.id, partner.name, partner.tag, partner.avatarBase64)
                 }
-
-                // FS: устанавливаем сессионный ключ, чтобы список мог расшифровать V4-S
-                // сообщения собеседника для подсчёта непрочитанных и превью.
-                CryptoHelper.ensureSessionKey(chat.chatId, prefs.getEphemeralPriv(chat.chatId), partnerEphPub)
-
-                if (totalLines <= chat.lastSeenLineCount) {
-                    // Ничего нового — если unreadCount был не 0, сбросим
-                    if (chat.unreadCount != 0) {
-                        db.chatDao().updateUnread(chat.id, 0)
-                    }
-                    continue
+                if (partner.lastReadIndex != chat.partnerLastReadIndex) {
+                    db.chatDao().updatePartnerLastRead(chat.id, partner.lastReadIndex)
                 }
-
-                // Новые строки = последние (totalLines - lastSeenLineCount)
-                val newLines = lines.drop(chat.lastSeenLineCount)
-                // Из новых считаем только чужие (свои не в счёт).
-                // Используем Message.fromDecrypted чтобы корректно учесть новый формат
-                // (timestamp префикс, reply-маркеры и т.п.).
-                val unreadFromOthers = newLines.count { line ->
-                    val decrypted = CryptoHelper.decrypt(line, chatPassword, chat.chatId)
-                        ?: return@count false
-                    val parsed = Message.fromDecrypted(decrypted, myUserId, myName, aliases)
-                    !parsed.isSelf && parsed.sender.isNotEmpty()
+                if (partner.deleted != chat.partnerDeleted) {
+                    db.chatDao().updatePartnerDeleted(chat.id, partner.deleted)
                 }
-
-                if (unreadFromOthers != chat.unreadCount) {
-                    db.chatDao().updateUnread(chat.id, unreadFromOthers)
+                if (!partner.ephemeralPubKey.isNullOrBlank() &&
+                    partner.ephemeralPubKey != chat.partnerEphemeralPubKeyB64) {
+                    db.chatDao().updatePartnerEphemeralKey(chat.id, partner.ephemeralPubKey)
                 }
+                if (!partner.ephemeralPubKey.isNullOrBlank()) ephPub = partner.ephemeralPubKey
+            }
+            ephPub
+        }
 
-                // Превью последнего сообщения — обновим заодно
-                val lastDecrypted = CryptoHelper.decrypt(lines.last(), chatPassword, chat.chatId)
-                if (lastDecrypted != null) {
-                    val parsed = Message.fromDecrypted(lastDecrypted, myUserId, myName, aliases)
-                    val previewBody = when {
-                        parsed.isImage && parsed.text.isBlank() -> getString(R.string.msg_preview_photo)
-                        parsed.isImage -> "${getString(R.string.msg_preview_photo)} ${parsed.text}"
-                        parsed.isVoice -> getString(R.string.msg_preview_voice)
-                        parsed.isSticker -> getString(R.string.msg_preview_sticker)
-                        parsed.isReply -> getString(R.string.msg_preview_reply_format, parsed.text)
-                        else -> parsed.text
-                    }
-                    val preview = if (parsed.isSelf) "Вы: $previewBody" else previewBody
-                    db.chatDao().updatePreview(
-                        id = chat.id,
-                        preview = preview.take(80),
-                        timeMs = chat.lastTimeMs
+        // FS: сессионный ключ, чтобы список мог расшифровать V4-S сообщения собеседника.
+        CryptoHelper.ensureSessionKey(chat.chatId, prefs.getEphemeralPriv(chat.chatId), partnerEphPub)
+
+        // ── Бейдж «N» и превью пишем СРАЗУ — ДО тяжёлого группового блока (фикс задержки) ──
+        if (totalLines <= chat.lastSeenLineCount) {
+            if (chat.unreadCount != 0) db.chatDao().updateUnread(chat.id, 0)
+        } else {
+            val newLines = lines.drop(chat.lastSeenLineCount)
+            // Из новых считаем только чужие (свои не в счёт). Message.fromDecrypted —
+            // чтобы учесть новый формат (timestamp-префикс, reply-маркеры и т.п.).
+            val unreadFromOthers = newLines.count { line ->
+                val decrypted = CryptoHelper.decrypt(line, chatPassword, chat.chatId)
+                    ?: return@count false
+                val parsed = Message.fromDecrypted(decrypted, myUserId, myName, aliases)
+                !parsed.isSelf && parsed.sender.isNotEmpty()
+            }
+            if (unreadFromOthers != chat.unreadCount) {
+                db.chatDao().updateUnread(chat.id, unreadFromOthers)
+            }
+
+            // Превью последнего сообщения — обновим заодно.
+            val lastDecrypted = CryptoHelper.decrypt(lines.last(), chatPassword, chat.chatId)
+            if (lastDecrypted != null) {
+                val parsed = Message.fromDecrypted(lastDecrypted, myUserId, myName, aliases)
+                val previewBody = when {
+                    parsed.isImage && parsed.text.isBlank() -> getString(R.string.msg_preview_photo)
+                    parsed.isImage -> "${getString(R.string.msg_preview_photo)} ${parsed.text}"
+                    parsed.isVoice -> getString(R.string.msg_preview_voice)
+                    parsed.isSticker -> getString(R.string.msg_preview_sticker)
+                    parsed.isReply -> getString(R.string.msg_preview_reply_format, parsed.text)
+                    else -> parsed.text
+                }
+                val preview = if (parsed.isSelf) "Вы: $previewBody" else previewBody
+                db.chatDao().updatePreview(
+                    id = chat.id,
+                    preview = preview.take(80),
+                    timeMs = chat.lastTimeMs
+                )
+            }
+        }
+
+        // ── Групповой блок (members.txt + децентрализованный ростер) — ПОСЛЕ бейджа ──
+        // Тяжёлая часть (расшифровка слотов, проверки подписи) не задерживает бейдж выше и,
+        // благодаря параллельному обходу чатов, не тормозит другие чаты (§16, ADR-001).
+        if (chat.isGroup) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    GroupProfileSync.applyIncoming(
+                        chat, all.groupProfileContent, chatPassword, db.chatDao(), prefs
                     )
                 }
-            } catch (e: Exception) {
-                // Игнорируем ошибки в фоновом polling — следующий цикл попробует снова
             }
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    MembersSync.applyIncoming(
+                        chat = chat,
+                        membersContentEncrypted = all.membersContent,
+                        password = chatPassword,
+                        participantDao = db.chatParticipantDao(),
+                        chatDao = db.chatDao(),
+                        myUserId = myUserId,
+                        appContext = applicationContext,
+                        groupEventDao = db.groupEventDao(),
+                        memberSlots = all.memberSlots,
+                        pubkeyForUserId = api::pubkeyForUserId
+                    )
+                }
+            }
+            // Децентрализованный ростер (ADR-001): членство/счётчик — из самоопубликованных
+            // профилей, БЕЗ зависимости от админа в сети. Строго ПОСЛЕ MembersSync-оверлея.
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    GroupRosterSync.applyProfileRoster(
+                        chat = chat,
+                        signedSlots = all.profileSlotsSigned,
+                        password = chatPassword,
+                        participantDao = db.chatParticipantDao(),
+                        myUserId = myUserId,
+                        adminUserId = chat.adminUserId,
+                        pubkeyForUserId = api::pubkeyForUserId
+                    )
+                }
+            }
+            // ⚠️ Бан больше НЕ удаляет чат — забаненный остаётся в БД и опрашивается
+            // (бан/разбан наблюдаемы), из списка прячется по флагу (см. observeChats).
         }
     }
 
@@ -835,82 +848,4 @@ class ChatsListActivity : SecureActivity() {
                 }
                 InviteCodec.encodeGroup(
                     channelId = chat.chatId,
-                    transportToken = token,
-                    chatPassword = password,
-                    pin = pin,
-                    adminUserId = adminId,
-                    participantLimit = chat.participantLimit,
-                    groupNameSeed = chat.groupName ?: chat.partnerName,
-                    ttlMillis = groupTtlMillis
-                )
-            } else {
-                InviteCodec.encode(
-                    channelId = chat.chatId,
-                    transportToken = token,
-                    chatPassword = password,
-                    pin = pin
-                )
-            }
-
-            // Открываем экран QR-приглашения: там выбор «поделиться QR» или «текстом».
-            startActivity(Intent(this, InviteQrActivity::class.java).apply {
-                putExtra(InviteQrActivity.EXTRA_INVITE, invite)
-                putExtra(InviteQrActivity.EXTRA_PIN, pin)
-                putExtra(InviteQrActivity.EXTRA_NAME, chat.groupName ?: chat.partnerName)
-                putExtra(InviteQrActivity.EXTRA_AVATAR, if (chat.isGroup) chat.groupAvatarBase64 else prefs.myAvatarBase64)
-            })
-        } catch (e: Throwable) {
-            android.widget.Toast.makeText(
-                this,
-                getString(R.string.invite_create_failed),
-                android.widget.Toast.LENGTH_SHORT
-            ).show()
-            e.printStackTrace()
-        }
-    }
-
-    override fun onBackPressed() {
-        if (isSearchActive) {
-            toggleSearch(false)
-        } else {
-            super.onBackPressed()
-        }
-    }
-
-    private fun confirmDelete(chat: Chat) {
-        NeonDialog.showConfirm(
-            ctx = this,
-            title = getString(R.string.action_delete_chat),
-            message = getString(R.string.confirm_delete_chat_gist),
-            positiveText = getString(R.string.yes),
-            positiveIsDestructive = true,
-            negativeText = getString(R.string.no)
-        ) {
-            lifecycleScope.launch {
-                withContext(Dispatchers.IO) {
-                    // Nostr/DHT: серверного gist нет — только локальная очистка секретов
-                    prefs.deleteChatSecrets(chat.chatId)
-                    db.chatDao().delete(chat)
-                }
-                android.widget.Toast.makeText(
-                    this@ChatsListActivity,
-                    R.string.chat_deleted_toast,
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
-            }
-        }
-    }
-
-    companion object {
-        /** Степпер срока действия group-инвайта (dialog_invite_pin.xml): 1..24 часа шагом в час. */
-        private const val TTL_STEP_DEFAULT = 24
-        /** Значение шага, обозначающее "без ограничений" (см. shareInvite). */
-        private const val TTL_STEP_INFINITE = 25
-        /**
-         * "Без ограничений" технически не бесконечность (Long.MAX_VALUE переполнил бы
-         * System.currentTimeMillis() + ttlMillis в InviteCodec.encodeGroup) — 100 лет
-         * практически неотличимо от "никогда не истечёт".
-         */
-        private const val TTL_INFINITE_MS = 100L * 365 * 24 * 60 * 60 * 1000
-    }
-}
+      

@@ -187,6 +187,11 @@ object SystemNotifications {
         append(context, context.getString(R.string.notif_role_revoked_fmt, groupName))
     }
 
+    /** Упоминание меня в беседе (@) — «вас упомянул(а) N в беседе «…»». */
+    suspend fun notifyMentioned(context: Context, groupName: String, byName: String) {
+        append(context, context.getString(R.string.notif_mentioned_fmt, byName, groupName))
+    }
+
     /**
      * Строка чата «Уведомления»: возвращает существующую или создаёт на месте.
      * Также вызывается из ChatsListActivity при старте — чат виден сразу, не дожидаясь

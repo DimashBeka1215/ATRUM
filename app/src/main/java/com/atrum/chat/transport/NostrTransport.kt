@@ -281,6 +281,18 @@ class NostrTransport(
                 .filter { ev -> eventHasFileName(ev, "profiles.txt") }
                 .sortedByDescending { it.created_at }
                 .map { it.content },
+            // Децентрализованный ростер (ADR-001): тот же набор слотов profiles.txt, но с
+            // pubkey подписавшего — по ОДНОМУ новейшему на pubkey. Нужен для привязки
+            // userId↔pubkey в GroupRosterSync (членство/счётчик из самоопубликованных
+            // профилей, без зависимости от админа). Детерминированный порядок по pubkey —
+            // чтобы hashAll не «дрожал» от порядка прихода событий с реле (та же причина,
+            // что у memberSlots.sortedBy).
+            profileSlotsSigned = events
+                .filter { ev -> eventHasFileName(ev, "profiles.txt") }
+                .groupBy { it.pubkey.lowercase() }
+                .mapNotNull { (_, evs) -> evs.maxByOrNull { it.created_at } }
+                .map { ProfileSlotSigned(it.pubkey, it.content) }
+                .sortedBy { it.signerPubkey },
             membersContent = latestVerifiedAdminFile(events, "members.txt"),
             // Мультиподпись (Этап 2): ВСЕ подписанные слоты members.txt — по одному
             // новейшему на подписанта. Доверие/слияние решает слой синхронизации по
@@ -308,6 +320,11 @@ class NostrTransport(
             .groupBy { it.pubkey.lowercase() }
             .mapNotNull { (_, evs) -> evs.maxByOrNull { it.created_at } }
             .map { MemberSlot(it.pubkey, it.content) }
+            // ⚠️ ДЕТЕРМИНИРОВАННЫЙ ПОРЯДОК (репорт: «всё тормозит»): без сортировки порядок
+            // слотов зависит от порядка прихода событий с реле → hashAll меняется каждый
+            // опрос → loadAllIfChanged всегда «изменилось» → открытый чат/список
+            // переобрабатываются на КАЖДОМ тике. Сортировка по pubkey фиксирует порядок.
+            .sortedBy { it.signerPubkey }
 
     /**
      * Content файла [name] (members.txt / groupprofile.txt) от САМОГО СВЕЖЕГО события,

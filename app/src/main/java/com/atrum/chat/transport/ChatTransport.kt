@@ -44,6 +44,17 @@ data class AllChannelData(
      */
     val memberSlots: List<MemberSlot> = emptyList(),
     /**
+     * Децентрализованный ростер (ADR-001): ВСЕ слоты profiles.txt вместе с pubkey
+     * ПОДПИСАВШЕГО событие участника — по одному на pubkey. В отличие от [profileSlots]
+     * (только контент) здесь сохранён pubkey, чтобы слой синхронизации мог проверить
+     * привязку userId↔pubkey (событие профиля участника подписано ключом, выводимым из
+     * его же userId — см. NostrTransport.privkey/pubkeyForUserId) и не дать одному
+     * участнику «накрутить» счётчик чужими userId. Так членство/счётчик считаются из
+     * САМООПУБЛИКОВАННЫХ профилей и НЕ зависят от присутствия админа в сети
+     * (см. GroupRosterSync). Пусто — не Nostr-транспорт.
+     */
+    val profileSlotsSigned: List<ProfileSlotSigned> = emptyList(),
+    /**
      * «Профиль беседы» groupprofile.txt (имя/аватар/описание группы) — маленькое
      * отдельное replaceable-событие, подписанное администратором (проверяется
      * транспортом тем же способом, что и members.txt). Идея пользователя: беседа
@@ -63,6 +74,17 @@ data class AllChannelData(
  * чтобы понять, кто это и есть ли у него право). [content] — зашифрованный JSON.
  */
 data class MemberSlot(
+    val signerPubkey: String,
+    val content: String
+)
+
+/**
+ * Один слот profiles.txt вместе с pubkey подписавшего его участника (ADR-001,
+ * децентрализованный ростер). [signerPubkey] — hex Nostr-pubkey автора события
+ * profiles.txt (сверяется с pubkeyForUserId(userId) внутри слота — привязка
+ * userId↔pubkey против накрутки счётчика). [content] — зашифрованный JSON профиля.
+ */
+data class ProfileSlotSigned(
     val signerPubkey: String,
     val content: String
 )

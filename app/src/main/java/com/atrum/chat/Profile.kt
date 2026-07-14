@@ -52,6 +52,16 @@ data class Profile(
      */
     val deleted: Boolean = false,
     /**
+     * true если пользователь ВЫШЕЛ из групповой беседы (ADR-001, децентрализованный
+     * ростер). Каждый участник публикует своё членство сам через свой слот profiles.txt —
+     * счётчик участников считается из union слотов и НЕ зависит от того, в сети ли админ.
+     * Когда участник выходит, он публикует свой профиль с left=true (тумбстоун): все
+     * остальные исключают его из активного ростера/счётчика локально, без участия админа.
+     * Пишется в JSON только когда true (экономия байт); старые клиенты просто игнорируют
+     * незнакомый ключ (обратная совместимость, §1 CLAUDE.md).
+     */
+    val left: Boolean = false,
+    /**
      * Base64-кодированный X25519 публичный ключ текущей сессии.
      *
      * Генерируется при каждом открытии ChatActivity, публикуется через profiles.txt.
@@ -94,6 +104,7 @@ data class Profile(
         if (onlineTs > 0L) put("onlineTs", onlineTs)
         if (recordingTs > 0L) put("recTs", recordingTs)
         if (deleted) put("deleted", true)
+        if (left) put("left", true)
         if (ephemeralPubKey != null) put("eph", ephemeralPubKey)
         if (identityPubKey != null) put("idk", identityPubKey)
         if (ephemeralSig != null) put("esig", ephemeralSig)
@@ -115,6 +126,7 @@ data class Profile(
                 onlineTs = json.optLong("onlineTs", 0L),
                 recordingTs = json.optLong("recTs", 0L),
                 deleted = json.optBoolean("deleted", false),
+                left = json.optBoolean("left", false),
                 ephemeralPubKey = json.optString("eph", "").takeIf { it.isNotBlank() },
                 identityPubKey = json.optString("idk", "").takeIf { it.isNotBlank() },
                 ephemeralSig = json.optString("esig", "").takeIf { it.isNotBlank() },

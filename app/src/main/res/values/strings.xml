@@ -1162,6 +1162,10 @@
     <string name="notif_role_granted_fmt">Вас назначили администратором в группе «%1$s»</string>
     <string name="notif_role_perms_fmt">Права: %1$s</string>
     <string name="notif_role_revoked_fmt">С вас сняты права администратора в группе «%1$s»</string>
+    <string name="notif_mentioned_fmt">%1$s упомянул(а) вас в беседе «%2$s»</string>
+    <string name="mention_at">\@</string>
+    <string name="mention_jump_cd">К упоминаниям</string>
+    <string name="mention_menu_title">Непрочитанные упоминания</string>
     <!-- Названия прав администратора (AdminPermissions) -->
     <string name="perm_edit">изменение данных беседы</string>
     <string name="perm_moderate">мут и бан</string>

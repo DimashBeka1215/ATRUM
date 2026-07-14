@@ -197,6 +197,19 @@ class MessageWatchService : Service() {
                         pubkeyForUserId = t::pubkeyForUserId
                     )
                 }
+                // Децентрализованный ростер (ADR-001): наполняем участников из
+                // самоопубликованных профилей, чтобы счётчик рос БЕЗ админа. После MembersSync.
+                runCatching {
+                    GroupRosterSync.applyProfileRoster(
+                        chat = chat,
+                        signedSlots = all.profileSlotsSigned,
+                        password = password,
+                        participantDao = db.chatParticipantDao(),
+                        myUserId = prefs.myUserId,
+                        adminUserId = chat.adminUserId,
+                        pubkeyForUserId = t::pubkeyForUserId
+                    )
+                }
                 // Бан больше НЕ удаляет чат — он сохраняется и продолжает опрашиваться,
                 // чтобы разбан оставался наблюдаемым (репорт: «забаненные невидимы»).
                 // Из списка забаненный чат прячется по флагу (см. ChatsListActivity),
@@ -220,6 +233,8 @@ class MessageWatchService : Service() {
      * фон не опубликовал вырожденную версию). Публикация — через PublishScheduler (версия+1,
      * снимок из Room), как и в ChatActivity.maybeAdminEnrollNewMembers.
      */
+    private val bgEnrollThrottleMs = HashMap<String, Long>()
+
     private suspend fun maybeAdminEnrollBackground(
         chat: com.atrum.chat.data.Chat,
         all: com.atrum.chat.transport.AllChannelData,
@@ -227,6 +242,16 @@ class MessageWatchService : Service() {
         transport: com.atrum.chat.transport.ChatTransport
     ) {
         if (chat.adminUserId != prefs.myUserId) return
+        // ⚠️ ПРОИЗВОДИТЕЛЬНОСТЬ (репорт: «чаты грузятся долго, сообщения через 10с»):
+        // энролл расшифровывает ВСЕ слоты профилей (unionProfileSlots) и делит диспетчер
+        // расшифровки с открытым чатом → на переднем плане это тормозило загрузку. Теперь
+        // энролл идёт ТОЛЬКО когда приложение в фоне (нет открытого чата/списка, конкуренции
+        // нет) и не чаще раза в 90с на чат — новичок появится у всех в течение полутора
+        // минут, но без ущерба скорости UI.
+        if (App.inForeground) return
+        val now = System.currentTimeMillis()
+        if (now - (bgEnrollThrottleMs[chat.chatId] ?: 0L) < 90_000L) return
+        bgEnrollThrottleMs[chat.chatId] = now
         val profiles = if (ChatActivity.SLOT_UNION_PROFILES && all.profileSlots.isNotEmpty())
             ProfileSync.unionProfileSlots(all.profileSlots, password, transport.chatId)
         else ProfileSync.parseProfiles(all.profilesContent, password, transport.chatId)
@@ -236,7 +261,11 @@ class MessageWatchService : Service() {
         val knownIds = current.map { it.userId }.toSet()
         val bannedIds = current.filter { it.banned }.map { it.userId }.toSet()
         val activeCount = current.count { !it.banned }
-        val candidates = profiles.keys.filter { it != prefs.myUserId && it !in knownIds && it !in bannedIds }
+        // Не воскрешаем вышедших/удаливших профиль (ADR-001, децентрализованный ростер).
+        val candidates = profiles.keys.filter { uid ->
+            uid != prefs.myUserId && uid !in knownIds && uid !in bannedIds &&
+                profiles[uid]?.let { !it.left && !it.deleted } != false
+        }
         if (candidates.isEmpty()) return
         val limit = chat.participantLimit
         val freeSlots = limit?.let { (it - activeCount).coerceAtLeast(0) } ?: candidates.size
@@ -249,6 +278,20 @@ class MessageWatchService : Service() {
     }
 
     /**
+     * Упоминание меня (@) в групповом сообщении → уведомление в чат «Уведомления», один раз
+     * на msgId (дедуп через Prefs.claimMentionNotified — фон пересканирует непрочитанные
+     * каждый тик). Вызывается из recomputeAndNotify при декодировании новых строк.
+     */
+    private suspend fun maybeNotifyMention(chat: com.atrum.chat.data.Chat, msg: Message) {
+        // Вызывающий уже подтвердил: группа, не своё, упомянут я — здесь только дедуп+запись.
+        val msgId = msg.msgId
+        if (msgId.isBlank()) return
+        if (!prefs.claimMentionNotified(chat.chatId, msgId)) return
+        val groupName = chat.groupName?.takeIf { it.isNotBlank() } ?: chat.partnerName
+        SystemNotifications.notifyMentioned(applicationContext, groupName, msg.sender)
+    }
+
+    /**
      * Пересчёт непрочитанных ЛОКАЛЬНО из [NostrMessageStore] (без сети) и анонимный
      * пуш с суммарным числом. Звеним только когда сумма выросла.
      */
@@ -256,6 +299,8 @@ class MessageWatchService : Service() {
         val myName = prefs.myName
         val myUserId = prefs.myUserId
         val aliases = prefs.nameHistory
+        val myTag = prefs.myTag // ⚠️ читаем ОДИН раз: prefs — EncryptedSharedPreferences,
+        // доступ к полю = расшифровка; читать myTag/myName на каждую строку в цикле дорого.
 
         var totalUnread = 0
         for (chat in db.chatDao().getAll()) {
@@ -278,14 +323,27 @@ class MessageWatchService : Service() {
                 }
                 val content = NostrMessageStore.render(t.chatId)
                 val lines = content.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                val mentionIds = ArrayList<String>()
                 val unread = if (lines.size <= chat.lastSeenLineCount) 0 else {
                     lines.drop(chat.lastSeenLineCount).count { line ->
                         val dec = CryptoHelper.decrypt(line, password, chat.chatId) ?: return@count false
                         val parsed = Message.fromDecrypted(dec, myUserId, myName, aliases)
+                        // @упоминание меня в группе: собираем msgId (бейдж/кнопка) и уведомляем,
+                        // если чат не открыт (иначе я и так вижу).
+                        if (MentionUtil.ENABLED && chat.isGroup && !parsed.isSelf && MentionUtil.mentionsMe(parsed.text, myTag, myName)) {
+                            if (parsed.msgId.isNotBlank()) mentionIds.add(parsed.msgId)
+                            if (chat.chatId != App.currentOpenChatId) maybeNotifyMention(chat, parsed)
+                        }
                         !parsed.isSelf && parsed.sender.isNotEmpty()
                     }
                 }
                 if (unread != chat.unreadCount) db.chatDao().updateUnread(chat.id, unread)
+                // Непрочитанные @упоминания → бейдж «@N»/снимок кнопки. Пишем только при
+                // реальном изменении, чтобы не дёргать Flow списка чатов лишний раз.
+                if (MentionUtil.ENABLED && chat.isGroup) {
+                    val csv = mentionIds.joinToString(",").ifEmpty { null }
+                    if (csv != chat.mentionMsgIds) db.chatDao().updateMentionMsgIds(chat.id, csv)
+                }
 
                 // Превью последнего сообщения — чтобы список обновлялся ПОЧТИ МГНОВЕННО на
                 // стрим-событие (не дожидаясь 8-секундного опроса ChatsListActivity). Список

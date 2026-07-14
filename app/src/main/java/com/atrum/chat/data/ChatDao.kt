@@ -97,4 +97,8 @@ interface ChatDao {
     /** Мои вклады в закрепления (публикуются моим слотом members.txt). */
     @Query("UPDATE chats SET myPinnedMsgIds = :csv WHERE id = :id")
     suspend fun updateMyPinnedMsgIds(id: Long, csv: String?)
+
+    /** Непрочитанные @упоминания (msgId через запятую) — бейдж «@N» и кнопка перехода. */
+    @Query("UPDATE chats SET mentionMsgIds = :csv WHERE id = :id")
+    suspend fun updateMentionMsgIds(id: Long, csv: String?)
 }

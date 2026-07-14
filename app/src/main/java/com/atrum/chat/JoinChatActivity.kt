@@ -448,8 +448,32 @@ class JoinChatActivity : SecureActivity() {
                     }
                 }
 
-                // Публикуем свой профиль в фоне — сигнал админу "я здесь". Само добавление
-                // в members.txt делает клиент админа при следующем опросе (см. ChatActivity).
+                // Децентрализованный ростер (ADR-001): сразу наполняем участников из уже
+                // полученных самоопубликованных профилей — счётчик виден мгновенно и НЕ
+                // ждёт, пока админ (возможно офлайн) зачислит нас в members.txt.
+                if (allDataSnapshot != null && allDataSnapshot.profileSlotsSigned.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            val freshChat = db.chatDao().getById(newGroupChatId)
+                            if (freshChat != null) {
+                                GroupRosterSync.applyProfileRoster(
+                                    chat = freshChat,
+                                    signedSlots = allDataSnapshot.profileSlotsSigned,
+                                    password = invite.chatPassword,
+                                    participantDao = db.chatParticipantDao(),
+                                    myUserId = prefs.myUserId,
+                                    adminUserId = freshChat.adminUserId,
+                                    pubkeyForUserId = transport::pubkeyForUserId
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Публикуем свой профиль в фоне — сигнал "я здесь" всем участникам. Членство
+                // считается из этого профиля напрямую (GroupRosterSync), без зависимости от
+                // того, в сети ли админ; клиент админа при случае ещё и внесёт нас в
+                // подписанный members.txt (оверлей модерации), но счётчику это уже не нужно.
                 val myGroupProfile = Profile(
                     userId = prefs.myUserId,
                     name = prefs.myName,

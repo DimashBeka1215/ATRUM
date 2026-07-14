@@ -873,6 +873,25 @@
             android:textSize="12sp"
             android:visibility="gone" />
 
+        <!-- ═══ Лента упоминаний (@) — над вводом, скрыта пока не набрали @ ═══ -->
+        <View
+            android:id="@+id/mention_strip_divider"
+            android:layout_width="match_parent"
+            android:layout_height="0.5dp"
+            android:background="@color/border"
+            android:visibility="gone" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rv_mention_strip"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="6dp"
+            android:paddingVertical="6dp"
+            android:clipToPadding="false"
+            android:background="@color/surface"
+            android:scrollbars="none"
+            android:visibility="gone" />
+
         <!-- ═══ Input area — pill container ═══ -->
         <LinearLayout
             android:id="@+id/input_area"
@@ -1096,4 +1115,43 @@
 
         </LinearLayout>
     </LinearLayout>
+
+    <!-- ═══ Кнопка перехода к @упоминаниям — снизу справа над вводом ═══ -->
+    <FrameLayout
+        android:id="@+id/btn_mention_jump"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="78dp"
+        android:background="@drawable/bg_mention_fab"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="@string/mention_jump_cd"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="@string/mention_at"
+            android:textColor="@color/accent_light"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tv_mention_jump_count"
+            android:layout_width="wrap_content"
+            android:layout_height="14dp"
+            android:layout_gravity="top|end"
+            android:layout_marginTop="1dp"
+            android:layout_marginEnd="1dp"
+            android:minWidth="14dp"
+            android:background="@drawable/bg_unread_badge"
+            android:textColor="@color/white"
+            android:textSize="8.5sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:paddingHorizontal="3dp" />
+    </FrameLayout>
 </FrameLayout>

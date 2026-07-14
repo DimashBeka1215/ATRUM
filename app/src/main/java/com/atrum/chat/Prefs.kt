@@ -464,6 +464,22 @@ class Prefs(private val context: Context) {
         prefs.edit().putString("notified_members_tok_$chatId", token).apply()
     }
 
+    // ─── Дедуп уведомлений об упоминании (@) ─────────────────────────────────────
+    /**
+     * «Занять» msgId под уведомление об упоминании: true — ещё не уведомляли (этот вызов
+     * должен уведомить), false — уже. Персистентный набор на чат, ограничен последними ~300
+     * (чтобы не рос бесконечно). Дедуп важен, т.к. фон пересканирует непрочитанные каждый тик.
+     */
+    @Synchronized
+    fun claimMentionNotified(chatId: String, msgId: String): Boolean {
+        val key = "mention_notified_$chatId"
+        val set = prefs.getStringSet(key, emptySet()) ?: emptySet()
+        if (msgId in set) return false
+        val updated = (set + msgId).let { if (it.size > 300) it.toList().takeLast(300).toSet() else it }
+        prefs.edit().putStringSet(key, updated).apply()
+        return true
+    }
+
     // ─── Forward secrecy: эфемерный приватный X25519-ключ ────────────────────────
     // Хранится ТОЛЬКО здесь (EncryptedSharedPreferences / Keystore), НИКОГДА в открытой
     // Room-БД. Это и есть forward secrecy при краже устройства/базы: без ключа из

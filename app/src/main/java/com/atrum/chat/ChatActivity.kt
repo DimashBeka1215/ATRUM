@@ -217,6 +217,17 @@ class ChatActivity : SecureActivity() {
     private val groupCanPin: Boolean
         get() = chatIsAdmin || AdminPermissions.has(myGroupPermissions, AdminPermissions.PIN)
 
+    // ── Упоминания (@) ───────────────────────────────────────────────────────────
+    /** Один участник для меню упоминаний: userId + имя + тег (может быть null) + аватар. */
+    data class MentionUser(val userId: String, val name: String, val tag: String?, val avatarBase64: String?)
+    /** Кандидаты упоминания — активные участники группы с профилем (кроме меня). */
+    @Volatile private var mentionCandidates: List<MentionUser> = emptyList()
+    private var mentionAdapter: MentionAdapter? = null
+
+    /** msgId упоминаний, к которым я уже перешёл в этой сессии (чтобы кнопка их не предлагала). */
+    private val visitedMentionIds = HashSet<String>()
+    private var mentionMenuPopup: android.widget.PopupWindow? = null
+
     // Отложенные действия из списка медиа (применяются после загрузки сообщений).
     private var pendingJumpMsgId: String? = null
     private var pendingDeleteMsgId: String? = null
@@ -1257,6 +1268,7 @@ class ChatActivity : SecureActivity() {
             onReactionClick = { msgId, emoji -> handleReactionToggle(msgId, emoji) }
         )
         this.imageLoader = imageLoader
+        adapter.isGroupChat = chat.isGroup // подсветка @упоминаний — только в группе
         // Применяем уже известный индекс прочитанности (из Room) к адаптеру
         adapter.setPartnerLastReadIndex(chat.partnerLastReadIndex)
         // Начальные значения непрозрачности пузырьков (могут быть обновлены в applyWallpaper)
@@ -1405,6 +1417,8 @@ class ChatActivity : SecureActivity() {
                 // Превью закреплённого могло стать резолвимым после подгрузки ленты — но
                 // только если пины реально есть (иначе лишняя работа на каждый эмит).
                 if (chat.isGroup && pinnedIds.isNotEmpty()) renderPinnedBar()
+                // Кнопка @ — показать/обновить по упоминаниям в загруженной ленте.
+                if (chat.isGroup) renderMentionButton()
             }
         }
 
@@ -1985,6 +1999,7 @@ class ChatActivity : SecureActivity() {
     override fun onPause() {
         super.onPause()
         isInForeground = false
+        mentionMenuPopup?.dismiss() // не держим попап меню упоминаний при уходе с экрана
         // Чат закрыт — фоновый синк членства снова может опрашивать эту группу.
         if (::chat.isInitialized && App.currentOpenChatId == chat.chatId) App.currentOpenChatId = null
         // Голосовые: не держим открытым микрофон и не играем вне экрана.
@@ -2123,6 +2138,8 @@ class ChatActivity : SecureActivity() {
         lastKnownProfiles.putAll(parsed)
         // Для отображения и сессионного ключа — «липкий» партнёр (флаки-чтение не теряет его).
         val allProfiles = ProfileSync.unionAndRemember(transport.chatId, parsed)
+        // Кандидаты упоминания (@) — из «липкого» union (аватары/теги не пропадают).
+        if (chat.isGroup) rebuildMentionCandidates(allProfiles)
         // ⚠️ Фикс (репорт: "аватарки собеседников мигают и исчезают и появляются
         // периодически"): аватарки в пузырьках сообщений ОБЯЗАНЫ строиться из "липкого"
         // allProfiles, а НЕ из сырого lastKnownProfiles/parsed этого конкретного тика —
@@ -2437,6 +2454,26 @@ class ChatActivity : SecureActivity() {
             // что реально лежит на реле (lastWireMembers), с локальной истиной и, если
             // реле отстали, переопубликовываем локальное состояние с версией+1.
             lifecycleScope.launch(Dispatchers.IO) { maybeAdminRepairMembersFile() }
+
+            // Децентрализованный ростер (ADR-001, запрос пользователя «беседа работает без
+            // админа»): наполняем участников из САМООПУБЛИКОВАННЫХ профилей на КАЖДОМ тике —
+            // не только у админа и не только когда меняется members.txt. Так новый участник
+            // виден и посчитан у всех сразу после публикации своего профиля, а вышедший
+            // (profiles.txt left=true) — исчезает, без участия админа. Строго ПОСЛЕ
+            // MembersSync-оверлея выше (бан/мут/роли), см. GroupRosterSync.
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    GroupRosterSync.applyProfileRoster(
+                        chat = chat,
+                        signedSlots = data.profileSlotsSigned,
+                        password = chat.chatPassword,
+                        participantDao = db.chatParticipantDao(),
+                        myUserId = prefs.myUserId,
+                        adminUserId = chat.adminUserId,
+                        pubkeyForUserId = transport::pubkeyForUserId
+                    )
+                }
+            }
 
             // Кэш числа активных участников для presence-тикера (см. applyGroupPresence) —
             // обновляем раз за опрос, а не на каждый тик (~1с), чтобы не дёргать Room. Тот
@@ -2885,7 +2922,12 @@ class ChatActivity : SecureActivity() {
         val bannedIds = current.filter { it.banned }.map { it.userId }.toSet()
         val activeCount = current.count { !it.banned }
 
-        val candidates = seenProfiles.keys.filter { it !in knownIds && it !in bannedIds }
+        // Не зачисляем обратно тех, кто вышел сам (profiles.txt left=true) или удалил
+        // профиль — иначе админский members.txt воскрешал бы их в счётчике (ADR-001).
+        val candidates = seenProfiles.keys.filter { uid ->
+            uid !in knownIds && uid !in bannedIds &&
+                seenProfiles[uid]?.let { !it.left && !it.deleted } != false
+        }
         // Если только что самовылечились (см. выше) — публикуем исправленную версию ДАЖЕ
         // без новых кандидатов, иначе локальный фикс останется только у меня: остальные
         // участники (и я сам при следующей переустановке) так и не увидят membersVersion,
@@ -2936,7 +2978,9 @@ class ChatActivity : SecureActivity() {
         markAsReadJob = lifecycleScope.launch {
             delay(markAsReadDelayMs)
             db.chatDao().markAsRead(chat.id, totalLines)
-            chat = chat.copy(lastSeenLineCount = totalLines, unreadCount = 0)
+            // Прочитали чат — гасим бейдж «@N» в списке (кнопка в чате работает по снимку).
+            if (chat.isGroup && !chat.mentionMsgIds.isNullOrEmpty()) db.chatDao().updateMentionMsgIds(chat.id, null)
+            chat = chat.copy(lastSeenLineCount = totalLines, unreadCount = 0, mentionMsgIds = null)
 
             // Пушим обновлённый профиль если индекс реально вырос
             if (totalLines > lastPushedReadIndex) {
@@ -3969,6 +4013,7 @@ class ChatActivity : SecureActivity() {
      *         Пустое поле (стёрли всё) → stopTypingSignal().
      */
     private fun setupTypingDetection() {
+        setupMentionStrip()
         binding.etMessage.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
@@ -3976,6 +4021,7 @@ class ChatActivity : SecureActivity() {
                 if (s.isNullOrEmpty()) stopTypingSignal() else onTypingDetected()
                 updateStickerSuggestions(s?.toString() ?: "")
                 updateSendVoiceButtons(s?.toString() ?: "")
+                updateMentionStrip() // автодополнение @ (Этап упоминаний)
             }
         })
     }
@@ -4977,6 +5023,194 @@ class ChatActivity : SecureActivity() {
             }
         }
         NeonDialog.showMenu(this, title = getString(R.string.pinned_show_all), items = items)
+    }
+
+    // ====== УПОМИНАНИЯ (@) ======
+
+    /** Настройка ленты упоминаний (вариант 2) и кнопки перехода к упоминаниям. */
+    private fun setupMentionStrip() {
+        mentionAdapter = MentionAdapter { user -> insertMention(user) }
+        binding.rvMentionStrip.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
+        binding.rvMentionStrip.adapter = mentionAdapter
+        binding.btnMentionJump.setOnClickListener { jumpToNextMention() }
+        binding.btnMentionJump.setOnLongClickListener { showMentionMenu(); true }
+    }
+
+    /** @упоминания меня в загруженной ленте (от других), к которым я ещё не переходил.
+     *  Считаем прямо из ленты — надёжно, без зависимости от таймингов фонового скана. */
+    private fun myMentionMessages(): List<Message> {
+        if (!::chat.isInitialized || !chat.isGroup) return emptyList()
+        return currentMessages.filter {
+            !it.isSelf && it.msgId.isNotBlank() && it.msgId !in visitedMentionIds &&
+                MentionUtil.mentionsMe(it.text, prefs.myTag, prefs.myName)
+        }
+    }
+
+    /** Показ/скрытие кнопки @ по упоминаниям меня в ленте. */
+    private fun renderMentionButton() {
+        if (!::binding.isInitialized) return
+        if (!MentionUtil.ENABLED) { binding.btnMentionJump.visibility = View.GONE; return }
+        val cnt = myMentionMessages().size
+        if (cnt == 0) { binding.btnMentionJump.visibility = View.GONE; return }
+        // §0 glass: поверх обоев — полупрозрачная тёмная подложка, иначе surface.
+        binding.btnMentionJump.setBackgroundResource(
+            if (chatHasWallpaper) R.drawable.bg_mention_fab_glass else R.drawable.bg_mention_fab
+        )
+        binding.tvMentionJumpCount.text = if (cnt > 9) "9+" else cnt.toString()
+        binding.btnMentionJump.visibility = View.VISIBLE
+    }
+
+    /** Прыжок к следующему (самому старому непосещённому) упоминанию + подсветка. */
+    private fun jumpToNextMention() {
+        val next = myMentionMessages().minByOrNull { it.timestampMs } ?: run { renderMentionButton(); return }
+        val idx = if (::adapter.isInitialized) adapter.indexOfMsgId(next.msgId) else -1
+        if (idx >= 0) jumpToAdapterIndex(idx, next.msgId)
+        visitedMentionIds.add(next.msgId)
+        renderMentionButton()
+    }
+
+    /** Меню по зажатию: список упоминаний меня (авка + ник + текст). */
+    private fun showMentionMenu() {
+        mentionMenuPopup?.dismiss()
+        val items = myMentionMessages().sortedByDescending { it.timestampMs } // новые сверху
+        if (items.isEmpty()) return
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundResource(if (chatHasWallpaper) R.drawable.bg_mention_menu_glass else R.drawable.bg_mention_menu)
+            setPadding(0, dp(6), 0, dp(6))
+        }
+        val overW = chatHasWallpaper // поверх обоев/glass — текст белый (иначе тёмный на тёмном в светлой теме)
+        val nameCol = if (overW) android.graphics.Color.WHITE else ContextCompat.getColor(this, R.color.text_primary)
+        val textCol = if (overW) 0xE0FFFFFF.toInt() else ContextCompat.getColor(this, R.color.text_secondary)
+        container.addView(TextView(this).apply {
+            text = getString(R.string.mention_menu_title)
+            setTextColor(if (overW) 0xB3FFFFFF.toInt() else ContextCompat.getColor(this@ChatActivity, R.color.text_tertiary))
+            textSize = 11f; setPadding(dp(12), dp(4), dp(12), dp(6)); letterSpacing = 0.04f
+        })
+        items.take(6).forEach { m ->
+            val row = layoutInflater.inflate(R.layout.item_mention_menu, container, false)
+            val av = row.findViewById<com.google.android.material.imageview.ShapeableImageView>(R.id.iv_mm_avatar)
+            val letter = row.findViewById<TextView>(R.id.tv_mm_letter)
+            val nameTv = row.findViewById<TextView>(R.id.tv_mm_name)
+            val textTv = row.findViewById<TextView>(R.id.tv_mm_text)
+            val prof = m.senderUserId?.let { lastKnownProfiles[it] ?: ProfileSync.getGlobalKnown(it) }
+            val bmp = AvatarUtils.fromBase64(prof?.avatarBase64)
+            if (bmp != null) { av.setImageBitmap(bmp); av.visibility = View.VISIBLE; letter.visibility = View.GONE }
+            else { av.visibility = View.GONE; letter.visibility = View.VISIBLE; letter.text = m.sender.trim().firstOrNull()?.uppercase() ?: "?" }
+            nameTv.text = m.sender
+            nameTv.setTextColor(nameCol)
+            textTv.setTextColor(textCol)
+            textTv.text = MessageAdapter.highlightMentions(
+                m.text.take(60), ContextCompat.getColor(this, R.color.accent_light))
+            row.setOnClickListener {
+                mentionMenuPopup?.dismiss()
+                val idx = if (::adapter.isInitialized) adapter.indexOfMsgId(m.msgId) else -1
+                if (idx >= 0) jumpToAdapterIndex(idx, m.msgId)
+                visitedMentionIds.add(m.msgId)
+                renderMentionButton()
+            }
+            container.addView(row)
+        }
+        val popup = android.widget.PopupWindow(container, dp(240), android.view.ViewGroup.LayoutParams.WRAP_CONTENT, true)
+        popup.elevation = dp(8).toFloat()
+        mentionMenuPopup = popup
+        // Над кнопкой, выровнено по правому краю.
+        popup.showAsDropDown(binding.btnMentionJump, dp(-204), -(dp(56) + binding.btnMentionJump.height))
+    }
+
+    /** Пересобрать кандидатов упоминания из профилей (кроме себя). */
+    private fun rebuildMentionCandidates(source: Map<String, Profile>) {
+        if (!::chat.isInitialized || !chat.isGroup) { mentionCandidates = emptyList(); return }
+        mentionCandidates = source.values
+            .filter { it.userId != prefs.myUserId && (it.name.isNotBlank() || !it.tag.isNullOrBlank()) }
+            .map { MentionUser(it.userId, it.name.ifBlank { it.userId.take(8) }, it.tag, it.avatarBase64) }
+    }
+
+    /** (индекс '@', запрос-после-@) у каретки или null, если не пишем упоминание. */
+    private fun currentMentionQuery(): Pair<Int, String>? {
+        if (!::chat.isInitialized || !chat.isGroup || chat.isFavorites) return null
+        val caret = binding.etMessage.selectionStart.coerceAtLeast(0)
+        val text = binding.etMessage.text?.toString() ?: return null
+        if (caret > text.length) return null
+        val before = text.substring(0, caret)
+        // '@' в начале строки или после пробела/переноса, затем буквы/цифры/подчёркивание.
+        val m = Regex("(?:^|\\s)@([\\p{L}0-9_]*)$").find(before) ?: return null
+        val at = before.length - m.groupValues[1].length - 1
+        return at to m.groupValues[1]
+    }
+
+    /** Обновляет ленту упоминаний по текущему @-запросу. */
+    private fun updateMentionStrip() {
+        val q = currentMentionQuery()
+        if (q == null) { hideMentionStrip(); return }
+        val query = q.second.lowercase()
+        val list = mentionCandidates.filter { u ->
+            query.isEmpty() || (u.tag?.lowercase()?.startsWith(query) == true) || u.name.lowercase().startsWith(query)
+        }.take(30)
+        if (list.isEmpty()) { hideMentionStrip(); return }
+        mentionAdapter?.submit(list)
+        // §0 три темы: поверх обоев — полупрозрачная тёмная подложка, иначе surface.
+        if (chatHasWallpaper) {
+            binding.rvMentionStrip.setBackgroundColor(0x99000000.toInt())
+            binding.mentionStripDivider.visibility = View.GONE
+        } else {
+            binding.rvMentionStrip.setBackgroundColor(ContextCompat.getColor(this, R.color.surface))
+            binding.mentionStripDivider.visibility = View.VISIBLE
+        }
+        binding.rvMentionStrip.visibility = View.VISIBLE
+    }
+
+    private fun hideMentionStrip() {
+        binding.rvMentionStrip.visibility = View.GONE
+        binding.mentionStripDivider.visibility = View.GONE
+    }
+
+    /** Вставляет упоминание в поле: заменяет @запрос на «@тег » с подсветкой. */
+    private fun insertMention(user: MentionUser) {
+        val q = currentMentionQuery() ?: return
+        val editable = binding.etMessage.text ?: return
+        val caret = binding.etMessage.selectionStart.coerceIn(0, editable.length)
+        if (q.first < 0 || q.first > caret) { hideMentionStrip(); return }
+        val handle = user.tag?.takeIf { it.isNotBlank() } ?: user.name
+        val insert = "@$handle "
+        editable.replace(q.first, caret, insert)
+        // Подсветка вставленного «@тег» (без хвостового пробела).
+        runCatching {
+            editable.setSpan(
+                android.text.style.ForegroundColorSpan(ContextCompat.getColor(this, R.color.accent_light)),
+                q.first, q.first + insert.length - 1,
+                android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+        binding.etMessage.setSelection((q.first + insert.length).coerceAtMost(editable.length))
+        hideMentionStrip()
+    }
+
+    private inner class MentionAdapter(
+        private val onClick: (MentionUser) -> Unit
+    ) : RecyclerView.Adapter<MentionAdapter.VH>() {
+        private var items: List<MentionUser> = emptyList()
+        fun submit(list: List<MentionUser>) { items = list; notifyDataSetChanged() }
+        override fun onCreateViewHolder(parent: android.view.ViewGroup, viewType: Int): VH =
+            VH(layoutInflater.inflate(R.layout.item_mention_strip, parent, false))
+        override fun getItemCount(): Int = items.size
+        override fun onBindViewHolder(holder: VH, position: Int) = holder.bind(items[position])
+        inner class VH(v: View) : RecyclerView.ViewHolder(v) {
+            private val avatar: com.google.android.material.imageview.ShapeableImageView = v.findViewById(R.id.iv_mention_avatar)
+            private val letter: TextView = v.findViewById(R.id.tv_mention_letter)
+            private val nameTv: TextView = v.findViewById(R.id.tv_mention_name)
+            private val tagTv: TextView = v.findViewById(R.id.tv_mention_tag)
+            fun bind(u: MentionUser) {
+                val bmp = AvatarUtils.fromBase64(u.avatarBase64)
+                if (bmp != null) { avatar.setImageBitmap(bmp); avatar.visibility = View.VISIBLE; letter.visibility = View.GONE }
+                else { avatar.visibility = View.GONE; letter.visibility = View.VISIBLE; letter.text = u.name.trim().firstOrNull()?.uppercase() ?: "?" }
+                nameTv.text = u.name
+                tagTv.text = "@" + (u.tag?.takeIf { it.isNotBlank() } ?: u.name)
+                itemView.setOnClickListener { onClick(u) }
+            }
+        }
     }
 
     // ====== РЕАКЦИИ ======

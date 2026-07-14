@@ -46,6 +46,9 @@ class MessageAdapter(
     /** true = Atmospheric Glass UI mode: полупрозрачные пузырьки поверх обоев. */
     var glassMode: Boolean = false
 
+    /** true — групповая беседа: подсвечивать @упоминания в тексте (см. highlightMentions). */
+    var isGroupChat: Boolean = false
+
     /** Непрозрачность пузырьков своих сообщений (0.1–1.0). Управляется настройками. */
     var bubbleAlphaSelf: Float = 1.0f
 
@@ -219,6 +222,22 @@ class MessageAdapter(
 
         /** payload для точечного апдейта ТОЛЬКО аватарки отправителя (см. updateAvatars). */
         val PAYLOAD_AVATAR = Any()
+
+        private val MENTION_REGEX = java.util.regex.Pattern.compile("@[\\p{L}0-9_]+")
+
+        /** Возвращает [text] с подсвеченными [color] @упоминаниями (сохраняя ссылки/спаны). */
+        fun highlightMentions(text: CharSequence, color: Int): CharSequence {
+            if (text.isEmpty() || text.indexOf('@') < 0) return text
+            val sp = android.text.SpannableStringBuilder(text)
+            val m = MENTION_REGEX.matcher(text)
+            while (m.find()) {
+                sp.setSpan(
+                    android.text.style.ForegroundColorSpan(color),
+                    m.start(), m.end(), android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+            return sp
+        }
 
         // ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА (не для релиза): падаем с полным логом причины при
         // первом же "пустом" фото/коллаже (bitmap == null после загрузки+расшифровки).
@@ -412,7 +431,8 @@ class MessageAdapter(
             bubbleAlphaSelf   = bubbleAlphaSelf,
             bubbleAlphaOther  = bubbleAlphaOther,
             avatarBase64      = avatarFor(msg),
-            showAvatar        = isFirstOfRun(position)
+            showAvatar        = isFirstOfRun(position),
+            isGroupChat       = isGroupChat
         )
     }
 
@@ -594,7 +614,8 @@ class MessageAdapter(
             bubbleAlphaSelf: Float = 1.0f,
             bubbleAlphaOther: Float = 1.0f,
             avatarBase64: String? = null,
-            showAvatar: Boolean = false
+            showAvatar: Boolean = false,
+            isGroupChat: Boolean = false
         ) {
             if (msg.isSystem) {
                 bindSystem(msg)
@@ -686,7 +707,10 @@ class MessageAdapter(
                 // bind. Долгий тап по пузырьку (контекстное меню) сохраняется через
                 // BubbleLinkMovementMethod, который ставится только когда есть ссылки.
                 val li = MessageAdapter.linkInfo(msg.text)
-                textView.text = li.display
+                // Подсветка @упоминаний в группе (поверх возможных ссылок в li.display).
+                textView.text = if (isGroupChat)
+                    highlightMentions(li.display, ContextCompat.getColor(itemView.context, R.color.accent_light))
+                else li.display
                 if (li.hasLinks) {
                     textView.movementMethod = BubbleLinkMovementMethod
                     textView.setLinkTextColor(ContextCompat.getColor(itemView.context, R.color.accent_light))

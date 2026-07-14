@@ -48,6 +48,14 @@ interface ChatParticipantDao {
     suspend fun deleteForChat(ownerId: Long)
 
     /**
+     * Убрать ОДНОГО участника, только если он не забанен (ADR-001, децентрализованный
+     * ростер: участник вышел сам — опубликовал profiles.txt с left=true). Забаненного
+     * НЕ трогаем: его запись остаётся видимой админу (бан наблюдаем), см. GroupRosterSync.
+     */
+    @Query("DELETE FROM chat_participants WHERE ownerId = :ownerId AND userId = :userId AND banned = 0")
+    suspend fun removeIfNotBanned(ownerId: Long, userId: String)
+
+    /**
      * Мут (см. ChatParticipant.mutedUntilMs). Публикация members.txt — отдельно, см.
      * MembersSync.publish. [evidenceIds] — msgId'ы сообщений-оснований через запятую
      * (см. ChatParticipant.mutedEvidenceIds), null/пусто — без оснований.
