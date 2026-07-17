@@ -474,11 +474,32 @@ class JoinChatActivity : SecureActivity() {
                 // считается из этого профиля напрямую (GroupRosterSync), без зависимости от
                 // того, в сети ли админ; клиент админа при случае ещё и внесёт нас в
                 // подписанный members.txt (оверлей модерации), но счётчику это уже не нужно.
+                // ⚠️ Фикс (репорт: «админ видит меня обычным, галочку/иммунитет игнорит»;
+                // диагност на устройстве админа показал idk=нет, isig=нет). Раньше профиль при
+                // ВХОДЕ публиковался БЕЗ identityPubKey/identitySig — моя личность попадала в
+                // беседу только когда я сам ОТКРОю чат (ChatActivity.pushMyProfile). Пока не
+                // открыл — на реле лежал профиль без подписи, и собеседники физически не могли
+                // меня верифицировать: ни галочки, ни иммунитета. Теперь identity кладётся сразу
+                // при входе. Подпись — над доменом atrum_idsig_v1_<chatId> моим identity-ключом,
+                // где chatId = invite.channelId (= Chat.chatId, по которому проверяет
+                // VerifiedBadge.isVerifiedProfile — тот же домен, что в ChatActivity.computeIdentitySig).
+                val myGroupIdentitySig = run {
+                    val idPriv = prefs.getOrCreateIdentity().first
+                    try {
+                        CryptoHelper.signWithIdentity(idPriv, VerifiedBadge.identitySigData(invite.channelId))
+                    } catch (_: Exception) {
+                        null
+                    } finally {
+                        idPriv.fill(0) // затираем локальную копию приватника (§1)
+                    }
+                }
                 val myGroupProfile = Profile(
                     userId = prefs.myUserId,
                     name = prefs.myName,
                     tag = prefs.myTag,
-                    avatarBase64 = prefs.myAvatarBase64
+                    avatarBase64 = prefs.myAvatarBase64,
+                    identityPubKey = prefs.myIdentityPubKey,
+                    identitySig = myGroupIdentitySig
                 )
                 AppScope.launch {
                     try {
@@ -533,7 +554,8 @@ class JoinChatActivity : SecureActivity() {
                     showFoundInfo(
                         name = partnerProfileFound!!.name,
                         tag = partnerProfileFound!!.tag,
-                        avatarBase64 = partnerProfileFound!!.avatarBase64
+                        avatarBase64 = partnerProfileFound!!.avatarBase64,
+                        verified = VerifiedBadge.isVerifiedProfile(partnerProfileFound, invite.channelId)
                     )
                     triggerFoundPulse()
                 }
@@ -796,7 +818,7 @@ class JoinChatActivity : SecureActivity() {
      * а аватар ещё не долетел из сети) — тогда просто не трогаем аватар-вью, показываем
      * только имя; аватар появится отдельным вызовом этой же функции, когда придёт сеть.
      */
-    private fun showFoundInfo(name: String, tag: String?, avatarBase64: String?) {
+    private fun showFoundInfo(name: String, tag: String?, avatarBase64: String?, verified: Boolean = false) {
         val bitmap = AvatarUtils.fromBase64(avatarBase64)
         if (bitmap != null) {
             val alreadyShown = binding.ivPartnerAvatar.visibility == View.VISIBLE
@@ -817,7 +839,10 @@ class JoinChatActivity : SecureActivity() {
         }
 
         if (name.isNotBlank()) {
-            binding.tvPartnerName.text = name
+            // Галочка «Разработчик ATRUM» у ника в превью по инвайту (неподделываемо —
+            // verified посчитан по подписи identity в вызывающем коде, см. VerifiedBadge).
+            binding.tvPartnerName.text =
+                if (verified) VerifiedBadge.nameWithBadge(this, name) else name
             if (!tag.isNullOrBlank()) {
                 binding.tvPartnerTag.text = tag
                 binding.tvPartnerTag.visibility = View.VISIBLE

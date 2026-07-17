@@ -52,7 +52,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
+        android:label="${appName}"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.AtrumChat"
@@ -226,6 +226,12 @@
         <!-- Кастомный кадратор шапки (замена uCrop на этом пути) -->
         <activity
             android:name=".BannerCropActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AtrumChat" />
+
+        <!-- Кастомный кадратор аватара (1:1, круг — замена системного uCrop) -->
+        <activity
+            android:name=".AvatarCropActivity"
             android:exported="false"
             android:theme="@style/Theme.AtrumChat" />
 

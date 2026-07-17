@@ -84,6 +84,9 @@ class UserStatsActivity : AppCompatActivity() {
         data class Section(val title: String, val count: Int) : Row()
         data class MsgRow(val msg: Message) : Row()
         data class DeletedRow(val msg: Message, val deletedAtMs: Long, val deleterLabel: String) : Row()
+        /** Плашка «Запрещаю за собой подсматривать» — вместо списка «Все сообщения» у
+         *  верифицированного разработчика (PERSONAL_BUILD.md §Часть 3). */
+        object Plaque : Row()
     }
 
     private var chatRoomId: Long = -1L
@@ -100,6 +103,10 @@ class UserStatsActivity : AppCompatActivity() {
      * (см. setupAndLoad), targetUserId==его собственный гарантированно.
      */
     private var isSelfRestrictedView: Boolean = false
+    /** Цель — верифицированный разработчик, и смотрю НЕ я сам (PERSONAL_BUILD.md §Часть 3):
+     *  раздел «Все сообщения» вообще не строится, вместо него — плашка. Неподделываемо:
+     *  вычисляется по валидной подписи identity профиля цели (VerifiedBadge). */
+    private var targetIsProtectedDev: Boolean = false
 
     private var networkChatId = ""
     private var chatPassword = ""
@@ -328,6 +335,27 @@ class UserStatsActivity : AppCompatActivity() {
             val allData = if (isFirstLoad) fetchFirstFresh()
                 else withContext(Dispatchers.IO) { runCatching { transport.loadAll() }.getOrNull() }
 
+            // Верифицированный разработчик как цель (и смотрю НЕ я сам): раздел «Все
+            // сообщения» вообще не строим — вместо него плашка (PERSONAL_BUILD.md §Часть 3).
+            // Профиль цели берём из свежего снимка; проверка подписи identity неподделываема
+            // (VerifiedBadge), домен — networkChatId (= crypto chat.chatId, как для identitySig).
+            if (allData != null && targetUserId != prefs.myUserId) {
+                val profs = withContext(Dispatchers.Default) {
+                    if (ChatActivity.SLOT_UNION_PROFILES && allData.profileSlots.isNotEmpty())
+                        ProfileSync.unionProfileSlots(allData.profileSlots, chatPassword, networkChatId)
+                    else ProfileSync.parseProfiles(allData.profilesContent, chatPassword, networkChatId)
+                }
+                // Единая точка правды (VerifiedBadge.isVerifiedDev): свежий профиль ИЛИ ранее
+                // подтверждённая память. Раз защищён — остаётся защищённым (не «протухает» от
+                // одного пустого/неполного чтения профиля). Неподделываемо (identity-подпись).
+                targetIsProtectedDev = VerifiedBadge.isVerifiedDev(networkChatId, targetUserId, profs[targetUserId]) ||
+                    targetIsProtectedDev
+            }
+
+            // Галочка «Разработчик ATRUM» рядом с ником в шапке статистики — как только
+            // подтверждён верифиц-статус цели. Кликабельна → окно-пояснение «кто я».
+            VerifiedBadge.applyNameBadge(findViewById(R.id.tv_title), targetUserName, targetIsProtectedDev)
+
             if (isFirstLoad && allData != null) {
                 val allLines = allData.chatContent.split("\n").filter { it.isNotEmpty() }
                 var windowSize = TAIL_INITIAL_WINDOW
@@ -412,9 +440,13 @@ class UserStatsActivity : AppCompatActivity() {
         lastDeletedRows = deletedRows
         val rows = ArrayList<Row>()
         rows.add(Row.Header)
+        // Верифицированный разработчик (PERSONAL_BUILD.md §Часть 3): раздел «Все сообщения»
+        // не строим вообще — вместо него плашка «Запрещаю за собой подсматривать».
         // "Моя статистика" обычного участника — только шапка (графики/сводка), без списка
         // сообщений: ни веток-ответов, ни свайп-удаления (см. isSelfRestrictedView).
-        if (!isSelfRestrictedView) {
+        if (targetIsProtectedDev) {
+            rows.add(Row.Plaque)
+        } else if (!isSelfRestrictedView) {
             val sortedUser = userMessages.sortedByDescending { it.timestampMs }
             val visibleUser = sortedUser.take(visibleLimit)
             rows.ensureCapacity(1 + visibleUser.size + deletedRows.size + 2)
@@ -614,6 +646,7 @@ class UserStatsActivity : AppCompatActivity() {
             is Row.Section -> 1
             is Row.MsgRow -> 2
             is Row.DeletedRow -> 3
+            is Row.Plaque -> 4
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
@@ -622,7 +655,8 @@ class UserStatsActivity : AppCompatActivity() {
                 0 -> HeaderVH(inf.inflate(R.layout.item_stats_header, parent, false))
                 1 -> SectionVH(inf.inflate(R.layout.item_stats_section, parent, false))
                 2 -> MsgVH(inf.inflate(R.layout.item_stats_message, parent, false))
-                else -> DeletedVH(inf.inflate(R.layout.item_stats_deleted, parent, false))
+                3 -> DeletedVH(inf.inflate(R.layout.item_stats_deleted, parent, false))
+                else -> PlaqueVH(inf.inflate(R.layout.item_stats_plaque, parent, false))
             }
         }
 
@@ -632,6 +666,7 @@ class UserStatsActivity : AppCompatActivity() {
                 is Row.Section -> (holder as SectionVH).bind(row)
                 is Row.MsgRow -> (holder as MsgVH).bind(row.msg)
                 is Row.DeletedRow -> (holder as DeletedVH).bind(row)
+                is Row.Plaque -> Unit // статичная плашка, привязывать нечего
             }
         }
 
@@ -659,8 +694,10 @@ class UserStatsActivity : AppCompatActivity() {
 
             fun bind() {
                 // Подсказка про свайп/удаление относится только к разделу "Все сообщения",
-                // которого в урезанном виде "моя статистика" нет — см. isSelfRestrictedView.
-                gestureHint.visibility = if (isSelfRestrictedView) View.GONE else View.VISIBLE
+                // которого нет ни в урезанной "моей статистике" (isSelfRestrictedView), ни у
+                // верифицированного разработчика (targetIsProtectedDev — там плашка).
+                gestureHint.visibility =
+                    if (isSelfRestrictedView || targetIsProtectedDev) View.GONE else View.VISIBLE
                 val segs = listOf(
                     segDay to StatsUtil.Period.DAY, segWeek to StatsUtil.Period.WEEK,
                     segMonth to StatsUtil.Period.MONTH, segYear to StatsUtil.Period.YEAR
@@ -744,6 +781,9 @@ class UserStatsActivity : AppCompatActivity() {
                 count.text = row.count.toString()
             }
         }
+
+        /** Плашка «Запрещаю за собой подсматривать» — статична, вся вёрстка в layout. */
+        inner class PlaqueVH(v: View) : RecyclerView.ViewHolder(v)
 
         inner class MsgVH(v: View) : RecyclerView.ViewHolder(v) {
             private val time: TextView = v.findViewById(R.id.tv_msg_time)

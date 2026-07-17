@@ -102,7 +102,20 @@ object ProfileSync {
                 // пришёл из чужого блоба БЕЗ авы, известная ава затиралась. Не даём копии
                 // без авы/имени перетереть уже известную — берём непустое из любой стороны.
                 avatarBase64  = profileBase.avatarBase64 ?: cur.avatarBase64 ?: p.avatarBase64,
-                name          = profileBase.name.ifBlank { cur.name.ifBlank { p.name } }
+                name          = profileBase.name.ifBlank { cur.name.ifBlank { p.name } },
+                // ⚠️ Identity/подписи ТОЖЕ «липкие» (репорт: «галочка пропадает, когда я не
+                // в сети»). Галочка считается по identitySig/identityPubKey; частичный/
+                // устаревший слот с updatedAt>=known, но БЕЗ подписи, обнулял её на тик —
+                // тот же класс бага, что был у авы. Не даём копии без подписи перетереть
+                // уже известную. БЕЗОПАСНО: подлинность всё равно перепроверяется при
+                // отрисовке (VerifiedBadge.isVerifiedProfile сверяет подпись каждый раз),
+                // так что «залипает» лишь ГЕНУИННАЯ подпись — подделать нельзя (§1).
+                // ephemeral* тоже липкие — не терять ключ FS/1:1-галочку из slim-чтения
+                // (ротация выключена, поэтому свежий непустой ключ всегда побеждает через ?:).
+                identityPubKey  = profileBase.identityPubKey  ?: cur.identityPubKey  ?: p.identityPubKey,
+                identitySig     = profileBase.identitySig     ?: cur.identitySig     ?: p.identitySig,
+                ephemeralPubKey = profileBase.ephemeralPubKey ?: cur.ephemeralPubKey ?: p.ephemeralPubKey,
+                ephemeralSig    = profileBase.ephemeralSig    ?: cur.ephemeralSig    ?: p.ephemeralSig
             )
         }
         return result
@@ -209,7 +222,13 @@ object ProfileSync {
                     // Аватар/имя «липкие» — см. unionWithKnown: копия без авы/имени не
                     // должна перетирать уже известную (иначе ава пропадает у оффлайн-участника).
                     avatarBase64  = base.avatarBase64 ?: cur.avatarBase64 ?: p.avatarBase64,
-                    name          = base.name.ifBlank { cur.name.ifBlank { p.name } }
+                    name          = base.name.ifBlank { cur.name.ifBlank { p.name } },
+                    // Identity/подписи «липкие» — тот же принцип, что и для авы: slim-слот
+                    // без подписи не гасит галочку (подлинность перепроверяется при отрисовке).
+                    identityPubKey  = base.identityPubKey  ?: cur.identityPubKey  ?: p.identityPubKey,
+                    identitySig     = base.identitySig     ?: cur.identitySig     ?: p.identitySig,
+                    ephemeralPubKey = base.ephemeralPubKey ?: cur.ephemeralPubKey ?: p.ephemeralPubKey,
+                    ephemeralSig    = base.ephemeralSig    ?: cur.ephemeralSig    ?: p.ephemeralSig
                 )
             }
         }
@@ -306,6 +325,7 @@ object ProfileSync {
         myAvatarBase64: String? = null,
         myIdentityPubKey: String? = null,
         myEphemeralSig: String? = null,
+        myIdentitySig: String? = null,
         myVerifiedPartnerIdk: String? = null
     ): Boolean = profilesMutex.withLock {
         try {
@@ -327,6 +347,7 @@ object ProfileSync {
                 // identity-поля всегда заново вставляем — чтобы presence-пуш их не терял
                 identityPubKey     = myIdentityPubKey ?: base.identityPubKey,
                 ephemeralSig       = myEphemeralSig ?: base.ephemeralSig,
+                identitySig        = myIdentitySig ?: base.identitySig,
                 verifiedPartnerIdk = myVerifiedPartnerIdk ?: base.verifiedPartnerIdk
             )
             rememberKnown(api.chatId, existing) // не теряем партнёра при флаки-чтениях

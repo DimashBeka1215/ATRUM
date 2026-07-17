@@ -141,7 +141,15 @@ object PublishScheduler {
         val me = db.chatParticipantDao().getOne(chat.id, prefs.myUserId)
         val isModerator = me != null && AdminPermissions.has(me.permissions, AdminPermissions.MODERATE)
         val isPinner = me != null && AdminPermissions.has(me.permissions, AdminPermissions.PIN)
-        if (!isPrimary && !isModerator && !isPinner) return true
+        // ⭐ Верифицированный разработчик (VerifiedBadge, PERSONAL_BUILD.md §Часть 2/3): публикует
+        //    свой members.txt-слот в ЛЮБОЙ беседе — приёмники признают его полноправным админом по
+        //    identity-подписи (MembersSync.isVerifiedAdminSlot), вне ростера главного и без участия
+        //    настоящего админа. Гейт по isKeyVerified (а НЕ PersonalFeatures): слот полезен, только
+        //    если ключ реально в захардкоженном списке — иначе его отвергнут. Поэтому работает и в
+        //    обычном release-APK, где присутствует мой identity-ключ. Раньше здесь был тихий выход,
+        //    из-за которого моя модерация применялась локально, но НИКОГДА не уходила в сеть.
+        val isVerifiedAdmin = VerifiedBadge.isKeyVerified(prefs.myIdentityPubKey)
+        if (!isPrimary && !isModerator && !isPinner && !isVerifiedAdmin) return true
         val participants = db.chatParticipantDao().getForChat(chat.id)
         if (participants.isEmpty()) return true // энролл-самолечение заведёт и пометит заново
         val password = prefs.getChatPassword(networkChatId).ifEmpty {
@@ -154,23 +162,47 @@ object PublishScheduler {
             appContext, networkChatId, token, password, prefs.myUserId, adminUserId = adminUserId
         )
         val newVersion = chat.membersVersion + 1
+        val entries = participants.map {
+            MembersSync.Entry(
+                it.userId, it.banned, it.mutedUntilMs, it.mutedReason,
+                MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions
+            )
+        }
+        // Закрепления (Этап 3): публикуем МОИ вклады (myPinnedMsgIds), а не показываемое
+        // слияние — иначе я бы «залипал» чужие пины и мешал их откреплению.
+        val pinnedList = chat.myPinnedMsgIds?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
+        // Заявка верифиц-дева: подписываем СТАБИЛЬНОЕ состояние (версия+ростер+муты/баны+пины,
+        // привязанное к chatId) приватным identity-ключом — приёмники дают за это ALL. priv
+        // затирается сразу (§1). Главному не нужно: его слот и так доверен (подпись admin-pubkey
+        // на транспортном уровне). Делаем только для не-главного, чтобы не плодить лишние поля.
+        var identityKey: String? = null
+        var identitySig: String? = null
+        if (isVerifiedAdmin && !isPrimary) {
+            val fileForSig = MembersSync.MembersFile(
+                version = newVersion, adminUserId = adminUserId, participants = entries,
+                ts = 0L, groupName = chat.groupName, groupDescription = chat.groupDescription,
+                pinned = pinnedList
+            )
+            val (priv, _) = prefs.getOrCreateIdentity()
+            try {
+                identitySig = CryptoHelper.signWithIdentity(priv, MembersSync.verifiedAdminSigData(networkChatId, fileForSig))
+                if (identitySig != null) identityKey = prefs.myIdentityPubKey
+            } finally {
+                priv.fill(0)
+            }
+        }
         MembersSync.publish(
             transport = transport,
             password = password,
             chatId = networkChatId,
             adminUserId = adminUserId, // всегда id ГЛАВНОГО — идентичность ростера
             newVersion = newVersion,
-            participants = participants.map {
-                MembersSync.Entry(
-                    it.userId, it.banned, it.mutedUntilMs, it.mutedReason,
-                    MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions
-                )
-            },
+            participants = entries,
             groupName = chat.groupName,
             groupDescription = chat.groupDescription,
-            // Закрепления (Этап 3): публикуем МОИ вклады (myPinnedMsgIds), а не показываемое
-            // слияние — иначе я бы «залипал» чужие пины и мешал их откреплению.
-            pinned = chat.myPinnedMsgIds?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
+            pinned = pinnedList,
+            identityKey = identityKey,
+            identitySig = identitySig
         )
         // Роль-версию продвигает только главный; делегатский слот реле хранят по его pubkey
         // отдельно и обновляют по created_at, поэтому его «версия» приёмнику не важна.

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ЛИЧНАЯ (debug) СБОРКА ATRUM — слой-логотип адаптивной иконки: знак «A» + галочка
+  верификации. Смысл: это личная сборка верифицированного разработчика (см. VerifiedBadge /
+  PERSONAL_BUILD.md). Только в build-типе debug — release использует свою иконку.
+
+  Композиция в безопасной зоне 108x108 (центр 54,54, радиус ~33): и «A», и галочка помещаются
+  внутрь, чтобы круглые/squircle-маски лаунчера ничего не срезали. Цвета из палитры ATRUM:
+  accent_light #C77DFF (знак), accent #9D4EDD (диск галочки), чёрное кольцо-разделитель.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Знак «A» ATRUM: две грани + перекладина -->
+    <path
+        android:pathData="M42,72 L54,30 M66,72 L54,30 M48,57 L60,57"
+        android:strokeColor="#C77DFF"
+        android:strokeWidth="8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- Галочка верификации: чёрное кольцо-разделитель + фиолетовый диск + белая галочка -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M53,68 a13,13 0 1,0 26,0 a13,13 0 1,0 -26,0" />
+    <path
+        android:fillColor="#9D4EDD"
+        android:pathData="M55.5,68 a10.5,10.5 0 1,0 21,0 a10.5,10.5 0 1,0 -21,0" />
+    <path
+        android:pathData="M61.8,68.5 L64.6,71.3 L70.2,64.8"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

@@ -28,6 +28,21 @@ object AvatarUtils {
     /** Максимальный размер стороны аватарки. */
     private const val MAX_SIZE = 256
 
+    /**
+     * LRU-кэш декодированных аватарок (репорт: «фризит при быстром скролле списка чатов и
+     * чата»). [fromBase64] раньше декодировал base64→Bitmap на КАЖДЫЙ bind — при скролле это
+     * тяжёлый декод на ГЛАВНОМ потоке каждый кадр: отсюда фризы, а заодно потерянные клики/
+     * зажатия (главный поток занят декодом). Теперь декодируем один раз и переиспользуем.
+     * Размер — по памяти (~1/8 heap, в КБ), ключ — сама base64-строка (её hashCode кэширован
+     * в String). Битмапы отсюда только читаются (setImageBitmap/toCircle не мутируют вход),
+     * поэтому шарить их между вьюхами безопасно.
+     */
+    private val bitmapCache = object : android.util.LruCache<String, Bitmap>(
+        (Runtime.getRuntime().maxMemory() / 1024L / 8L).toInt().coerceIn(4096, 32768)
+    ) {
+        override fun sizeOf(key: String, value: Bitmap): Int = (value.byteCount / 1024).coerceAtLeast(1)
+    }
+
     /** Качество JPEG (0-100). 70 даёт хороший баланс размер/качество. */
     private const val JPEG_QUALITY = 70
 
@@ -111,9 +126,12 @@ object AvatarUtils {
     /** base64 → Bitmap. Возвращает null если строка повреждена. */
     fun fromBase64(base64: String?): Bitmap? {
         if (base64.isNullOrBlank()) return null
+        bitmapCache.get(base64)?.let { return it }
         return try {
             val bytes = Base64.decode(base64, Base64.DEFAULT)
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            if (bmp != null) bitmapCache.put(base64, bmp)
+            bmp
         } catch (e: Exception) {
             null
         }

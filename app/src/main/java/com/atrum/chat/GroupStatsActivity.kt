@@ -60,7 +60,9 @@ class GroupStatsActivity : AppCompatActivity() {
         /** Права делегированного админа (маска). isAdmin=true — это создатель (главный). */
         val permissions: Int,
         val messageCount: Int,
-        val lastMessageAtMs: Long
+        val lastMessageAtMs: Long,
+        /** Верифицированный разработчик (галочка рядом с ником). Считается по подписи identity. */
+        val verified: Boolean = false
     )
 
     /**
@@ -97,13 +99,17 @@ class GroupStatsActivity : AppCompatActivity() {
         val name: String,
         val avatarBase64: String?,
         val isPrimary: Boolean,
-        val permissions: Int
+        val permissions: Int,
+        /** Верифицированный разработчик (галочка рядом с ником). */
+        val verified: Boolean = false
     )
 
     /** Снимок участников/имён/аватаров с последнего refreshStats — питает список админов и пикер. */
     private var lastParticipants: List<com.atrum.chat.data.ChatParticipant> = emptyList()
     private val nameMap = HashMap<String, String>()
     private val avatarMap = HashMap<String, String?>()
+    /** userId → верифицированный разработчик? (для галочки в списке админов/пикере). */
+    private val verifiedMap = HashMap<String, Boolean>()
 
     /** Все события группы (join/leave), отсортированы по времени — источник раздела «Беседа». */
     private var allEvents: List<com.atrum.chat.data.GroupEventEntry> = emptyList()
@@ -255,7 +261,8 @@ class GroupStatsActivity : AppCompatActivity() {
             val myPerms = withContext(Dispatchers.IO) {
                 db.chatParticipantDao().getOne(entity.id, prefs.myUserId)?.permissions ?: 0
             }
-            val canStats = isPrimaryAdmin || AdminPermissions.has(myPerms, AdminPermissions.STATS)
+            // Личная сборка (PERSONAL): доступ к статистике любой беседы локально.
+            val canStats = PersonalFeatures.enabled || isPrimaryAdmin || AdminPermissions.has(myPerms, AdminPermissions.STATS)
             if (!canStats) { finish(); return@launch }
             // «+» назначения админа — только у главного.
             findViewById<ImageButton>(R.id.btn_add_admin).visibility =
@@ -410,7 +417,11 @@ class GroupStatsActivity : AppCompatActivity() {
                     isAdmin = p.userId == chatEntity.adminUserId,
                     permissions = p.permissions,
                     messageCount = counts[p.userId] ?: 0,
-                    lastMessageAtMs = lastTs[p.userId] ?: 0L
+                    lastMessageAtMs = lastTs[p.userId] ?: 0L,
+                    // Галочка: свой ряд — по своему ключу (профиль себя тут может ещё не быть),
+                    // остальные — неподделываемо по подписи identity (единая точка правды).
+                    verified = if (isMe) VerifiedBadge.isVerifiedSelf(prefs.myIdentityPubKey)
+                               else VerifiedBadge.isVerifiedDev(networkChatId, p.userId, prof)
                 )
             }.sortedWith(compareByDescending<UserStat> { it.messageCount }.thenByDescending { it.lastMessageAtMs })
 
@@ -420,7 +431,7 @@ class GroupStatsActivity : AppCompatActivity() {
 
             // Снимок для раздела «Админы» и пикера назначения (имена/аватары/права).
             lastParticipants = participants
-            stats.forEach { nameMap[it.userId] = it.name; avatarMap[it.userId] = it.avatarBase64 }
+            stats.forEach { nameMap[it.userId] = it.name; avatarMap[it.userId] = it.avatarBase64; verifiedMap[it.userId] = it.verified }
             if (sectionAdmins.visibility == View.VISIBLE) renderAdmins()
 
             // Раздел «Беседа»: журнал событий + карта имён для таймлайна.
@@ -474,7 +485,8 @@ class GroupStatsActivity : AppCompatActivity() {
                     name = nameMap[it.userId] ?: it.userId.take(8),
                     avatarBase64 = avatarMap[it.userId],
                     isPrimary = it.userId == primaryId,
-                    permissions = it.permissions
+                    permissions = it.permissions,
+                    verified = verifiedMap[it.userId] ?: VerifiedBadge.isConfirmedDev(networkChatId, it.userId)
                 )
             }
             .sortedWith(compareByDescending<AdminInfo> { it.isPrimary }.thenBy { it.name.lowercase() })
@@ -739,11 +751,13 @@ class GroupStatsActivity : AppCompatActivity() {
                     letterTv.visibility = View.VISIBLE
                     letterTv.text = stat.name.trim().firstOrNull()?.uppercase() ?: "?"
                 }
-                nameTv.text = when {
+                val displayName = when {
                     stat.isAdmin -> itemView.context.getString(R.string.group_stats_name_with_admin, stat.name) // создатель
                     AdminPermissions.isAdmin(stat.permissions) -> itemView.context.getString(R.string.group_stats_name_with_delegate, stat.name) // админ
                     else -> stat.name
                 }
+                // Галочка «Разработчик ATRUM» рядом с ником (кликабельна → пояснение).
+                VerifiedBadge.applyNameBadge(nameTv, displayName, stat.verified)
                 subTv.text = if (stat.lastMessageAtMs > 0)
                     itemView.context.getString(
                         R.string.group_stats_last_active,
@@ -801,7 +815,8 @@ class GroupStatsActivity : AppCompatActivity() {
                     letterTv.visibility = View.VISIBLE
                     letterTv.text = info.name.trim().firstOrNull()?.uppercase() ?: "?"
                 }
-                nameTv.text = info.name
+                // Галочка «Разработчик ATRUM» рядом с ником админа (кликабельна → пояснение).
+                VerifiedBadge.applyNameBadge(nameTv, info.name, info.verified)
                 ownerIv.visibility = if (info.isPrimary) View.VISIBLE else View.GONE
                 chevronIv.visibility = if (info.isPrimary) View.GONE else View.VISIBLE
                 subTv.text = if (info.isPrimary) ctx.getString(R.string.admins_primary_label)

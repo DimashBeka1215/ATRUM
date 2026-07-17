@@ -26,7 +26,9 @@ android {
 
     defaultConfig {
         applicationId = "com.atrum.chat"
-        minSdk = 24
+        // Android 6.0. Ниже API 23 нельзя — это floor для EncryptedSharedPreferences
+        // (androidx.security-crypto), где лежат все секреты чатов.
+        minSdk = 23
         targetSdk = 34
         // ══════════════════════════════════════════════════════════════════
         // ⚠️  AI AGENT — ОБЯЗАТЕЛЬНО ЧИТАТЬ ПЕРЕД ЛЮБЫМ ИЗМЕНЕНИЕМ КОДА
@@ -43,8 +45,18 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 448
-        versionName = "3.36.0-beta363-decentralized-roster"
+        versionCode = 489
+        versionName = "3.43.8-beta403-minsdk23"
+
+        // ЛИЧНАЯ СБОРКА: по умолчанию ВЫКЛючена (обычный релиз чист). Включается в build-типе
+        // debug (см. buildTypes). Личные «фишки для себя» в коде прячутся за
+        // BuildConfig.PERSONAL / PersonalFeatures.enabled — в release они не выполняются.
+        buildConfigField("boolean", "PERSONAL", "false")
+
+        // Имя приложения (лаунчер) — по умолчанию «ATRUM» (обычный релиз). Личная сборка
+        // (debug) переопределяет на «ATRUM DEBUG», см. buildTypes. Подставляется в манифест
+        // через android:label="${appName}".
+        manifestPlaceholders["appName"] = "ATRUM"
 
         // Включаем multidex чтобы не упереться в лимит 65k методов
         // когда много AndroidX/Material/Room/uCrop/browser библиотек
@@ -145,6 +157,18 @@ android {
             }
         }
         debug {
+            // ── ЛИЧНАЯ СБОРКА (ATRUM Personal) ──────────────────────────────────────
+            // Отдельный applicationId (…​.debug) → ставится РЯДОМ с обычным релизом, не
+            // конфликтует, СВОИ данные/чаты. Функционально идентична релизу, но включает
+            // личные фишки за BuildConfig.PERSONAL (см. PersonalFeatures).
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-personal"
+            buildConfigField("boolean", "PERSONAL", "true")
+            // Личная сборка называется «ATRUM DEBUG» (обычная — «ATRUM», см. defaultConfig).
+            manifestPlaceholders["appName"] = "ATRUM DEBUG"
+            // Подписываем тем же release-ключом (если есть keystore.properties) — чтобы это
+            // была полноценная сборка на каждый день, а не одноразовая debug-заглушка.
+            if (hasKeystore) signingConfig = signingConfigs.getByName("release")
         }
     }
 

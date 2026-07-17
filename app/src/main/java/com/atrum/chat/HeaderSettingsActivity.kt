@@ -45,9 +45,18 @@ class HeaderSettingsActivity : SecureActivity() {
 
     // ── Image picking ──────────────────────────────────────────────────────────
 
-    private val pickImage = registerForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri: Uri? -> if (uri != null) validateThenCrop(uri) }
+    // НАША галерея вместо системного ACTION_GET_CONTENT (см. pickBanner()/MediaPick).
+    private val bannerPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        if (result.values.any { it }) MediaPick.pickOne(this, lifecycleScope) { validateThenCrop(it) }
+        else Toast.makeText(this, R.string.gallery_perm_needed, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun pickBanner() {
+        if (MediaPick.hasAccess(this)) MediaPick.pickOne(this, lifecycleScope) { validateThenCrop(it) }
+        else bannerPermLauncher.launch(MediaPick.perms())
+    }
 
     private val cropImage = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -68,7 +77,7 @@ class HeaderSettingsActivity : SecureActivity() {
 
         binding.btnChangeBanner.setOnClickListener {
             AppLock.beginShareGrace()
-            pickImage.launch("image/*")
+            pickBanner()
         }
         binding.btnRemoveBanner.setOnClickListener { confirmRemove() }
 
@@ -171,7 +180,7 @@ class HeaderSettingsActivity : SecureActivity() {
     }
 
     /**
-     * Диалог с подсказкой о safe zone перед запуском UCrop.
+     * Диалог с подсказкой о safe zone перед запуском кадратора (BannerCropActivity).
      * Сообщает пользователю, что края могут быть обрезаны на разных экранах.
      */
     private fun showSafeZoneHint(onContinue: () -> Unit) {

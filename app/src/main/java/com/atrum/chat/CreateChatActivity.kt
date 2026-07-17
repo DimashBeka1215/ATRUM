@@ -21,7 +21,6 @@ import androidx.lifecycle.lifecycleScope
 import com.atrum.chat.data.AppDatabase
 import com.atrum.chat.data.Chat
 import com.atrum.chat.databinding.ActivityCreateChatBinding
-import com.yalantis.ucrop.UCrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -185,21 +184,21 @@ class CreateChatActivity : SecureActivity() {
         else Toast.makeText(this, R.string.bt_perm_needed, Toast.LENGTH_LONG).show()
     }
 
-    // ── Аватарка группового чата (системный пикер + UCrop — как обычная аватарка) ──
+    // ── Аватарка группового чата (НАША галерея + наш кадратор 1:1, как обычная аватарка) ──
 
-    private val pickGroupAvatar = registerForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri: Uri? -> if (uri != null) startGroupAvatarCrop(uri) }
+    private val groupAvatarPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        if (result.values.any { it }) MediaPick.pickOne(this, lifecycleScope) { startGroupAvatarCrop(it) }
+        else Toast.makeText(this, R.string.gallery_perm_needed, Toast.LENGTH_SHORT).show()
+    }
 
     private val cropGroupAvatar = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK && result.data != null) {
-            val uri = UCrop.getOutput(result.data!!)
+            val uri = result.data!!.getStringExtra(AvatarCropActivity.EXTRA_OUTPUT_URI)?.let { Uri.parse(it) }
             if (uri != null) applyGroupAvatarUri(uri)
-        } else if (result.resultCode == UCrop.RESULT_ERROR && result.data != null) {
-            val err = UCrop.getError(result.data!!)
-            Toast.makeText(this, getString(R.string.error_avatar_load) + ": ${err?.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -476,27 +475,15 @@ class CreateChatActivity : SecureActivity() {
 
     /** Тап по аватару в групповом режиме — системный пикер фото, затем кроп (как обычная аватарка). */
     private fun onGroupAvatarTap() {
-        pickGroupAvatar.launch("image/*")
+        if (MediaPick.hasAccess(this)) MediaPick.pickOne(this, lifecycleScope) { startGroupAvatarCrop(it) }
+        else groupAvatarPermLauncher.launch(MediaPick.perms())
     }
 
     private fun startGroupAvatarCrop(sourceUri: Uri) {
-        val destUri = Uri.fromFile(File(cacheDir, "group_avatar_crop_${System.currentTimeMillis()}.jpg"))
-        val options = UCrop.Options().apply {
-            setCircleDimmedLayer(true)
-            setShowCropFrame(false)
-            setShowCropGrid(false)
-            setCompressionFormat(Bitmap.CompressFormat.JPEG)
-            setCompressionQuality(90)
-            setToolbarTitle(getString(R.string.crop_avatar_title))
-            setHideBottomControls(true)
-            setFreeStyleCropEnabled(false)
-        }
+        // Наш нативный кадратор (1:1, круг) вместо системного uCrop.
         cropGroupAvatar.launch(
-            UCrop.of(sourceUri, destUri)
-                .withAspectRatio(1f, 1f)
-                .withMaxResultSize(1024, 1024)
-                .withOptions(options)
-                .getIntent(this)
+            Intent(this, AvatarCropActivity::class.java)
+                .putExtra(AvatarCropActivity.EXTRA_SOURCE_URI, sourceUri.toString())
         )
     }
 

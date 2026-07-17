@@ -92,10 +92,14 @@ class ChatsAdapter(
         private val unreadBadge: TextView = itemView.findViewById(R.id.tv_unread_badge)
         private val mentionBadge: TextView = itemView.findViewById(R.id.tv_mention_badge)
         private val pinIcon: View = itemView.findViewById(R.id.iv_pin)
+        private val verifiedBadge: VerifiedBadgeView = itemView.findViewById(R.id.verified_badge_list)
 
         fun bind(chat: Chat, formattedTime: String, query: String = "") {
             time.text = formattedTime
             pinIcon.visibility = if (chat.isPinned) View.VISIBLE else View.GONE
+            // Галочка верификации у ника собеседника (только 1:1; partnerVerified считается
+            // криптографически фоновым опросом, см. VerifiedBadge). Групп/избранного не касается.
+            verifiedBadge.setVerified(chat.partnerVerified, animate = false)
 
             if (chat.isSystemNotifications) {
                 // Системный чат «Уведомления» (SystemNotifications, мокап одобрен):

@@ -147,7 +147,35 @@ class MessageAdapter(
         }
     }
 
+    /**
+     * userId'ы отправителей с валидной верификацией (галочка у ника в беседе). Считается
+     * КРИПТОГРАФИЧЕСКИ в ChatActivity (VerifiedBadge.isVerifiedProfile по подписи identity),
+     * адаптер лишь рисует — подделать нельзя (см. PERSONAL_BUILD.md). Меняется редко.
+     */
+    private var verifiedUserIds: Set<String> = emptySet()
+
+    fun updateVerifiedUsers(newSet: Set<String>) {
+        if (newSet == verifiedUserIds) return
+        val changed = (newSet - verifiedUserIds) + (verifiedUserIds - newSet)
+        verifiedUserIds = newSet
+        if (changed.isEmpty()) return
+        val eff = effectiveList()
+        for (i in eff.indices) {
+            val uid = eff[i].senderUserId ?: continue
+            if (uid in changed) notifyItemChanged(i)
+        }
+    }
+
     private fun avatarFor(msg: Message): String? = msg.senderUserId?.let { avatarsByUserId[it] }
+
+    /** Верифицирован ли отправитель сообщения (галочка у ника). Считается во ВНЕШНЕМ классе
+     *  адаптера — VH не видит [verifiedUserIds], поэтому результат передаётся в bind(). */
+    private fun isVerifiedSender(msg: Message): Boolean =
+        msg.senderUserId != null && msg.senderUserId in verifiedUserIds
+
+    /** Публичная проверка (для ChatActivity): сообщение от верифицированного разработчика?
+     *  Используется, чтобы запретить удаление его сообщений другими (PERSONAL_BUILD.md §Часть 3). */
+    fun senderIsVerified(msg: Message): Boolean = isVerifiedSender(msg)
 
     /** true — сообщение первое в подряд идущей серии от одного отправителя (см. §0 мокапа). */
     private fun isFirstOfRun(position: Int): Boolean {
@@ -432,7 +460,8 @@ class MessageAdapter(
             bubbleAlphaOther  = bubbleAlphaOther,
             avatarBase64      = avatarFor(msg),
             showAvatar        = isFirstOfRun(position),
-            isGroupChat       = isGroupChat
+            isGroupChat       = isGroupChat,
+            isVerifiedSender  = isVerifiedSender(msg)
         )
     }
 
@@ -492,6 +521,8 @@ class MessageAdapter(
         private val onCollageImageClick: (refs: List<String>, startIndex: Int) -> Unit
     ) : RecyclerView.ViewHolder(itemView) {
         private val senderView: TextView? = itemView.findViewById(R.id.tv_sender)
+        private val senderRow: View? = itemView.findViewById(R.id.sender_row)
+        private val verifiedBadgeSender: VerifiedBadgeView? = itemView.findViewById(R.id.verified_badge_sender)
         private val textView: TextView = itemView.findViewById(R.id.tv_text)
         private val linkPreview: View? = itemView.findViewById(R.id.link_preview)
         private val lpSite: TextView? = itemView.findViewById(R.id.lp_site)
@@ -615,7 +646,8 @@ class MessageAdapter(
             bubbleAlphaOther: Float = 1.0f,
             avatarBase64: String? = null,
             showAvatar: Boolean = false,
-            isGroupChat: Boolean = false
+            isGroupChat: Boolean = false,
+            isVerifiedSender: Boolean = false
         ) {
             if (msg.isSystem) {
                 bindSystem(msg)
@@ -628,8 +660,13 @@ class MessageAdapter(
                 if (msg.sender.isNotBlank()) {
                     it.text = msg.sender
                     it.visibility = View.VISIBLE
+                    (senderRow ?: it).visibility = View.VISIBLE
+                    // Галочка верификации рядом с ником отправителя в беседе. [isVerifiedSender]
+                    // считает адаптер криптографически (см. isVerifiedSender/VerifiedBadge) —
+                    // передаётся параметром, т.к. VH не видит поля адаптера.
+                    verifiedBadgeSender?.setVerified(isVerifiedSender, animate = false)
                 } else {
-                    it.visibility = View.GONE
+                    (senderRow ?: it).visibility = View.GONE
                 }
             }
 

@@ -70,16 +70,32 @@
         android:minWidth="120dp"
         android:maxWidth="280dp">
 
-        <TextView
-            android:id="@+id/tv_sender"
+        <LinearLayout
+            android:id="@+id/sender_row"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:textColor="@color/accent_light"
-            android:textSize="13sp"
-            android:fontFamily="sans-serif-medium"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
             android:layout_marginBottom="3dp"
-            android:paddingHorizontal="2dp"
-            android:visibility="gone"/>
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tv_sender"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/accent_light"
+                android:textSize="13sp"
+                android:fontFamily="sans-serif-medium"
+                android:paddingHorizontal="2dp"/>
+
+            <com.atrum.chat.VerifiedBadgeView
+                android:id="@+id/verified_badge_sender"
+                android:layout_width="13dp"
+                android:layout_height="13dp"
+                android:layout_marginStart="4dp"
+                android:visibility="gone"
+                android:contentDescription="@string/verified_badge_cd"/>
+        </LinearLayout>
 
         <!-- Блок цитаты -->
         <LinearLayout

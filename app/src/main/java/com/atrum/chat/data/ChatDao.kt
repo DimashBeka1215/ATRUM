@@ -101,4 +101,8 @@ interface ChatDao {
     /** Непрочитанные @упоминания (msgId через запятую) — бейдж «@N» и кнопка перехода. */
     @Query("UPDATE chats SET mentionMsgIds = :csv WHERE id = :id")
     suspend fun updateMentionMsgIds(id: Long, csv: String?)
+
+    /** Флаг верификации собеседника 1:1 (галочка у ника в списке чатов, DB v23). */
+    @Query("UPDATE chats SET partnerVerified = :verified WHERE id = :id")
+    suspend fun updatePartnerVerified(id: Long, verified: Boolean)
 }

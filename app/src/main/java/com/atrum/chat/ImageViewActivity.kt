@@ -234,20 +234,48 @@ class ImageViewActivity : SecureActivity() {
         iv.setOnTouchListener { _, event ->
             scaleDetector.onTouchEvent(event)
             doubleTapDetector.onTouchEvent(event)
+            // ⚠️ Пока идёт пинч ИЛИ фото увеличено — ЗАБИРАЕМ жест у ViewPager2. Иначе он
+            // перехватывает мультитач/горизонтальный сдвиг для листания страниц, и жест
+            // рвётся посреди пинча → фото «фризит и глючит», зум рывками (репорт). Когда
+            // вернулись к fit — отдаём перехват обратно, чтобы листание работало как прежде.
+            val zoomed = state.currentScale() > state.minScale * 1.01f
+            if (scaleDetector.isInProgress || zoomed) {
+                iv.parent?.requestDisallowInterceptTouchEvent(true)
+            }
             when (event.action and MotionEvent.ACTION_MASK) {
                 MotionEvent.ACTION_DOWN -> {
                     savedMatrix.set(state.matrix)
                     startPoint.set(event.x, event.y)
                     mode = DRAG
+                    iv.parent?.requestDisallowInterceptTouchEvent(zoomed)
                 }
-                MotionEvent.ACTION_POINTER_DOWN -> mode = ZOOM
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> mode = NONE
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    mode = ZOOM
+                    iv.parent?.requestDisallowInterceptTouchEvent(true)
+                }
                 MotionEvent.ACTION_MOVE -> {
                     if (mode == DRAG && !scaleDetector.isInProgress) {
                         state.matrix.set(savedMatrix)
                         state.matrix.postTranslate(event.x - startPoint.x, event.y - startPoint.y)
                         state.constrain()
                         iv.imageMatrix = state.matrix
+                    }
+                }
+                MotionEvent.ACTION_POINTER_UP -> {
+                    // Один палец подняли, другой остался — пересохраняем базу пана по
+                    // ОСТАВШЕМУСЯ пальцу, чтобы не было скачка и пан продолжился плавно.
+                    val restIdx = if (event.actionIndex == 0) 1 else 0
+                    if (restIdx < event.pointerCount) {
+                        startPoint.set(event.getX(restIdx), event.getY(restIdx))
+                        savedMatrix.set(state.matrix)
+                        mode = DRAG
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    mode = NONE
+                    // Вернулись к fit → снова разрешаем ViewPager2 листать страницы.
+                    if (state.currentScale() <= state.minScale * 1.01f) {
+                        iv.parent?.requestDisallowInterceptTouchEvent(false)
                     }
                 }
             }

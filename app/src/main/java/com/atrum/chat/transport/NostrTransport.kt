@@ -107,6 +107,17 @@ class NostrTransport(
     override fun pubkeyForUserId(userId: String): String =
         com.atrum.chat.nostr.Schnorr.pubkeyFromPrivkey(sha256("atrum_nostr_v1_${chatPassword}_$userId")).toHex()
 
+    /**
+     * Прогрев соединений при входе в чат (репорт: «первое сообщение заедает»). Заранее
+     * открывает сокеты к реле ЭТОГО чата (activeRelays: базовые + дополнительные) именно в
+     * режиме чата ([useTor]) — прежний prewarm грел только базовый набор в Tor-режиме на
+     * старте приложения, поэтому чат, открытый «холодным» или в direct-режиме, платил за
+     * установку сокета на первом send. Идемпотентно: prewarm — no-op, если соединение живо.
+     */
+    override fun warmUp() {
+        NostrRelayPool.prewarm(activeRelays(), useTor)
+    }
+
     /** Удалённые сообщения этого канала (для экрана статистики админа), см. NostrMessageStore.DeletedMessage. */
     fun deletedMessages(): List<NostrMessageStore.DeletedMessage> = NostrMessageStore.deletedMessagesFor(channelId)
 
@@ -306,25 +317,50 @@ class NostrTransport(
     }
 
     /**
-     * Мультиподпись (Этап 2 «Админы»): все проверенные по подписи слоты members.txt,
-     * по ОДНОМУ новейшему на подписанта (pubkey). Транспорт НЕ решает, кому доверять
-     * (он не расшифровывает контент) — только гарантирует подлинность подписи каждого
-     * слота. Кого из них применять (главный + делегаты с правом MODERATE) и как слить —
-     * задача MembersSync.mergeSlots (верховенство главного). Для 1:1-чатов и там, где
-     * членства нет, список пуст и всё поведение прежнее.
+     * ⭐ ЛИПКИЙ кэш слотов members.txt для ЭТОГО канала (pubkey → новейшее событие). Реле на
+     * отдельном тике может НЕ вернуть чей-то слот (флаки-чтение через Tor) — раньше это роняло
+     * его закрепы/мут/бан из mergeSlots, и они «мигали / не у всех синхронизировались».
+     *
+     * ⚠️ Кэш СТАТИЧЕСКИЙ (по каналу, см. [stickyMemberSlotsByChannel]) — чтобы переживать
+     * ПЕРЕСОЗДАНИЕ транспорта при перезаходе в чат. Иначе при перезаходе кэш сбрасывался,
+     * первое неполное чтение давало усечённый merge, applyIncoming перетирал им Room-набор —
+     * и закрепы (особенно делегатские/верифиц-дева) пропадали (репорт: «закрепы исчезают
+     * после перезахода»). Помним новейший слот на подписанта; пустое чтение его НЕ роняет,
+     * а слот с большим created_at заменяет (реальный анпин/анбан доезжает).
      */
-    private fun verifiedMemberSlots(events: List<NostrEvent>): List<MemberSlot> =
-        events
+    private fun stickyMemberEvents(): java.util.concurrent.ConcurrentHashMap<String, NostrEvent> =
+        stickyMemberSlotsByChannel.getOrPut(channelId) { java.util.concurrent.ConcurrentHashMap() }
+
+    /**
+     * Мультиподпись (Этап 2 «Админы»): все проверенные по подписи слоты members.txt,
+     * по ОДНОМУ новейшему на подписанта (pubkey), С ЛИПКОСТЬЮ (см. [stickyMemberEvents]).
+     * Транспорт НЕ решает, кому доверять (он не расшифровывает контент) — только гарантирует
+     * подлинность подписи каждого слота. Кого применять (главный + делегаты с правом
+     * MODERATE/PIN + верифиц-дев) и как слить — задача MembersSync.mergeSlots. Для 1:1-чатов
+     * и там, где членства нет, список пуст и всё поведение прежнее.
+     */
+    private fun verifiedMemberSlots(events: List<NostrEvent>): List<MemberSlot> {
+        val sticky = stickyMemberEvents()
+        // Новейшие валидные слоты ИМЕННО этого чтения (по одному на подписанта).
+        val fresh = events
             .filter { ev -> eventHasFileName(ev, "members.txt") }
             .filter { ev -> NostrEvent.verifySignature(ev) }
             .groupBy { it.pubkey.lowercase() }
             .mapNotNull { (_, evs) -> evs.maxByOrNull { it.created_at } }
+        // Липкое слияние: пустое/частичное чтение не теряет слоты, новее по времени — заменяет.
+        for (ev in fresh) {
+            val key = ev.pubkey.lowercase()
+            val cur = sticky[key]
+            if (cur == null || ev.created_at >= cur.created_at) sticky[key] = ev
+        }
+        // ⚠️ ДЕТЕРМИНИРОВАННЫЙ ПОРЯДОК (репорт: «всё тормозит»): без сортировки порядок
+        // слотов зависит от порядка прихода событий с реле → hashAll меняется каждый
+        // опрос → loadAllIfChanged всегда «изменилось» → открытый чат/список
+        // переобрабатываются на КАЖДОМ тике. Сортировка по pubkey фиксирует порядок.
+        return sticky.values
             .map { MemberSlot(it.pubkey, it.content) }
-            // ⚠️ ДЕТЕРМИНИРОВАННЫЙ ПОРЯДОК (репорт: «всё тормозит»): без сортировки порядок
-            // слотов зависит от порядка прихода событий с реле → hashAll меняется каждый
-            // опрос → loadAllIfChanged всегда «изменилось» → открытый чат/список
-            // переобрабатываются на КАЖДОМ тике. Сортировка по pubkey фиксирует порядок.
             .sortedBy { it.signerPubkey }
+    }
 
     /**
      * Content файла [name] (members.txt / groupprofile.txt) от САМОГО СВЕЖЕГО события,
@@ -642,6 +678,21 @@ class NostrTransport(
         put("since", sinceSec)
     }
 
+    /**
+     * Фильтр стрима ИЗМЕНЕНИЙ members.txt / groupprofile.txt (закрепы, бан/мут/роли, имя/ава
+     * беседы). Эти события публикуются как FILE_KIND с тегом d=wireName(имя файла). Раньше
+     * они ловились ТОЛЬКО периодическим опросом → закрепы «доезжали» поздно. Стрим на них
+     * даёт мгновенную синхронизацию, как у сообщений (тот же forceSync). Профили (частый
+     * presence) сюда НЕ попадают — фильтруем по конкретным d-тегам, чтобы не будить синк
+     * на каждый heartbeat.
+     */
+    private fun membersStreamFilter(sinceSec: Long): JSONObject = JSONObject().apply {
+        put("kinds", JSONArray().put(FILE_KIND))
+        put("#t", JSONArray().put(channelId))
+        put("#d", JSONArray().put(wireName("members.txt")).put(wireName("groupprofile.txt")))
+        put("since", sinceSec)
+    }
+
     /** Набор реле, для которых сейчас ВЫПОЛНЯЕТСЯ попытка подписки (защита от шторма). */
     private val connectingRelays = java.util.Collections.synchronizedSet(HashSet<String>())
 
@@ -655,12 +706,19 @@ class NostrTransport(
 
     override fun watchMessages(onNew: () -> Unit): AutoCloseable {
         val subId = "atrumw_$channelId"
+        val subIdMembers = "atrumm_$channelId"
         val sinceSec = System.currentTimeMillis() / 1000
         val onEvent: (NostrEvent) -> Unit = { ev ->
             if (ev.kind == 1) {
                 NostrMessageStore.merge(channelId, listOf(ev))
                 onNew()
             }
+        }
+        // Живой стрим members.txt/groupprofile.txt (закрепы, модерация, имя/ава беседы):
+        // событие с реле → сразу forceSync, как у сообщений. Фильтр по d-тегам не пускает
+        // сюда частые presence-профили. §1: только триггер чтения, тайминги не меняем.
+        val onEventMembers: (NostrEvent) -> Unit = { ev ->
+            if (ev.kind == FILE_KIND) onNew()
         }
         val job = watchScope.launch {
             while (isActive) {
@@ -676,8 +734,69 @@ class NostrTransport(
                             }
                         }
                     }
+                    if (!NostrRelayPool.hasSub(url, subIdMembers, useTor) && !connectingRelays.contains(url + subIdMembers)) {
+                        launch {
+                            val key = url + subIdMembers
+                            connectingRelays.add(key)
+                            try {
+                                runCatching { NostrRelayPool.subscribe(url, subIdMembers, membersStreamFilter(sinceSec), useTor, onEventMembers) }
+                            } finally {
+                                connectingRelays.remove(key)
+                            }
+                        }
+                    }
                 }
                 delay(if (useTor) RESUBSCRIBE_TOR_MS else RESUBSCRIBE_MS)
+            }
+        }
+        return AutoCloseable {
+            job.cancel()
+            for (url in activeRelays()) {
+                runCatching { NostrRelayPool.unsubscribe(url, subId, useTor) }
+                runCatching { NostrRelayPool.unsubscribe(url, subIdMembers, useTor) }
+            }
+        }
+    }
+
+    /**
+     * Стрим сообщений с ПРИНУДИТЕЛЬНЫМ САМОЛЕЧЕНИЕМ (для списка чатов — минимальная задержка
+     * на КАЖДОМ сообщении). В отличие от [watchMessages], который переподписывается ТОЛЬКО
+     * когда hasSub=false, здесь раз в [STREAM_REOPEN_MS] REQ на каждом реле ПРИНУДИТЕЛЬНО
+     * переоткрывается (unsubscribe+subscribe) с lookback'ом since=now-[STREAM_REOPEN_LOOKBACK_SEC].
+     *
+     * Зачем: публичное реле может «тихо убить» подписку (сокет жив, hasSub=true, но новые
+     * события не приходят) — тогда обычная переподписка не срабатывает, и следующие
+     * сообщения ждут дорогого опроса (union-чтение + кросс-сетевая гонка кворума → до ~30с).
+     * Переоткрытие с lookback заставляет реле ПОВТОРНО прислать события «мёртвого окна»
+     * (дедуп в NostrMessageStore.merge), а живая подписка между переоткрытиями пушит мгновенно
+     * с ЛЮБОГО реле (push, без кворума). Через Tor интервал щедрее (переоткрытие цепочек дорогое).
+     */
+    override fun watchMessages(fastReopen: Boolean, onNew: () -> Unit): AutoCloseable {
+        if (!fastReopen) return watchMessages(onNew)
+        val subId = "atrumw_$channelId"
+        val onEvent: (NostrEvent) -> Unit = { ev ->
+            if (ev.kind == 1) {
+                NostrMessageStore.merge(channelId, listOf(ev))
+                onNew()
+            }
+        }
+        val job = watchScope.launch {
+            while (isActive) {
+                val sinceSec = (System.currentTimeMillis() / 1000) - STREAM_REOPEN_LOOKBACK_SEC
+                activeRelays().forEach { url ->
+                    val key = "reopen_$url$subId"
+                    if (connectingRelays.add(key)) {
+                        launch {
+                            try {
+                                runCatching { NostrRelayPool.unsubscribe(url, subId, useTor) }
+                                runCatching { NostrRelayPool.subscribe(url, subId, streamFilter(sinceSec), useTor, onEvent) }
+                            } finally {
+                                connectingRelays.remove(key)
+                            }
+                        }
+                    }
+                }
+                delay(if (useTor) STREAM_REOPEN_TOR_MS else STREAM_REOPEN_MS)
             }
         }
         return AutoCloseable {
@@ -901,6 +1020,14 @@ class NostrTransport(
     companion object {
         const val NOSTR_TOKEN = "NOSTR_V1"
         const val NOSTR_DIRECT_TOKEN = "NOSTR_DIRECT_V1"
+
+        /**
+         * Статический липкий кэш слотов members.txt по каналу (channelId → pubkey → новейшее
+         * событие). Живёт на уровне процесса, поэтому переживает пересоздание транспорта при
+         * перезаходе в чат — чинит «закрепы исчезают после перезахода» (см. verifiedMemberSlots).
+         */
+        private val stickyMemberSlotsByChannel =
+            java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<String, com.atrum.chat.nostr.NostrEvent>>()
         private const val FILE_KIND = 1063
         /**
          * Размер ОДНОГО чанка файла (символов зашифрованного контента).
@@ -943,6 +1070,14 @@ class NostrTransport(
         /** Как часто сторож проверяет, что стрим-подписка жива (переоткрыть после обрыва). */
         private const val RESUBSCRIBE_MS = 10_000L
         private const val RESUBSCRIBE_TOR_MS = 20_000L
+        /** Самолечение стрима (fastReopen, список чатов): интервал ПРИНУДИТЕЛЬНОГО
+         *  переоткрытия подписки против «тихой смерти» на реле. Direct — часто (минимальная
+         *  задержка), Tor — щедрее (переоткрытие цепочек дорогое). */
+        private const val STREAM_REOPEN_MS = 4_000L
+        private const val STREAM_REOPEN_TOR_MS = 12_000L
+        /** Lookback при переоткрытии: реле повторно пришлёт события «мёртвого окна» за это
+         *  время (дедуп в NostrMessageStore.merge). Покрывает интервал переоткрытия с запасом. */
+        private const val STREAM_REOPEN_LOOKBACK_SEC = 40L
 
         /** LRU неизменяемых медиа-файлов (чанки/манифесты img_/stk_) — повторное чтение из памяти. */
         private const val MEDIA_CACHE_MAX_CHARS = 8 * 1024 * 1024

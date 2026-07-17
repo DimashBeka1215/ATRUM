@@ -13,11 +13,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
 import com.atrum.chat.data.AppDatabase
 import com.atrum.chat.databinding.ActivitySettingsBinding
-import com.yalantis.ucrop.UCrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -30,22 +28,29 @@ class SettingsActivity : SecureActivity() {
     private lateinit var binding: ActivitySettingsBinding
     private lateinit var prefs: Prefs
 
-    private val pickImage = registerForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri: Uri? -> if (uri != null) startCrop(uri) }
+    // Разрешение на доступ к фото для НАШЕЙ галереи (GalleryPicker). Системный
+    // ACTION_GET_CONTENT больше не используется — см. pickAvatar()/MediaPick.
+    private val avatarPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        if (result.values.any { it }) MediaPick.pickOne(this, lifecycleScope) { startCrop(it) }
+        else Toast.makeText(this, R.string.gallery_perm_needed, Toast.LENGTH_SHORT).show()
+    }
 
+    // Результат НАШЕГО кадратора (AvatarCropActivity) — Uri вырезанного квадрата.
     private val cropImage = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK && result.data != null) {
-            val uri = UCrop.getOutput(result.data!!)
+            val uri = result.data!!.getStringExtra(AvatarCropActivity.EXTRA_OUTPUT_URI)?.let { Uri.parse(it) }
             if (uri != null) loadAvatarFromUri(uri)
-        } else if (result.resultCode == UCrop.RESULT_ERROR && result.data != null) {
-            val err = UCrop.getError(result.data!!)
-            Toast.makeText(this,
-                getString(R.string.error_avatar_load) + ": ${err?.message}",
-                Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /** Наша галерея (с проверкой доступа к фото) для выбора аватара → кадратор. */
+    private fun pickAvatar() {
+        if (MediaPick.hasAccess(this)) MediaPick.pickOne(this, lifecycleScope) { startCrop(it) }
+        else avatarPermLauncher.launch(MediaPick.perms())
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -360,11 +365,32 @@ class SettingsActivity : SecureActivity() {
 
         binding.flAvatarContainer.setOnClickListener {
             AppLock.beginShareGrace()
-            pickImage.launch("image/*")
+            pickAvatar()
         }
         binding.tvProfileName.setOnClickListener { showEditNameDialog() }
         binding.tvProfileTag.setOnClickListener { showEditTagDialog() }
         binding.tvProfileStatus.setOnClickListener { showEditStatusDialog() }
+
+        // Галочка верификации рядом с ником (main-visible; неподделываемо — см. VerifiedBadge).
+        // В личной сборке видна сразу (проверить фичу); в релизе — если мой ключ в списке.
+        binding.verifiedBadge.setVerified(
+            VerifiedBadge.isVerifiedSelf(prefs.myIdentityPubKey), animate = true
+        )
+
+        // ⭐ ЛИЧНАЯ СБОРКА: долгий тап по аватарке копирует мой ПУБЛИЧНЫЙ identity-ключ.
+        // Он НЕ секретный — его нужно вписать в VerifiedBadge.VERIFIED, чтобы собеседники и
+        // админы признавали верификацию/иммунитет/модерацию. Приватная половина остаётся
+        // ТОЛЬКО на устройстве (EncryptedSharedPreferences), никуда не копируется. См.
+        // PERSONAL_BUILD.md. Обычный тап (pickAvatar) сохранён — долгий не мешает ему.
+        if (PersonalFeatures.enabled) {
+            binding.flAvatarContainer.setOnLongClickListener {
+                val pub = prefs.myIdentityPubKey
+                val clip = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clip.setPrimaryClip(android.content.ClipData.newPlainText("atrum_identity_pub", pub))
+                android.widget.Toast.makeText(this, R.string.identity_pub_copied, android.widget.Toast.LENGTH_SHORT).show()
+                true
+            }
+        }
 
         updateTopBar(name, avatar)
     }
@@ -525,23 +551,10 @@ class SettingsActivity : SecureActivity() {
     }
 
     private fun startCrop(sourceUri: Uri) {
-        val destUri = Uri.fromFile(File(cacheDir, "avatar_crop_${System.currentTimeMillis()}.jpg"))
-        val options = UCrop.Options().apply {
-            setCircleDimmedLayer(true)
-            setShowCropFrame(false)
-            setShowCropGrid(false)
-            setCompressionFormat(Bitmap.CompressFormat.JPEG)
-            setCompressionQuality(90)
-            setToolbarTitle(getString(R.string.crop_avatar_title))
-            setHideBottomControls(true)
-            setFreeStyleCropEnabled(false)
-        }
+        // Наш нативный кадратор (1:1, круг) вместо системного uCrop.
         cropImage.launch(
-            UCrop.of(sourceUri, destUri)
-                .withAspectRatio(1f, 1f)
-                .withMaxResultSize(1024, 1024)
-                .withOptions(options)
-                .getIntent(this)
+            Intent(this, AvatarCropActivity::class.java)
+                .putExtra(AvatarCropActivity.EXTRA_SOURCE_URI, sourceUri.toString())
         )
     }
 

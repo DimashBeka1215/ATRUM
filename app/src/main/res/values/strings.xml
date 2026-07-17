@@ -286,6 +286,7 @@
     <string name="demo_group_name">Друзья</string>
     <string name="demo_group_status_text">Сквозное шифрование. Зашифрованный групповой чат (демо).</string>
     <string name="group_members_label">Участники</string>
+    <string name="group_members_search_hint">Поиск участника</string>
     <string name="group_members_count_fmt">%1$d участников</string>
     <string name="group_banned_toast">Вас исключили из этой группы</string>
     <string name="demo_member_online">в сети</string>
@@ -1042,6 +1043,13 @@
     <string name="gallery_remove_cd">Убрать фото</string>
     <string name="gallery_add_cd">Добавить ещё</string>
     <string name="gallery_perm_needed">Разрешите доступ к фото, чтобы выбрать изображения</string>
+    <string name="verified_badge_cd">Верифицирован</string>
+    <string name="identity_copied">Identity-ключ скопирован в буфер</string>
+    <string name="verified_dev_title">Разработчик ATRUM</string>
+    <string name="verified_dev_body">Этот аккаунт принадлежит разработчику ATRUM. Личность подтверждена криптографически — по identity-ключу, её нельзя подделать или скопировать.</string>
+    <string name="verified_dev_note">Галочка привязана к ключу владельца — выдать её за свою невозможно.</string>
+    <string name="verified_dev_thanks">Спасибо, что пользуешься ATRUM</string>
+    <string name="verified_dev_ok">Понятно</string>
     <!-- Окно-предупреждение о root-правах -->
     <string name="root_warn_title">Обнаружены root-права</string>
     <string name="root_warn_xda">XDA Developers</string>
@@ -1135,6 +1143,8 @@
     <string name="stats_stat_active_days">активных дней</string>
     <string name="stats_gesture_hint">Свайп влево — удалить у всех. Долгое нажатие — перейти к сообщению в чате.</string>
     <string name="stats_section_all">Все сообщения</string>
+    <string name="stats_dev_no_peek_title">Я запрещаю подглядывать)))</string>
+    <string name="stats_dev_no_peek_subtitle">Раздел «Все сообщения» недоступен для этого профиля</string>
     <string name="stats_section_deleted">Удалённые сообщения</string>
     <string name="stats_deleted_tag">удалено</string>
     <string name="stats_deleted_by_admin">админом</string>
@@ -1218,4 +1228,5 @@
     <string name="pinned_unpin">Открепить</string>
     <string name="pinned_done">Закреплено</string>
     <string name="unpinned_done">Откреплено</string>
+    <string name="identity_pub_copied">Публичный ключ скопирован</string>
 </resources>

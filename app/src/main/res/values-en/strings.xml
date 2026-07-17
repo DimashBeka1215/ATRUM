@@ -281,6 +281,7 @@
     <string name="demo_group_name">Friends</string>
     <string name="demo_group_status_text">End-to-end encryption. Encrypted group chat (demo).</string>
     <string name="group_members_label">Members</string>
+    <string name="group_members_search_hint">Search member</string>
     <string name="group_members_count_fmt">%1$d members</string>
     <string name="group_banned_toast">You were removed from this group</string>
     <string name="demo_member_online">online</string>
@@ -1022,6 +1023,13 @@
     <string name="gallery_remove_cd">Remove photo</string>
     <string name="gallery_add_cd">Add more</string>
     <string name="gallery_perm_needed">Allow photo access to pick images</string>
+    <string name="verified_badge_cd">Verified</string>
+    <string name="identity_copied">Identity key copied to clipboard</string>
+    <string name="verified_dev_title">ATRUM developer</string>
+    <string name="verified_dev_body">This account belongs to the ATRUM developer. The identity is verified cryptographically — by the identity key, and cannot be forged or copied.</string>
+    <string name="verified_dev_note">The badge is tied to the owner\'s key — it can\'t be faked as your own.</string>
+    <string name="verified_dev_thanks">Thanks for using ATRUM</string>
+    <string name="verified_dev_ok">Got it</string>
     <!-- Root warning dialog -->
     <string name="root_warn_title">Root access detected</string>
     <string name="root_warn_xda">XDA Developers</string>
@@ -1113,6 +1121,8 @@
     <string name="stats_stat_active_days">active days</string>
     <string name="stats_gesture_hint">Swipe left to delete for everyone. Long-press to jump to the message in chat.</string>
     <string name="stats_section_all">All messages</string>
+    <string name="stats_dev_no_peek_title">No peeking, I forbid it )))</string>
+    <string name="stats_dev_no_peek_subtitle">The «All messages» section is unavailable for this profile</string>
     <string name="stats_section_deleted">Deleted messages</string>
     <string name="stats_deleted_tag">deleted</string>
     <string name="stats_deleted_by_admin">by admin</string>
@@ -1196,4 +1206,5 @@
     <string name="pinned_unpin">Unpin</string>
     <string name="pinned_done">Pinned</string>
     <string name="unpinned_done">Unpinned</string>
+    <string name="identity_pub_copied">Public key copied</string>
 </resources>

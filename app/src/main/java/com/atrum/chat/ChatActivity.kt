@@ -304,6 +304,10 @@ class ChatActivity : SecureActivity() {
      * каждом опросе, не только при открытии чата.
      */
     private var isSelfMuted: Boolean = false
+    /** userId верифицированных разработчиков в этой беседе (PERSONAL_BUILD.md §Часть 3):
+     *  их сообщения НЕ прячутся у остальных даже при бане/муте — они неприкосновенны.
+     *  Заполняется там же, где считаются галочки отправителей (refreshMessageAvatars). */
+    private var verifiedSenderIds: Set<String> = emptySet()
 
     /** msgId'ы сообщений-оснований текущего мута (см. ChatParticipant.mutedEvidenceIds). */
     private var currentMuteEvidenceIds: List<String> = emptyList()
@@ -390,6 +394,8 @@ class ChatActivity : SecureActivity() {
     private var myCurrentEphemeralPubKey: String? = null
     /** Ed25519-подпись нашего эфемерного ключа (identity). Публикуется в профиле. */
     private var myEphemeralSig: String? = null
+    /** Подпись-доказательство identity (домен+chatId), публикуется ВСЕГДА — см. computeIdentitySig. */
+    private var myIdentitySig: String? = null
 
     /**
      * ephemeralPubKey последнего известного профиля партнёра.
@@ -478,6 +484,22 @@ class ChatActivity : SecureActivity() {
         }
         map[prefs.myUserId] = prefs.myAvatarBase64
         adapter.updateAvatars(map)
+
+        // Галочки верификации у ников отправителей в беседе. Считаем КРИПТОГРАФИЧЕСКИ:
+        // VerifiedBadge сначала дёшево проверяет членство ключа в списке, и только для
+        // кандидатов — подпись identity (неподделываемо). Если у участника нет валидной
+        // подписи — галочки нет (безопасный дефолт). Адаптер лишь рисует.
+        val verified = HashSet<String>()
+        for ((uid, profile) in source) {
+            // Единая точка правды (VerifiedBadge.isVerifiedDev): подтверждает подпись и
+            // ЗАПОМИНАЕТ userId для этого чата, чтобы список участников/иммунитет брали тот
+            // же статус, а не перепроверяли из своего (возможно неполного) чтения профиля.
+            if (VerifiedBadge.isVerifiedDev(chat.chatId, uid, profile)) verified.add(uid)
+        }
+        adapter.updateVerifiedUsers(verified)
+        // Иммунитет дева к скрытию сообщений при бане/муте (см. bannedIds/mutedIds в
+        // loadMessages): его userId никогда не фильтруется у остальных.
+        verifiedSenderIds = verified
     }
 
     /** Контроллер панели стикеров. */
@@ -726,6 +748,9 @@ class ChatActivity : SecureActivity() {
                 // forward secrecy с окном; история сохраняется в локальном шифр-архиве.
                 maybeRotateEphemeral()
             }
+            // Подпись «доказательство identity» — ВСЕГДА (в т.ч. беседы, где нет эфемерного
+            // ключа). Публикуется в профиле (identitySig) и даёт галочку верификации в группах.
+            myIdentitySig = computeIdentitySig(chat.chatId)
             // Мгновенный показ из кэша прошлого захода (в этой сессии) — чат не грузится
             // с нуля; SyncEngine ниже обновит его в фоне.
             ChatSnapshotCache.get(chat.chatId)?.let { cached ->
@@ -946,6 +971,7 @@ class ChatActivity : SecureActivity() {
             ephemeralPubKey = myCurrentEphemeralPubKey,
             identityPubKey = prefs.myIdentityPubKey,
             ephemeralSig = myEphemeralSig,
+            identitySig = myIdentitySig,
             verifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.chatId),
             status = prefs.myStatus.takeIf { it.isNotBlank() }
         )
@@ -1039,6 +1065,9 @@ class ChatActivity : SecureActivity() {
 
     /** Обновляет шапку чата с актуальными данными собеседника (имя + аватарка). */
     private fun applyPartnerToHeader() {
+        // Галочка верификации по умолчанию скрыта; показывается только в 1:1-ветке ниже
+        // для верифицированного собеседника (группа/система/избранное — не персона).
+        binding.verifiedBadgeHeader.setVerified(false, animate = false)
         // ⛔ Групповые чаты (ADR-001): своя ветка — группового имени/аватара нет
         // единого "собеседника". Один флаг здесь покрывает ВСЕ 8 точек вызова
         // applyPartnerToHeader() по всему файлу — ничего в них менять не нужно.
@@ -1073,6 +1102,16 @@ class ChatActivity : SecureActivity() {
         }
 
         binding.tvDisplayName.text = chat.partnerName
+        // Галочка верификации рядом с ником собеседника (1:1). Неподделываемо: показываем
+        // только если подпись identity партнёра валидна (IdentityState.VERIFIED) И его ключ
+        // в списке верифицированных (VerifiedBadge).
+        val verHeaderInfo = IdentityState.get(chat.chatId)
+        val liveVerified = verHeaderInfo.state == IdentityState.State.VERIFIED &&
+            VerifiedBadge.isKeyVerified(verHeaderInfo.partnerIdk)
+        // ИЛИ устойчивый неподделываемый флаг из списка (chat.partnerVerified): live-сессия
+        // гаснет, когда собеседник оффлайн — без этого fallback галочка пропадала у меня в
+        // шапке, пока партнёр не в сети. partnerVerified ставится только по валидной подписи.
+        binding.verifiedBadgeHeader.setVerified(liveVerified || chat.partnerVerified, animate = true)
         if (!chat.partnerTag.isNullOrBlank()) {
             binding.tvChatSubtitle.text = chat.partnerTag
             binding.tvChatSubtitle.setTextColor(ContextCompat.getColor(this, R.color.text_tertiary))
@@ -2031,14 +2070,20 @@ class ChatActivity : SecureActivity() {
             val capturedPassword   = chat.chatPassword
             val capturedUserId     = prefs.myUserId
             val capturedName       = prefs.myName
+            val capturedTag        = prefs.myTag
             val capturedAvatar     = prefs.myAvatarBase64
             val capturedEphKey     = myCurrentEphemeralPubKey
             val capturedIdentity   = prefs.myIdentityPubKey
             val capturedSig        = myEphemeralSig
+            val capturedIdentitySig = myIdentitySig
             val capturedConfirmed  = prefs.getConfirmedPartnerIdentity(chat.chatId)
             AppScope.launch {
                 // Уход из приложения → офлайн. Ретрай: по Tor единичный PATCH часто
                 // не доходит, и партнёр видел бы «в сети» ещё долго после ухода.
+                // ⛔ Публикуем ПОЛНЫЙ профиль (ава + identityPubKey + ephemeralSig +
+                // identitySig + tag). Без identitySig оффлайн-пуш при пустом чтении обнулял
+                // подпись → у собеседников пропадала галочка И иммунитет дева (§Часть 3),
+                // пока я не онлайн. Полный набор держит статус даже оффлайн.
                 repeat(3) {
                     val ok = try {
                         ProfileSync.pushPresence(
@@ -2049,9 +2094,11 @@ class ChatActivity : SecureActivity() {
                             onlineTs          = 0L,
                             myEphemeralPubKey = capturedEphKey,
                             myName            = capturedName,
+                            myTag             = capturedTag,
                             myAvatarBase64    = capturedAvatar,
                             myIdentityPubKey     = capturedIdentity,
                             myEphemeralSig       = capturedSig,
+                            myIdentitySig        = capturedIdentitySig,
                             myVerifiedPartnerIdk = capturedConfirmed
                         )
                     } catch (_: Exception) { false }
@@ -2063,6 +2110,11 @@ class ChatActivity : SecureActivity() {
     }
 
     private fun startPolling() {
+        // Прогрев соединений к реле ЭТОГО чата в его режиме (репорт: «первое сообщение в
+        // беседе заедает, у других не видно, помогает перезаход»). Идемпотентно; вызывается
+        // и при открытии, и при возврате (startPolling — из onCreate и onResume). Для
+        // локального чата warmUp() — no-op. См. ChatTransport.warmUp / NostrTransport.warmUp.
+        if (::transport.isInitialized) transport.warmUp()
         if (chat.isFavorites) {
             // Локальный чат (Избранное / «Уведомления»): сети нет, но файл на диске
             // меняется извне (SystemNotifications). Лёгкий ре-рид: первый проход снимает
@@ -2177,6 +2229,23 @@ class ChatActivity : SecureActivity() {
         // Обновляем V3-сессионный ключ если партнёр опубликовал новый ephemeral ключ
         tryEstablishSessionKey(partner.ephemeralPubKey)
         verifyPartnerIdentity(partner)
+
+        // Галочка верификации в шапке — обновляем СРАЗУ после проверки подписи, а не ждём
+        // смены имени/авы (репорт: галочка подхватывалась через ~7с после захода собеседника).
+        // Дёшево: анимация проиграется только на ПЕРВОМ показе (см. VerifiedBadgeView).
+        if (!chat.isGroup) {
+            val vInfo = IdentityState.get(chat.chatId)
+            val liveVerified = vInfo.state == IdentityState.State.VERIFIED &&
+                VerifiedBadge.isKeyVerified(vInfo.partnerIdk)
+            // Устойчивый fallback — см. applyPartnerToHeader: оффлайн-сессия не гасит галочку.
+            binding.verifiedBadgeHeader.setVerified(liveVerified || chat.partnerVerified, animate = true)
+            // Персистим неподделываемый флаг при первой живой верификации (партнёр онлайн),
+            // чтобы галочка держалась оффлайн даже если список чатов ещё не синкал профиль.
+            if (liveVerified && !chat.partnerVerified) {
+                db.chatDao().updatePartnerVerified(chat.id, true)
+                chat = chat.copy(partnerVerified = true)
+            }
+        }
 
         // Обновляем имя/аватар партнёра — ТОЛЬКО 1:1 (см. подробный комментарий в
         // doSyncProfilesOnce: для группы findPartner() выбирает произвольного участника,
@@ -2595,10 +2664,15 @@ class ChatActivity : SecureActivity() {
         val groupParticipantsNow = if (!chat.isGroup) emptyList() else withContext(Dispatchers.IO) {
             db.chatParticipantDao().getForChat(chat.id)
         }
-        val bannedIds: Set<String> = groupParticipantsNow.filter { it.banned }.map { it.userId }.toSet()
+        // ⛔ Верифицированный разработчик неприкосновенен (PERSONAL_BUILD.md §Часть 3):
+        // его userId исключаем из bannedIds/mutedIds, чтобы его сообщения НЕ прятались у
+        // остальных даже если чей-то members.txt пометил его забаненным/заглушённым.
+        val bannedIds: Set<String> = groupParticipantsNow
+            .filter { it.banned && it.userId !in verifiedSenderIds }
+            .map { it.userId }.toSet()
         val nowMs = System.currentTimeMillis()
         val mutedIds: Set<String> = groupParticipantsNow
-            .filter { !it.banned && it.mutedUntilMs != null && it.mutedUntilMs > nowMs && it.userId != myUid }
+            .filter { !it.banned && it.mutedUntilMs != null && it.mutedUntilMs > nowMs && it.userId != myUid && it.userId !in verifiedSenderIds }
             .map { it.userId }
             .toSet()
         fun List<Message>.withoutBanned(): List<Message> =
@@ -2691,6 +2765,10 @@ class ChatActivity : SecureActivity() {
      * Возвращает true, если чат был удалён (вызывающий код обязан сразу return).
      */
     private suspend fun checkSelfBanned(): Boolean {
+        // Верифицированный разработчик (PERSONAL_BUILD.md §Часть 3) неприкосновенен: бан в мою
+        // сторону игнорируется — не выкидываемся с экрана. Неподделываемо: проверка по моему
+        // identity-ключу (VerifiedBadge), чужой её не получит.
+        if (VerifiedBadge.isVerifiedSelf(prefs.myIdentityPubKey)) return false
         if (groupBanHandled) return true
         val me = db.chatParticipantDao().getOne(chat.id, prefs.myUserId) ?: return false
         if (!me.banned) return false
@@ -2999,6 +3077,7 @@ class ChatActivity : SecureActivity() {
                     // → у партнёра мигал бы щит верификации до следующего presence-тика.
                     identityPubKey = prefs.myIdentityPubKey,
                     ephemeralSig = myEphemeralSig,
+                    identitySig = myIdentitySig,
                     verifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.chatId),
                     status = prefs.myStatus.takeIf { it.isNotBlank() }
                 )
@@ -3772,6 +3851,23 @@ class ChatActivity : SecureActivity() {
         }
     }
 
+    /**
+     * Подпись «доказательство identity» (домен+chatId моим identity-ключом). В отличие от
+     * [computeEphemeralSig] работает и в БЕСЕДАХ (нет эфемерного ключа) — публикуется в
+     * profiles.txt как Profile.identitySig и даёт неподделываемую галочку в группах.
+     * priv затирается сразу после подписи (§1).
+     */
+    private fun computeIdentitySig(chatId: String): String? {
+        val (priv, _) = prefs.getOrCreateIdentity()
+        return try {
+            CryptoHelper.signWithIdentity(priv, VerifiedBadge.identitySigData(chatId))
+        } catch (_: Exception) {
+            null
+        } finally {
+            priv.fill(0)
+        }
+    }
+
     private val ephemeralRotationMs = 24L * 60 * 60 * 1000  // ротация эфемерного ключа раз в сутки
     // ВРЕМЕННО ВЫКЛ: ротация требует надёжной доставки нового pub через profiles.txt
     // (общий файл с гонкой lost-update на флаки-реле). Потеря обновления pub →
@@ -3986,6 +4082,7 @@ class ChatActivity : SecureActivity() {
                 myAvatarBase64    = prefs.myAvatarBase64,
                 myIdentityPubKey     = prefs.myIdentityPubKey,
                 myEphemeralSig       = myEphemeralSig,
+                myIdentitySig        = myIdentitySig,
                 myVerifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.chatId)
             )
         }
@@ -4157,6 +4254,10 @@ class ChatActivity : SecureActivity() {
      * персистентно на конкретный untilMs (см. Prefs.isMuteBannerCollapsed).
      */
     private fun applySelfMuteState(muted: Boolean, untilMs: Long?, reason: String?, evidenceIds: List<String> = emptyList()) {
+        // Верифицированный разработчик (PERSONAL_BUILD.md §Часть 3) неприкосновенен: мут в мою
+        // сторону игнорируется — ввод не блокируется. Неподделываемо (VerifiedBadge, мой ключ).
+        @Suppress("NAME_SHADOWING")
+        val muted = muted && !VerifiedBadge.isVerifiedSelf(prefs.myIdentityPubKey)
         isSelfMuted = muted
         currentMuteEvidenceIds = evidenceIds
         if (!muted || untilMs == null) {
@@ -4873,7 +4974,23 @@ class ChatActivity : SecureActivity() {
      */
     private val chatIsAdmin: Boolean
         get() = ::chat.isInitialized && chat.isGroup &&
-            !chat.adminUserId.isNullOrBlank() && chat.adminUserId == prefs.myUserId
+            // Личная сборка (PERSONAL): все админ-права в любой беседе локально (см.
+            // PersonalFeatures/PERSONAL_BUILD.md). В релизе — обычная проверка главного админа.
+            (PersonalFeatures.enabled ||
+                (!chat.adminUserId.isNullOrBlank() && chat.adminUserId == prefs.myUserId))
+
+    /**
+     * Отправитель сообщения — верифицированный разработчик (его сообщения нельзя удалять
+     * чужим, PERSONAL_BUILD.md §Часть 3)? Надёжно, через ЕДИНУЮ точку правды: набор адаптера
+     * (быстро) ИЛИ VerifiedBadge.isVerifiedDev по свежему профилю + подтверждённой памяти —
+     * не зависит от того, успел ли адаптер обновить свой набор к моменту показа меню.
+     * Неподделываемо (проверка по identity-подписи).
+     */
+    private fun isSenderVerifiedDev(msg: Message): Boolean {
+        val uid = msg.senderUserId ?: return false
+        return adapter.senderIsVerified(msg) ||
+            VerifiedBadge.isVerifiedDev(chat.chatId, uid, lastKnownProfiles[uid])
+    }
 
     private fun showMessageMenu(msg: Message, anchor: View) {
         TelegramMenu.show(
@@ -4894,8 +5011,11 @@ class ChatActivity : SecureActivity() {
                 if (msg.isSelf) {
                     add(TelegramMenu.Item(getString(R.string.action_edit),   R.drawable.ic_edit_menu)  { showEditDialog(msg) })
                     add(TelegramMenu.Item(getString(R.string.action_delete), R.drawable.ic_trash_menu, isDestructive = true) { confirmDelete(msg) })
-                } else if (chatIsAdmin) {
+                } else if (chatIsAdmin && !isSenderVerifiedDev(msg)) {
                     // Модерация: админ может удалить ЧУЖОЕ сообщение у всех участников.
+                    // ⛔ КРОМЕ сообщений верифицированного разработчика — их удалять нельзя
+                    // никому (PERSONAL_BUILD.md §Часть 3). Неподделываемо (VerifiedBadge),
+                    // проверка через единую точку правды isSenderVerifiedDev (см. выше).
                     add(TelegramMenu.Item(getString(R.string.action_delete_for_all_admin), R.drawable.ic_trash_menu, isDestructive = true) { confirmDelete(msg) })
                 }
             },
@@ -4918,7 +5038,8 @@ class ChatActivity : SecureActivity() {
         }
         pinnedIds = fresh.pinnedMsgIds?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
         myPinnedIds = fresh.myPinnedMsgIds?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
-        myGroupPermissions = perms
+        // Личная сборка (PERSONAL): полный набор прав локально (см. §Часть 2 PERSONAL_BUILD.md).
+        myGroupPermissions = if (PersonalFeatures.enabled) AdminPermissions.ALL else perms
         withContext(Dispatchers.Main) { renderPinnedBar() }
     }
 
@@ -5365,6 +5486,10 @@ class ChatActivity : SecureActivity() {
     }
 
     private fun performDelete(msg: Message) {
+        // ⛔ Сообщение верифицированного разработчика нельзя удалить чужим (PERSONAL_BUILD.md
+        // §Часть 3). Своё (isSelf) — можно. Дублёр к скрытию пункта меню в showMessageMenu;
+        // тихий возврат, чтобы не раскрывать механику. Неподделываемо (VerifiedBadge).
+        if (!msg.isSelf && isSenderVerifiedDev(msg)) return
         // ── Оптимистичное удаление через ChatStore tombstone ──────────────────
         // addTombstone() мгновенно убирает сообщение из UI. Tombstone гарантирует
         // что сообщение не "воскреснет" при CDN eventual consistency (GitHub может

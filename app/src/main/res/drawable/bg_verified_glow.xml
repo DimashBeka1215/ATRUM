@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Мягкое «свечение» под значком верификации (плоско, без блюра — §10 DESIGN). Прозрачность
+     задаётся через android:alpha на View. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="@color/accent" />
+</shape>

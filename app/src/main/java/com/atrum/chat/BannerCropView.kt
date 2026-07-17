@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
@@ -34,9 +35,26 @@ class BannerCropView @JvmOverloads constructor(
 
     private var minScale = 1f
     private var maxScale = 4f
-    private val ratioW = 3f
-    private val ratioH = 1f
+    // Соотношение рамки. По умолчанию 3:1 (шапка). Для аватара — 1:1 + [circleMode].
+    var ratioW = 3f
+    var ratioH = 1f
     private val sideMarginDp = 12f
+
+    /**
+     * Круглый режим (аватар): рамка квадратная (ratio 1:1), но рисуется КРУГ — затемнение
+     * вне круга, акцентная обводка по окружности, без сетки/safe-zone. Вырезанная область —
+     * квадрат, описывающий круг (аватар маскируется по кругу при рендере, AvatarUtils.toCircle).
+     * Настраивается через [configure]; банерный путь (3:1) не затрагивается.
+     */
+    var circleMode = false
+        set(v) { field = v; invalidate() }
+    private val dimPath = Path()
+
+    /** Настроить рамку: круг+1:1 (аватар) или прямоугольник заданного соотношения (шапка). */
+    fun configure(circle: Boolean, aspectW: Float, aspectH: Float) {
+        ratioW = aspectW; ratioH = aspectH; circleMode = circle
+        setup()
+    }
 
     var showSafeZone = false
         set(v) { field = v; invalidate() }
@@ -90,10 +108,17 @@ class BannerCropView @JvmOverloads constructor(
         val b = bmp ?: return
         if (width == 0 || height == 0) return
         val m = dp(sideMarginDp)
-        val fw = width - 2 * m
-        val fh = fw * ratioH / ratioW
+        // Вписываем рамку заданного соотношения в доступную область по ОБЕИМ сторонам —
+        // иначе 1:1 (аватар) на широком экране вылезал бы за высоту. Для 3:1 (шапка)
+        // fh = fw/3 обычно меньше высоты → поведение прежнее (рамка по ширине, центр).
+        val availW = width - 2 * m
+        val availH = height - 2 * m
+        var fw = availW
+        var fh = fw * ratioH / ratioW
+        if (fh > availH) { fh = availH; fw = fh * ratioW / ratioH }
+        val left = (width - fw) / 2f
         val top = (height - fh) / 2f
-        frame.set(m, top, m + fw, top + fh)
+        frame.set(left, top, left + fw, top + fh)
 
         minScale = max(frame.width() / b.width, frame.height() / b.height)
         maxScale = minScale * 4f
@@ -159,6 +184,20 @@ class BannerCropView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         val b = bmp ?: return
         canvas.drawBitmap(b, matrix, imgPaint)
+
+        if (circleMode) {
+            // Круг (аватар): затемняем всё ВНЕ круга (rect минус circle, even-odd) и
+            // рисуем акцентную обводку по окружности. Без сетки/safe-zone.
+            val cx = frame.centerX(); val cy = frame.centerY()
+            val r = minOf(frame.width(), frame.height()) / 2f
+            dimPath.reset()
+            dimPath.fillType = Path.FillType.EVEN_ODD
+            dimPath.addRect(0f, 0f, width.toFloat(), height.toFloat(), Path.Direction.CW)
+            dimPath.addCircle(cx, cy, r, Path.Direction.CW)
+            canvas.drawPath(dimPath, dimPaint)
+            canvas.drawCircle(cx, cy, r, framePaint)
+            return
+        }
 
         // затемнение вне рамки (4 полосы)
         canvas.drawRect(0f, 0f, width.toFloat(), frame.top, dimPaint)

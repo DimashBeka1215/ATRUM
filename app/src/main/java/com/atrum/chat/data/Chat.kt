@@ -174,7 +174,15 @@ data class Chat(
      * MentionUtil), даёт бейдж «@N» в списке чатов и снимок для кнопки перехода в чате.
      * null/пусто — упоминаний нет. Чистится при прочтении чата (markAsRead).
      */
-    val mentionMsgIds: String? = null
+    val mentionMsgIds: String? = null,
+
+    /**
+     * Верифицирован ли собеседник 1:1 (DB v23) — для галочки у ника в списке чатов.
+     * Считается КРИПТОГРАФИЧЕСКИ фоновым опросом (VerifiedBadge.isVerifiedProfile по подписи
+     * identity), неподделываемо. Только для 1:1; у групп/избранного/системного = false.
+     * По умолчанию false — старые чаты получат галочку сами после первого опроса (§17).
+     */
+    val partnerVerified: Boolean = false
 )
 
 /**

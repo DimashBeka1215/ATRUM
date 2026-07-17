@@ -86,6 +86,15 @@ data class Profile(
      */
     val ephemeralSig: String? = null,
     /**
+     * Base64 Ed25519 подпись «доказательство identity» — подпись фиксированного домена +
+     * chatId приватным identity-ключом (см. VerifiedBadge.identitySigData). В отличие от
+     * [ephemeralSig] публикуется ВСЕГДА, в т.ч. в БЕСЕДАХ (где нет эфемерного ECDH-ключа),
+     * поэтому галочку верификации можно проверить и в группах. Неподделываемо: чужой не
+     * подпишет чужим identity-ключом. null — старый клиент (тогда 1:1 проверяется по
+     * ephemeralSig, обратная совместимость §17).
+     */
+    val identitySig: String? = null,
+    /**
      * Base64 identity-ключа партнёра, который ЭТОТ пользователь лично подтвердил
      * (сверил SAS/QR). Партнёр читает поле и, если оно равно его собственному
      * identity-ключу, понимает, что его подтвердили → взаимная проверка.
@@ -108,6 +117,7 @@ data class Profile(
         if (ephemeralPubKey != null) put("eph", ephemeralPubKey)
         if (identityPubKey != null) put("idk", identityPubKey)
         if (ephemeralSig != null) put("esig", ephemeralSig)
+        if (identitySig != null) put("isig", identitySig)
         if (verifiedPartnerIdk != null) put("vpk", verifiedPartnerIdk)
         if (status != null) put("status", status)
     }
@@ -130,6 +140,7 @@ data class Profile(
                 ephemeralPubKey = json.optString("eph", "").takeIf { it.isNotBlank() },
                 identityPubKey = json.optString("idk", "").takeIf { it.isNotBlank() },
                 ephemeralSig = json.optString("esig", "").takeIf { it.isNotBlank() },
+                identitySig = json.optString("isig", "").takeIf { it.isNotBlank() },
                 verifiedPartnerIdk = json.optString("vpk", "").takeIf { it.isNotBlank() },
                 status = json.optString("status", null)?.takeIf { it.isNotBlank() }
             )

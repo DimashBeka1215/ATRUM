@@ -12,6 +12,7 @@ import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.ImageView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
@@ -22,13 +23,24 @@ class PersonalizationActivity : SecureActivity() {
     private lateinit var binding: ActivityPersonalizationBinding
     private lateinit var prefs: Prefs
 
-    private val pickWallpaper = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            startActivity(
-                Intent(this, WallpaperPreviewActivity::class.java)
-                    .putExtra(WallpaperPreviewActivity.EXTRA_IMAGE_URI, uri.toString())
-            )
-        }
+    // НАША галерея вместо системного ACTION_GET_CONTENT (см. pickWallpaper()/MediaPick).
+    private val wallpaperPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        if (result.values.any { it }) MediaPick.pickOne(this, lifecycleScope) { onWallpaperPicked(it) }
+        else Toast.makeText(this, R.string.gallery_perm_needed, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun pickWallpaper() {
+        if (MediaPick.hasAccess(this)) MediaPick.pickOne(this, lifecycleScope) { onWallpaperPicked(it) }
+        else wallpaperPermLauncher.launch(MediaPick.perms())
+    }
+
+    private fun onWallpaperPicked(uri: android.net.Uri) {
+        startActivity(
+            Intent(this, WallpaperPreviewActivity::class.java)
+                .putExtra(WallpaperPreviewActivity.EXTRA_IMAGE_URI, uri.toString())
+        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -248,7 +260,7 @@ class PersonalizationActivity : SecureActivity() {
                     0 -> startActivity(Intent(this, WallpaperPreviewActivity::class.java))
                     1 -> {
                         AppLock.beginShareGrace()
-                        pickWallpaper.launch("image/*")
+                        pickWallpaper()
                     }
                     2 -> {
                         prefs.wallpaperPortrait = null

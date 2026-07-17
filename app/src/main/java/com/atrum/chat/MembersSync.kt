@@ -77,7 +77,17 @@ object MembersSync {
          * закрепления. В слоте это МОИ закрепления (contributions); итоговый показываемый
          * набор считает [mergeSlots] как объединение слотов уполномоченных пиннеров.
          */
-        val pinned: List<String> = emptyList()
+        val pinned: List<String> = emptyList(),
+        /**
+         * ⭐ Неподделываемая заявка верифицированного разработчика (VerifiedBadge): его
+         * identity-pubkey (Ed25519, Base64) и подпись над [verifiedAdminSigData]. По ней
+         * его members.txt-слот признаётся ПОЛНОПРАВНЫМ админским у ВСЕХ клиентов — вне
+         * ростера главного (см. PERSONAL_BUILD.md §Часть 2/3). Подделать нельзя даже зная
+         * общий пароль чата: пароль даёт транспортный ключ любого userId, но НЕ приватный
+         * identity-ключ. null у обычных участников/главного (обратная совместимость §17).
+         */
+        val identityKey: String? = null,
+        val identitySig: String? = null
     )
 
     fun parse(decryptedJson: String): MembersFile? = try {
@@ -114,7 +124,9 @@ object MembersSync {
             groupName = j.optString("groupName", "").takeIf { it.isNotBlank() },
             groupAvatarBase64 = j.optString("groupAvatarBase64", "").takeIf { it.isNotBlank() },
             groupDescription = j.optString("groupDescription", "").takeIf { it.isNotBlank() },
-            pinned = pinnedList
+            pinned = pinnedList,
+            identityKey = j.optString("idk", "").takeIf { it.isNotBlank() },
+            identitySig = j.optString("isig", "").takeIf { it.isNotBlank() }
         )
     } catch (_: Exception) {
         null
@@ -127,7 +139,9 @@ object MembersSync {
         groupName: String? = null,
         groupAvatarBase64: String? = null,
         groupDescription: String? = null,
-        pinned: List<String> = emptyList()
+        pinned: List<String> = emptyList(),
+        identityKey: String? = null,
+        identitySig: String? = null
     ): String =
         JSONObject().apply {
             put("v", version)
@@ -137,6 +151,9 @@ object MembersSync {
             if (!groupAvatarBase64.isNullOrBlank()) put("groupAvatarBase64", groupAvatarBase64)
             if (!groupDescription.isNullOrBlank()) put("groupDescription", groupDescription)
             if (pinned.isNotEmpty()) put("pinned", JSONArray(pinned))
+            // Неподделываемая заявка верифиц-дева (см. MembersFile.identityKey/identitySig).
+            if (!identityKey.isNullOrBlank()) put("idk", identityKey)
+            if (!identitySig.isNullOrBlank()) put("isig", identitySig)
             put(
                 "participants",
                 JSONArray().also { arr ->
@@ -215,6 +232,35 @@ object MembersSync {
         "v${f.version}|" + f.participants.sortedBy { it.userId }.joinToString(";") {
             "${it.userId}:${if (it.banned) 1 else 0}:${it.mutedUntilMs ?: 0L}:${it.permissions}"
         } + "|pin:" + f.pinned.joinToString(",")
+
+    /**
+     * Данные, которые подписывает identity-ключ верифицированного разработчика, чтобы его
+     * members.txt-слот признавался ПОЛНОПРАВНЫМ админским у ВСЕХ (см. MembersFile.identitySig).
+     *
+     * Домен + chatId + СТАБИЛЬНАЯ подпись состояния ([mergeStateSignature]) жёстко связывают
+     * подпись с конкретным чатом и конкретным ростером/мутами/банами/пинами и версией: подпись
+     * нельзя переиграть на другой чат (анти-replay через chatId) и нельзя подменить содержимое
+     * (любая правда участников/версии меняет байты → подпись не сойдётся). [identityKey]/
+     * [identitySig] в подпись НЕ входят (иначе рекурсия) — они несут саму заявку.
+     */
+    fun verifiedAdminSigData(chatId: String, f: MembersFile): ByteArray =
+        ("atrum_admin_v1_" + chatId + "|" + mergeStateSignature(f)).toByteArray(Charsets.UTF_8)
+
+    /**
+     * Слот [f] несёт валидную заявку верифицированного разработчика? Тогда его вклад в слияние —
+     * [AdminPermissions.ALL], вне зависимости от ростера главного. Неподделываемо: ключ обязан
+     * быть в захардкоженном списке [VerifiedBadge] И подпись обязана проходить проверку
+     * Ed25519 над [verifiedAdminSigData] (знание пароля чата этого не даёт — нет приватного
+     * identity-ключа). Безопасный дефолт: любое сомнение → false (обычный делегатский путь).
+     */
+    fun isVerifiedAdminSlot(chatId: String, f: MembersFile): Boolean {
+        val idk = f.identityKey ?: return false
+        val sig = f.identitySig ?: return false
+        if (!VerifiedBadge.isKeyVerified(idk)) return false
+        return runCatching {
+            CryptoHelper.verifyIdentitySignature(idk, verifiedAdminSigData(chatId, f), sig)
+        }.getOrDefault(false)
+    }
 
     /**
      * Расшифровывает УЖЕ проверенный по подписи members.txt (см. класс-докстринг) и
@@ -297,9 +343,16 @@ object MembersSync {
             val contributions = memberSlots
                 .filter { it.signerPubkey.lowercase() != primaryPubkey }
                 .mapNotNull { slot ->
+                    val parsedSlot = CryptoHelper.decrypt(slot.content, password, chat.chatId)
+                        ?.let { parse(it) } ?: return@mapNotNull null
+                    // ⭐ Верифицированный разработчик (PERSONAL_BUILD.md §Часть 2/3): его слот
+                    //    признаётся ПОЛНОПРАВНЫМ (ALL) у ВСЕХ, вне ростера главного. Неподделываемо
+                    //    — по identity-подписи (см. isVerifiedAdminSlot), знание пароля её не даёт.
+                    if (isVerifiedAdminSlot(chat.chatId, parsedSlot))
+                        return@mapNotNull Contribution(AdminPermissions.ALL, parsedSlot)
+                    // Иначе — обычный делегат: право берётся из ростера главного (как раньше).
                     val perm = permByPubkey[slot.signerPubkey.lowercase()] ?: return@mapNotNull null
-                    CryptoHelper.decrypt(slot.content, password, chat.chatId)?.let { parse(it) }
-                        ?.let { Contribution(perm, it) }
+                    Contribution(perm, parsedSlot)
                 }
             val merged = mergeSlots(primaryParsed, contributions)
             val sig = mergeStateSignature(merged)
@@ -486,7 +539,11 @@ object MembersSync {
         groupName: String? = null,
         groupAvatarBase64: String? = null,
         groupDescription: String? = null,
-        pinned: List<String> = emptyList()
+        pinned: List<String> = emptyList(),
+        /** Заявка верифиц-дева (см. MembersFile.identityKey/identitySig): его identity-pubkey и
+         *  подпись над verifiedAdminSigData. Непусты только когда публикует верифиц-разработчик. */
+        identityKey: String? = null,
+        identitySig: String? = null
     ) {
         // ⚠️ АВА В members.txt БОЛЬШЕ НЕ ПУБЛИКУЕТСЯ (требование пользователя: «мгновенно
         // банить и мутить, максимальная задержка 2 секунды»). История вопроса: тяжёлая
@@ -501,7 +558,7 @@ object MembersSync {
         // сохранён в сигнатуре, но игнорируется: чтение (applyIncoming) не тронуто —
         // старые копии members.txt с авой внутри по-прежнему применяются (null = «не
         // менять» защищает от затирания локальной авы новыми slim-копиями).
-        val content = buildContent(newVersion, adminUserId, participants, groupName, null, groupDescription, pinned)
+        val content = buildContent(newVersion, adminUserId, participants, groupName, null, groupDescription, pinned, identityKey, identitySig)
         transport.saveFile("members.txt", CryptoHelper.encryptMetadata(content, password, chatId))
     }
 

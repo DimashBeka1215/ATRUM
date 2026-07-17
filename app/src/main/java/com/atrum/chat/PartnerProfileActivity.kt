@@ -17,7 +17,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.atrum.chat.transport.TransportFactory
 import com.google.android.material.imageview.ShapeableImageView
-import com.yalantis.ucrop.UCrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -104,6 +103,10 @@ class PartnerProfileActivity : AppCompatActivity() {
      * нарушение CLAUDE.md §14 п.1 (лишние полные ребайнды/мигание).
      */
     private var lastRenderedMembersSignature: String? = null
+    /** Поиск участников (как поиск чатов): текущий запрос + последний ПОЛНЫЙ список для
+     *  перефильтра по вводу без повторного сетевого чтения. */
+    private var memberSearchQuery: String = ""
+    private var lastRenderedParticipants: List<com.atrum.chat.data.ChatParticipant> = emptyList()
     private var groupAvatarPendingBitmap: Bitmap? = null
     private var lastBothConfirmed = false     // чтобы pop-анимацию проигрывать только при переходе
 
@@ -179,8 +182,9 @@ class PartnerProfileActivity : AppCompatActivity() {
         // Back button
         findViewById<ImageButton>(R.id.btn_back).setOnClickListener { finish() }
 
-        // Name
-        findViewById<TextView>(R.id.tv_profile_name).text = name
+        // Name (+ галочка верификации, если собеседник верифицирован — см. refreshNameBadge)
+        rawProfileName = name
+        refreshNameBadge()
 
         // Tag
         val tvTag = findViewById<TextView>(R.id.tv_profile_tag)
@@ -476,6 +480,19 @@ class PartnerProfileActivity : AppCompatActivity() {
      * красный (с крестиком) — ключ партнёра изменился. Данные берём из intent
      * (надёжно, не зависит от тайминга polling).
      */
+    // Сырое имя собеседника (без галочки) и флаг его верификации — для refreshNameBadge.
+    private var rawProfileName: String = ""
+    private var partnerVerifiedFlag = false
+
+    /** Ставит имя профиля с inline-галочкой, если собеседник верифицирован (1:1). Идемпотентно:
+     *  всегда собирает из rawProfileName, поэтому повторные вызовы не дублируют значок. */
+    private fun refreshNameBadge() {
+        if (rawProfileName.isBlank()) return
+        val tv = findViewById<TextView>(R.id.tv_profile_name)
+        tv.text = if (partnerVerifiedFlag) VerifiedBadge.nameWithBadge(this, rawProfileName)
+                  else rawProfileName
+    }
+
     private fun applyIdentityBadge(chatId: String) {
         val shield = findViewById<android.widget.ImageButton>(R.id.btn_shield_status)
         val card = findViewById<View>(R.id.card_security)
@@ -506,6 +523,7 @@ class PartnerProfileActivity : AppCompatActivity() {
             shield.visibility = View.GONE
             card.visibility = View.GONE
             stopShieldPulse(shield)
+            partnerVerifiedFlag = false; refreshNameBadge()
             return
         }
 
@@ -515,6 +533,10 @@ class PartnerProfileActivity : AppCompatActivity() {
                 chatId.toByteArray(Charsets.UTF_8)
             CryptoHelper.verifyIdentitySignature(idk, data, esig)
         } catch (_: Exception) { false }
+
+        // Галочка «Разработчик ATRUM» у имени: подпись валидна И ключ в списке (неподделываемо).
+        partnerVerifiedFlag = sigValid && VerifiedBadge.isKeyVerified(idk)
+        refreshNameBadge()
 
         val myIdk = prefs.myIdentityPubKey
         val confirmed = prefs.getConfirmedPartnerIdentity(chatId) == idk
@@ -1005,46 +1027,34 @@ class PartnerProfileActivity : AppCompatActivity() {
         )
     }
 
-    // ── Аватар группы (демо) — системный пикер + UCrop, как у обычной аватарки ──
+    // ── Аватар группы (демо) — НАША галерея + наш кадратор 1:1, как у обычной аватарки ──
 
-    private val pickDemoAvatar = registerForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri: Uri? -> if (uri != null) startDemoAvatarCrop(uri) }
+    private val demoAvatarPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        if (result.values.any { it }) MediaPick.pickOne(this, lifecycleScope) { startDemoAvatarCrop(it) }
+        else android.widget.Toast.makeText(this, R.string.gallery_perm_needed, android.widget.Toast.LENGTH_SHORT).show()
+    }
 
     private val cropDemoAvatar = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK && result.data != null) {
-            val uri = UCrop.getOutput(result.data!!)
+            val uri = result.data!!.getStringExtra(AvatarCropActivity.EXTRA_OUTPUT_URI)?.let { Uri.parse(it) }
             if (uri != null) applyDemoAvatarUri(uri)
-        } else if (result.resultCode == UCrop.RESULT_ERROR && result.data != null) {
-            val err = UCrop.getError(result.data!!)
-            android.widget.Toast.makeText(this, getString(R.string.error_avatar_load) + ": ${err?.message}", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun openDemoAvatarPicker() {
-        pickDemoAvatar.launch("image/*")
+        if (MediaPick.hasAccess(this)) MediaPick.pickOne(this, lifecycleScope) { startDemoAvatarCrop(it) }
+        else demoAvatarPermLauncher.launch(MediaPick.perms())
     }
 
     private fun startDemoAvatarCrop(sourceUri: Uri) {
-        val destUri = Uri.fromFile(File(cacheDir, "demo_group_avatar_crop_${System.currentTimeMillis()}.jpg"))
-        val options = UCrop.Options().apply {
-            setCircleDimmedLayer(true)
-            setShowCropFrame(false)
-            setShowCropGrid(false)
-            setCompressionFormat(Bitmap.CompressFormat.JPEG)
-            setCompressionQuality(90)
-            setToolbarTitle(getString(R.string.crop_avatar_title))
-            setHideBottomControls(true)
-            setFreeStyleCropEnabled(false)
-        }
+        // Наш нативный кадратор (1:1, круг) вместо системного uCrop.
         cropDemoAvatar.launch(
-            UCrop.of(sourceUri, destUri)
-                .withAspectRatio(1f, 1f)
-                .withMaxResultSize(1024, 1024)
-                .withOptions(options)
-                .getIntent(this)
+            android.content.Intent(this, AvatarCropActivity::class.java)
+                .putExtra(AvatarCropActivity.EXTRA_SOURCE_URI, sourceUri.toString())
         )
     }
 
@@ -1148,7 +1158,10 @@ class PartnerProfileActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val chat = withContext(Dispatchers.IO) { database.chatDao().getById(chatRoomId) } ?: return@launch
             groupChatCached = chat
-            groupIsAdmin = !chat.adminUserId.isNullOrBlank() && chat.adminUserId == prefs.myUserId
+            // Личная сборка (PERSONAL): все админ-права в любой беседе локально (см.
+            // PersonalFeatures/PERSONAL_BUILD.md). В релизе — обычная проверка главного админа.
+            groupIsAdmin = PersonalFeatures.enabled ||
+                (!chat.adminUserId.isNullOrBlank() && chat.adminUserId == prefs.myUserId)
             // Мультиподпись (Этап 2): делегированные права из моей записи участника.
             val myPerms = withContext(Dispatchers.IO) {
                 database.chatParticipantDao().getOne(chat.id, prefs.myUserId)?.permissions ?: 0
@@ -1168,7 +1181,7 @@ class PartnerProfileActivity : AppCompatActivity() {
             if (groupIsAdmin) {
                 avatarEditBtn.visibility = View.VISIBLE
                 nameEditBtn.visibility = View.VISIBLE
-                avatarEditBtn.setOnClickListener { pickRealGroupAvatar.launch("image/*") }
+                avatarEditBtn.setOnClickListener { pickRealGroupAvatar() }
                 nameEditBtn.setOnClickListener { renameGroupReal() }
             } else {
                 avatarEditBtn.visibility = View.GONE
@@ -1189,6 +1202,7 @@ class PartnerProfileActivity : AppCompatActivity() {
             renderGroupDescription(chat)
 
             findViewById<View>(R.id.section_members).visibility = View.VISIBLE
+            setupMemberSearch(chat) // до loadAndRenderGroupMembers — тот suspend'ится на Flow навсегда
             loadAndRenderGroupMembers(chat, networkChatId, password, database)
         }
     }
@@ -1417,6 +1431,26 @@ class PartnerProfileActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Поиск участников (по запросу пользователя): поле над списком фильтрует по имени — как
+     * поиск чатов. Нужно админу, чтобы быстро находить и банить/мутить в больших беседах.
+     * TextWatcher ставится один раз; при вводе перефильтровываем последний известный список
+     * (lastRenderedParticipants) без сетевого чтения. Поле — сосед контейнера строк, поэтому
+     * перерисовка списка не сбрасывает его фокус/текст. Видимость поля — в renderGroupMembersRows.
+     */
+    private fun setupMemberSearch(chat: com.atrum.chat.data.Chat) {
+        findViewById<android.widget.EditText>(R.id.et_members_search).addTextChangedListener(
+            object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    memberSearchQuery = s?.toString() ?: ""
+                    renderGroupMembersRows(lastRenderedParticipants, lastGroupProfiles, chat)
+                }
+            }
+        )
+    }
+
     private fun renderGroupMembersRows(
         participants: List<com.atrum.chat.data.ChatParticipant>,
         profiles: Map<String, Profile>,
@@ -1425,13 +1459,28 @@ class PartnerProfileActivity : AppCompatActivity() {
         val now = System.currentTimeMillis()
         val sorted = participants.sortedBy { it.joinedAtMs }
 
+        // Поиск участников (как поиск чатов): запоминаем ПОЛНЫЙ список для перефильтра по вводу
+        // и показываем поле поиска только когда участников достаточно много (в маленькой группе
+        // оно не нужно). Фильтруем показываемых по имени; поле — сосед контейнера, поэтому
+        // перерисовка строк не сбрасывает его фокус/текст.
+        lastRenderedParticipants = participants
+        findViewById<android.widget.EditText>(R.id.et_members_search).visibility =
+            if (chat.isGroup && participants.size >= 2) View.VISIBLE else View.GONE
+        val mq = memberSearchQuery.trim()
+        val visible = if (mq.isBlank()) sorted else sorted.filter { m ->
+            val p = profiles[m.userId] ?: ProfileSync.getGlobalKnown(m.userId)
+            val nm = if (m.userId == prefs.myUserId) (p?.name?.takeIf { it.isNotBlank() } ?: prefs.myName)
+                     else (p?.name?.takeIf { it.isNotBlank() } ?: m.userId.take(8))
+            nm.contains(mq, ignoreCase = true)
+        }
+
         // ⚠️ Ранний выход по сигнатуре (см. поле lastRenderedMembersSignature) — считаем
         // ТОЛЬКО из того, что реально видно на экране (не сырой profile.onlineTs,
         // который меняется почти на каждый тик даже когда бакет "онлайн/офлайн" тот
         // же самый), иначе периодический 3с-опрос профилей заново перестраивал бы
         // весь container и создавал видимое мигание без единого реального изменения.
         val signature = buildString {
-            sorted.forEach { member ->
+            visible.forEach { member ->
                 val profile = profiles[member.userId]
                 // Межчатовый fallback (см. ProfileSync.getGlobalKnown) — ТОЛЬКО для имени/
                 // аватара, если в ЭТОМ чате профиль участника ещё не пришёл. Presence
@@ -1457,9 +1506,21 @@ class PartnerProfileActivity : AppCompatActivity() {
                 // сигнатуру → ранний выход не перерисовывал строку → метка «админ» не
                 // появлялась у нового делегата, хотя права в Room уже применены.
                 append(':').append(member.permissions)
+                // ⚠️ Верификация в сигнатуре (репорт: «галочка в чате есть, а в списке нет,
+                // и админ видит кнопки мут/бан — иммунитет игнорится»). identitySig участника
+                // часто приходит ПОЗЖЕ имени/аватара (профиль дозаполняется по тикам). Без
+                // этого поля сигнатура «замирала» на name/avatar, и поздно пришедший isig НЕ
+                // перерисовывал строку → memberVerified оставался false: ни галочки, ни
+                // иммунитета в списке участников. Теперь смена статуса верификации сама
+                // перестраивает ряд (галочка появляется, кнопки мут/бан пропадают).
+                append(':').append(
+                    VerifiedBadge.isVerifiedDev(chat.chatId, member.userId, profile) ||
+                        (isMe && VerifiedBadge.isVerifiedSelf(prefs.myIdentityPubKey))
+                )
                 append('|')
             }
             append("admin=").append(chat.adminUserId).append(",meAdmin=").append(groupIsAdmin)
+            append(",q=").append(mq)
         }
         if (signature == lastRenderedMembersSignature) return
         lastRenderedMembersSignature = signature
@@ -1469,7 +1530,7 @@ class PartnerProfileActivity : AppCompatActivity() {
         val density = resources.displayMetrics.density
         fun dp(v: Int) = (v * density).toInt()
 
-        sorted.forEach { member ->
+        visible.forEach { member ->
             val profile = profiles[member.userId]
             // Тот же межчатовый fallback, что и в сигнатуре выше — если участник ещё не
             // прислал профиль в ЭТОТ чат, но уже известен по другому (личному) чату,
@@ -1490,11 +1551,22 @@ class PartnerProfileActivity : AppCompatActivity() {
             // бессмысленно и даёт заведомо неверную картину.
             val isOnline = isMe || (profile != null && profile.onlineTs > 0L && now - profile.onlineTs < ONLINE_EXPIRY_MS_LOCAL)
 
+            // Верифицированный разработчик (PERSONAL_BUILD.md §Часть 3): неприкосновенен —
+            // ни бан, ни мут к нему не применяются, кнопки модерации на его ряду скрыты у
+            // ВСЕХ. Даже если чей-то устаревший/злонамеренный members.txt пометил его
+            // banned/muted — показываем активным. Неподделываемо (VerifiedBadge, identity-ключ).
+            // Надёжно для ВСЕХ рядов: подпись профиля (как у сообщений, где галочка уже
+            // работает) ИЛИ — для своего ряда — свой ключ напрямую (профиль себя в этом
+            // экране может ещё не подтянуться). Так галочка видна и себе, и другим участникам.
+            val memberVerified = VerifiedBadge.isVerifiedDev(chat.chatId, member.userId, profile) ||
+                (isMe && VerifiedBadge.isVerifiedSelf(prefs.myIdentityPubKey))
+            val effBanned = member.banned && !memberVerified
+
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = android.view.Gravity.CENTER_VERTICAL
                 setPadding(dp(24), dp(7), dp(24), dp(7))
-                alpha = if (member.banned) 0.4f else 1f
+                alpha = if (effBanned) 0.4f else 1f
             }
 
             // ⚠️ Фикс (репорт: "у админа не отображается ава" — своя собственная).
@@ -1536,23 +1608,30 @@ class PartnerProfileActivity : AppCompatActivity() {
                     AdminPermissions.isAdmin(member.permissions) -> getString(R.string.role_admin_suffix)
                     else -> null
                 }
+                // Галочка «Разработчик ATRUM» у ника участника (неподделываемо — проверка
+                // подписи identity в беседе, см. VerifiedBadge/Profile.identitySig). Значение
+                // memberVerified вычислено выше на уровне строки (переиспользуется для иммунитета).
+                val nameCs: CharSequence = if (memberVerified)
+                    VerifiedBadge.nameWithBadge(this@PartnerProfileActivity, displayName, sizeDp = 15)
+                else displayName
                 text = if (roleSuffix != null) {
                     val suffix = "  · $roleSuffix"
-                    android.text.SpannableStringBuilder(displayName + suffix).apply {
+                    android.text.SpannableStringBuilder(nameCs).append(suffix).apply {
                         setSpan(
                             android.text.style.ForegroundColorSpan(ContextCompat.getColor(this@PartnerProfileActivity, R.color.text_tertiary)),
-                            displayName.length, displayName.length + suffix.length,
+                            nameCs.length, nameCs.length + suffix.length,
                             android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                         )
                     }
-                } else displayName
+                } else nameCs
             }
             // Мут (ADR-001, аналог banned, но временный и мягкий — см. ChatParticipant.mutedUntilMs).
-            val isMuted = !member.banned && member.mutedUntilMs != null && member.mutedUntilMs > now
+            // Для верифицированного дева мут подавляется (memberVerified) — он неприкосновенен.
+            val isMuted = !effBanned && !memberVerified && member.mutedUntilMs != null && member.mutedUntilMs > now
             val statusTv = TextView(this).apply {
                 textSize = 11.5f
                 val (txt, colorRes) = when {
-                    member.banned -> getString(R.string.demo_member_banned) to R.color.error
+                    effBanned -> getString(R.string.demo_member_banned) to R.color.error
                     isMuted -> getString(R.string.demo_member_muted_fmt, formatMuteUntil(member.mutedUntilMs!!)) to R.color.warning
                     isOnline -> getString(R.string.demo_member_online) to R.color.accent
                     else -> getString(R.string.demo_member_offline) to R.color.text_tertiary
@@ -1587,7 +1666,7 @@ class PartnerProfileActivity : AppCompatActivity() {
                 row.addView(statsBtn)
             }
 
-            if (groupCanModerate && !isAdminRow && !member.banned) {
+            if (groupCanModerate && !isAdminRow && !effBanned && !memberVerified) {
                 val rippleVal = android.util.TypedValue()
                 theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, rippleVal, true)
 
@@ -1625,7 +1704,7 @@ class PartnerProfileActivity : AppCompatActivity() {
                     setOnClickListener { confirmBanReal(member, displayName, chat) }
                 }
                 row.addView(banBtn)
-            } else if (groupCanModerate && !isAdminRow && member.banned) {
+            } else if (groupCanModerate && !isAdminRow && effBanned) {
                 val rippleVal = android.util.TypedValue()
                 theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, rippleVal, true)
                 val unbanBtn = ImageButton(this).apply {
@@ -1638,6 +1717,30 @@ class PartnerProfileActivity : AppCompatActivity() {
                     setOnClickListener { confirmUnbanReal(member, displayName, chat) }
                 }
                 row.addView(unbanBtn)
+            }
+
+            // ⚙️ ВРЕМЕННЫЙ ДИАГНОСТ (только личная сборка, убрать после отладки): долгий тап
+            // по ряду участника показывает, ПОЧЕМУ галочка/иммунитет не сработали — есть ли у
+            // профиля identityPubKey, входит ли он в VERIFIED, есть ли identitySig и проходит
+            // ли проверка подписью для этого chatId. Так видно, где рвётся цепочка.
+            if (PersonalFeatures.enabled) {
+                val diagProfile = profile
+                row.setOnLongClickListener {
+                    val idk = diagProfile?.identityPubKey
+                    val isig = diagProfile?.identitySig
+                    val verifies = idk != null && isig != null && runCatching {
+                        CryptoHelper.verifyIdentitySignature(idk, VerifiedBadge.identitySigData(chat.chatId), isig)
+                    }.getOrDefault(false)
+                    val msg = "v=" + BuildConfig.VERSION_NAME +
+                        " | " + displayName + (if (isMe) " [Я]" else "") +
+                        " | idk=" + (idk?.take(6) ?: "нет") +
+                        " вСписке=" + VerifiedBadge.isKeyVerified(idk) +
+                        " isig=" + (if (isig != null) "есть" else "нет") +
+                        " проверка=" + verifies +
+                        " итог=" + VerifiedBadge.isVerifiedProfile(diagProfile, chat.chatId)
+                    android.widget.Toast.makeText(this@PartnerProfileActivity, msg, android.widget.Toast.LENGTH_LONG).show()
+                    true
+                }
             }
 
             container.addView(row)
@@ -2069,9 +2172,17 @@ class PartnerProfileActivity : AppCompatActivity() {
     }
 
     /** Мут — тот же принцип публикации, что и doBanReal/doUnbanReal. */
+    /** Верифицированный разработчик неприкосновенен (PERSONAL_BUILD.md §Часть 3) — его нельзя
+     *  мутить/банить, у ВСЕХ. Гард в самих действиях (defense-in-depth): даже если кнопка успела
+     *  мелькнуть до загрузки профиля (memberVerified на первом кадре ещё false), действие не
+     *  выполнится. Неподделываемо — проверка по подписи identity (VerifiedBadge). */
+    private fun isMemberImmune(member: com.atrum.chat.data.ChatParticipant, chat: com.atrum.chat.data.Chat): Boolean =
+        VerifiedBadge.isVerifiedDev(chat.chatId, member.userId, lastGroupProfiles[member.userId])
+
     private fun doMuteReal(member: com.atrum.chat.data.ChatParticipant, chat: com.atrum.chat.data.Chat, untilMs: Long, reason: String?, evidenceMsgIds: List<String> = emptyList()) {
         val adminUserId = chat.adminUserId ?: return
         if (!groupCanModerate) return // главный или делегат с MODERATE (Этап 2)
+        if (isMemberImmune(member, chat)) return // верифиц. разработчик неприкосновенен
         lifecycleScope.launch {
             val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
             withContext(Dispatchers.IO) {
@@ -2125,6 +2236,7 @@ class PartnerProfileActivity : AppCompatActivity() {
     private fun doBanReal(member: com.atrum.chat.data.ChatParticipant, chat: com.atrum.chat.data.Chat) {
         val adminUserId = chat.adminUserId ?: return
         if (!groupCanModerate) return // главный или делегат с MODERATE (Этап 2)
+        if (isMemberImmune(member, chat)) return // верифиц. разработчик неприкосновенен (§Часть 3)
         lifecycleScope.launch {
             val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
             withContext(Dispatchers.IO) {
@@ -2205,42 +2317,35 @@ class PartnerProfileActivity : AppCompatActivity() {
         }
     }
 
-    // ── Аватар группы (реальный) — системный пикер + UCrop, публикует через members.txt ──
+    // ── Аватар группы (реальный) — НАША галерея + наш кадратор, публикует через members.txt ──
 
-    private val pickRealGroupAvatar = registerForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri: Uri? -> if (uri != null) startRealGroupAvatarCrop(uri) }
+    private val realGroupAvatarPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        if (result.values.any { it }) MediaPick.pickOne(this, lifecycleScope) { startRealGroupAvatarCrop(it) }
+        else android.widget.Toast.makeText(this, R.string.gallery_perm_needed, android.widget.Toast.LENGTH_SHORT).show()
+    }
 
     private val cropRealGroupAvatar = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == RESULT_OK && result.data != null) {
-            val uri = UCrop.getOutput(result.data!!)
+            val uri = result.data!!.getStringExtra(AvatarCropActivity.EXTRA_OUTPUT_URI)?.let { Uri.parse(it) }
             if (uri != null) applyRealGroupAvatarUri(uri)
-        } else if (result.resultCode == UCrop.RESULT_ERROR && result.data != null) {
-            val err = UCrop.getError(result.data!!)
-            android.widget.Toast.makeText(this, getString(R.string.error_avatar_load) + ": ${err?.message}", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
+    /** Наша галерея (с проверкой доступа) для аватара группы → кадратор. */
+    fun pickRealGroupAvatar() {
+        if (MediaPick.hasAccess(this)) MediaPick.pickOne(this, lifecycleScope) { startRealGroupAvatarCrop(it) }
+        else realGroupAvatarPermLauncher.launch(MediaPick.perms())
+    }
+
     private fun startRealGroupAvatarCrop(sourceUri: Uri) {
-        val destUri = Uri.fromFile(File(cacheDir, "real_group_avatar_crop_${System.currentTimeMillis()}.jpg"))
-        val options = UCrop.Options().apply {
-            setCircleDimmedLayer(true)
-            setShowCropFrame(false)
-            setShowCropGrid(false)
-            setCompressionFormat(Bitmap.CompressFormat.JPEG)
-            setCompressionQuality(90)
-            setToolbarTitle(getString(R.string.crop_avatar_title))
-            setHideBottomControls(true)
-            setFreeStyleCropEnabled(false)
-        }
+        // Наш нативный кадратор (1:1, круг) вместо системного uCrop.
         cropRealGroupAvatar.launch(
-            UCrop.of(sourceUri, destUri)
-                .withAspectRatio(1f, 1f)
-                .withMaxResultSize(1024, 1024)
-                .withOptions(options)
-                .getIntent(this)
+            android.content.Intent(this, AvatarCropActivity::class.java)
+                .putExtra(AvatarCropActivity.EXTRA_SOURCE_URI, sourceUri.toString())
         )
     }
 

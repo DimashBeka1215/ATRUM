@@ -123,19 +123,35 @@
                         </FrameLayout>
                     </FrameLayout>
 
-                    <TextView
-                        android:id="@+id/tvProfileName"
+                    <LinearLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="14dp"
-                        android:textColor="@color/text_primary"
-                        android:textSize="28sp"
-                        android:fontFamily="sans-serif-medium"
-                        android:textStyle="bold"
-                        android:background="?attr/selectableItemBackground"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:gravity="center" />
+                        android:layout_gravity="center_horizontal"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <TextView
+                            android:id="@+id/tvProfileName"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/text_primary"
+                            android:textSize="28sp"
+                            android:fontFamily="sans-serif-medium"
+                            android:textStyle="bold"
+                            android:background="?attr/selectableItemBackground"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center" />
+
+                        <com.atrum.chat.VerifiedBadgeView
+                            android:id="@+id/verifiedBadge"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_marginStart="8dp"
+                            android:visibility="gone"
+                            android:contentDescription="@string/verified_badge_cd" />
+                    </LinearLayout>
 
                     <TextView
                         android:id="@+id/tvProfileTag"
