@@ -60,6 +60,14 @@ interface ChatDao {
     @Query("UPDATE chats SET transportToken = :token WHERE id = :id")
     suspend fun updateToken(id: Long, token: String)
 
+    /**
+     * Смена владельца беседы (передача владения, ADR_MESSAGE_AUTHENTICITY.md §10). Применяется
+     * ТОЛЬКО по валидному сертификату (OwnerSync) — меняет корень доверия модерации, поэтому
+     * прямых вызовов из UI быть не должно.
+     */
+    @Query("UPDATE chats SET adminUserId = :adminUserId WHERE id = :id")
+    suspend fun updateAdminUserId(id: Long, adminUserId: String)
+
     @Query("UPDATE chats SET isPinned = :pinned WHERE id = :id")
     suspend fun updatePinned(id: Long, pinned: Boolean)
 

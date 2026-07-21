@@ -336,6 +336,13 @@ class CreateChatActivity : SecureActivity() {
     // ═══ Путь сообщений (Nostr / Tor / Bluetooth) ═══
 
     private fun setupPathSelector() {
+        // Tor временно выключен глобально (TorManager.TOR_DISABLED, по просьбе пользователя
+        // «tor выруби весь … пункт в окне создания чата, скрой»). Прячем пункт Tor и
+        // остаёмся на прямом Nostr. Снимут флаг — пункт вернётся сам.
+        if (TorManager.TOR_DISABLED) {
+            binding.pathTor.visibility = View.GONE
+            if (selectedPath == MsgPath.TOR) selectedPath = MsgPath.NOSTR
+        }
         applyPathSelection()
         binding.pathNostr.setOnClickListener {
             selectedPath = MsgPath.NOSTR; applyPathSelection(); animateBolt(binding.pathNostrIcon)

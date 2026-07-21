@@ -264,9 +264,26 @@ object ProfileSync {
     suspend fun pushMyProfile(
         api: ChatTransport,
         password: String,
-        myProfile: Profile
+        myProfile: Profile,
+        identityPriv: ByteArray? = null
     ): Boolean = profilesMutex.withLock {
         try {
+        // Подпись СОДЕРЖИМОГО профиля (имя/тег/аватар/статус) личным identity-ключом
+        // (ADR_GROUP_CHATS.md §«Осталось укрепить», п.4). Домен = api.chatId (== Chat.chatId,
+        // тот же что у identitySig/VerifiedBadge) → получатель может проверить против
+        // закреплённого за userId ключа. Не-блокирующая детекция подмены имени/аватара.
+        // Приватник затираем сразу после подписи (§1), даже если подпись не требовалась.
+        val profileToPush = try {
+            if (identityPriv != null && myProfile.identityPubKey != null && myProfile.contentSig == null) {
+                val csig = CryptoHelper.signProfileContent(
+                    identityPriv, api.chatId, myProfile.userId,
+                    myProfile.name, myProfile.tag, myProfile.avatarBase64, myProfile.status
+                )
+                myProfile.copy(contentSig = csig)
+            } else myProfile
+        } finally {
+            identityPriv?.fill(0)
+        }
         val existing = unionWithKnown(api.chatId, pullProfiles(api, password))
 
         // Удалить все "старые я" — профили с моим именем но не моим userId.
@@ -279,8 +296,8 @@ object ProfileSync {
             staleKeys.forEach { existing.remove(it) }
         }
 
-        // Записать мой профиль
-        existing[myProfile.userId] = myProfile
+        // Записать мой профиль (с подписью содержимого, если была вычислена)
+        existing[profileToPush.userId] = profileToPush
         rememberKnown(api.chatId, existing) // не теряем партнёра при будущих флаки-чтениях
 
         val json = JSONObject().apply {

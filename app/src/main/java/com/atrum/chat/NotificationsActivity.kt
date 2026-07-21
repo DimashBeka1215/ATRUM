@@ -60,6 +60,7 @@ class NotificationsActivity : SecureActivity() {
 
     private fun enablePush() {
         prefs.pushEnabled = true
+        prefs.serviceUserDismissed = false // пользователь сознательно включил пуши
         binding.switchPush.isChecked = true
         MessageWatchService.start(this)
         PushCatchupWorker.schedule(this)

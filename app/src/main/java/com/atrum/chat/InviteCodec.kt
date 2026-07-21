@@ -84,7 +84,15 @@ object InviteCodec {
         /** Лимит участников группы. null = без ограничений. Только для isGroup=true. */
         val participantLimit: Int? = null,
         /** Начальное имя группы (до первого members.txt). Только для isGroup=true. */
-        val groupNameSeed: String? = null
+        val groupNameSeed: String? = null,
+        /**
+         * Публичный identity-ключ админа (Ed25519 Base64) — авторитетный якорь доверия к
+         * подписи members.txt (ADR_MESSAGE_AUTHENTICITY.md, Фаза 3). Закрепляется при вступлении
+         * ДО сети, поэтому не подвержен TOFU-poisoning. null — старый инвайт без ключа (v4 без
+         * 9-го поля): получатель откатывается к TOFU из профиля. Это ПУБЛИЧНЫЙ ключ (приватный в
+         * инвайт не попадает) — извлечение безвредно, он и так есть в профиле админа.
+         */
+        val adminIdentityPubKey: String? = null
     )
 
     /**
@@ -132,7 +140,11 @@ object InviteCodec {
         adminUserId: String,
         participantLimit: Int?,
         groupNameSeed: String,
-        ttlMillis: Long = DEFAULT_TTL_MS
+        ttlMillis: Long = DEFAULT_TTL_MS,
+        /** Публичный identity-ключ админа (см. Decoded.adminIdentityPubKey). Аддитивное 9-е поле
+         *  формата v4: старые клиенты его ИГНОРИРУЮТ (проверяют parts.size>=8), новые — читают.
+         *  Передавать только когда генерирует САМ админ (иначе null → получатель на TOFU). */
+        adminIdentityPubKey: String? = null
     ): String {
         require(channelId.isNotBlank()) { "channelId is blank" }
         require(transportToken.isNotBlank()) { "transportToken is blank" }
@@ -142,10 +154,13 @@ object InviteCodec {
 
         val expiry = System.currentTimeMillis() + ttlMillis
         val limitField = participantLimit?.toString() ?: "-1"
-        val payload = listOf(
+        val fields = mutableListOf(
             VERSION_GROUP, channelId, transportToken, chatPassword, expiry.toString(),
             adminUserId, limitField, groupNameSeed
-        ).joinToString(SEP)
+        )
+        // Аддитивно: 9-е поле только когда ключ есть — иначе байт-в-байт прежний v4.
+        if (!adminIdentityPubKey.isNullOrBlank()) fields.add(adminIdentityPubKey)
+        val payload = fields.joinToString(SEP)
         val salt = ByteArray(SALT_LEN).also { SecureRandom().nextBytes(it) }
         val nonce = ByteArray(NONCE_LEN).also { SecureRandom().nextBytes(it) }
         val key = deriveKeyArgon2(pin, salt)
@@ -207,7 +222,9 @@ object InviteCodec {
                     val expiry = parts[4].toLongOrNull() ?: 0L
                     if (System.currentTimeMillis() > expiry) throw ExpiredException()
                     val limit = parts[6].toIntOrNull()?.takeIf { it > 0 }
-                    return validatedGroup(parts[1], parts[2], parts[3], parts[5], limit, parts[7])
+                    // Аддитивное 9-е поле (Фаза 3): identity-ключ админа. Нет — null (TOFU-откат).
+                    val adminIdk = parts.getOrNull(8)?.takeIf { it.isNotBlank() }
+                    return validatedGroup(parts[1], parts[2], parts[3], parts[5], limit, parts[7], adminIdk)
                 }
             }
 
@@ -236,7 +253,8 @@ object InviteCodec {
         chatPassword: String,
         adminUserId: String,
         participantLimit: Int?,
-        groupNameSeed: String
+        groupNameSeed: String,
+        adminIdentityPubKey: String? = null
     ): Decoded? {
         if (channelId.isBlank() || transportToken.isBlank() || chatPassword.isBlank() || adminUserId.isBlank()) return null
         return Decoded(
@@ -246,7 +264,8 @@ object InviteCodec {
             isGroup = true,
             adminUserId = adminUserId,
             participantLimit = participantLimit,
-            groupNameSeed = groupNameSeed.ifBlank { null }
+            groupNameSeed = groupNameSeed.ifBlank { null },
+            adminIdentityPubKey = adminIdentityPubKey
         )
     }
 

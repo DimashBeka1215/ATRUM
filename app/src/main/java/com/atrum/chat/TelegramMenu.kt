@@ -112,7 +112,7 @@ object TelegramMenu {
         }
 
         // ── 5. Диалог (fullscreen, без системного dim — мы сами делаем фон) ─────
-        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar_Fullscreen)
+        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar_Fullscreen).also { it.window?.transparentNavBar() }
         dialog.setCancelable(true)
         dialog.setCanceledOnTouchOutside(true)
 
@@ -141,8 +141,8 @@ object TelegramMenu {
                 )
                 scaleType = ImageView.ScaleType.FIT_XY
                 setImageBitmap(blurBitmap)
-                // Тёмный оверлей поверх размытия (65% непрозрачности)
-                setColorFilter(Color.argb(165, 0, 0, 0), PorterDuff.Mode.SRC_ATOP)
+                // Мягкое затемнение поверх размытия (~22%, очертания сзади читаются — Apple-стиль)
+                setColorFilter(Color.argb(56, 0, 0, 0), PorterDuff.Mode.SRC_ATOP)
                 isClickable = false
             })
         } else {
@@ -243,11 +243,12 @@ object TelegramMenu {
             val scale = 0.35f
             val sw = (w * scale).toInt().coerceAtLeast(2)
             val sh = (h * scale).toInt().coerceAtLeast(2)
+            clearPressed(decor) // убрать pressed-подсветку/ripple зажатого сообщения из снимка
             val small = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888)
             Canvas(small).also { c -> c.scale(scale, scale); decor.draw(c) }
 
             // Шаг 2: Iterated box blur (3 прохода ≈ Гаусс, без пикселизации)
-            val blurred = boxBlur(small, radius = 9, passes = 3)
+            val blurred = boxBlur(small, radius = 5, passes = 3)
             small.recycle()
 
             // Шаг 3: upscale обратно (~3×, bilinear — гладко при таком соотношении)
@@ -264,6 +265,13 @@ object TelegramMenu {
      * Box blur — скользящее среднее: O(w×h) на проход независимо от радиуса.
      * Возвращает новый bitmap; исходный не рециклируется.
      */
+    /** Рекурсивно снимает pressed-состояние и «допрыгивает» drawable до конца (без остаточного ripple). */
+    private fun clearPressed(v: View) {
+        if (v.isPressed) v.isPressed = false
+        v.jumpDrawablesToCurrentState()
+        if (v is ViewGroup) for (i in 0 until v.childCount) clearPressed(v.getChildAt(i))
+    }
+
     private fun boxBlur(src: Bitmap, radius: Int, passes: Int): Bitmap {
         val w = src.width
         val h = src.height

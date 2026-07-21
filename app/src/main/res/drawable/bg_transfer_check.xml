@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Строка «Остаться админом» в окне передачи владения: прозрачный фон + рамка из токена,
+     чтобы не было «чёрного провала» на модалке (репорт). Тон берётся от модалки. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@android:color/transparent" />
+    <stroke
+        android:width="0.5dp"
+        android:color="@color/border" />
+    <corners android:radius="12dp" />
+</shape>

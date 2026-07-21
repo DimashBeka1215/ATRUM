@@ -75,4 +75,21 @@ interface ChatParticipantDao {
      */
     @Query("UPDATE chat_participants SET permissions = :permissions WHERE ownerId = :ownerId AND userId = :userId")
     suspend fun setPermissions(ownerId: Long, userId: String, permissions: Int)
+
+    /**
+     * TOFU-пиннинг публичного identity-ключа участника (ADR_MESSAGE_AUTHENTICITY.md, Фаза 1).
+     * Ставит ключ ТОЛЬКО если он ещё не закреплён (первый наблюдаемый выигрывает) — так
+     * поздняя подмена профиля не перепишет уже зафиксированный ключ. Расхождение позже
+     * поймает проверка подписи авторства (Фаза 2). Идемпотентно: после установки — no-op.
+     */
+    @Query("UPDATE chat_participants SET pinnedIdentityPubKey = :idk WHERE ownerId = :ownerId AND userId = :userId AND (pinnedIdentityPubKey IS NULL OR pinnedIdentityPubKey = '')")
+    suspend fun pinIdentityIfEmpty(ownerId: Long, userId: String, idk: String)
+
+    /**
+     * БЕЗУСЛОВНАЯ установка закреплённого identity-ключа (передача владения, OwnerSync). В отличие
+     * от [pinIdentityIfEmpty] перезаписывает существующий — применяется ТОЛЬКО по валидному
+     * сертификату передачи владения (новый владелец авторитетнее TOFU). Не вызывать из UI напрямую.
+     */
+    @Query("UPDATE chat_participants SET pinnedIdentityPubKey = :idk WHERE ownerId = :ownerId AND userId = :userId")
+    suspend fun setPinnedIdentity(ownerId: Long, userId: String, idk: String)
 }

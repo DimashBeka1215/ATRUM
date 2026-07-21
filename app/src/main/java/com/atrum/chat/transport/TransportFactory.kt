@@ -56,7 +56,10 @@ class TransportFactory(
         // (заблокирован) — автопереход на прямое подключение, чтобы Nostr работал без VPN.
         val preferTor = transportToken != NostrTransport.NOSTR_DIRECT_TOKEN
         // Ленивый старт Tor: поднимаем демон только когда реально открыт чат через Tor.
-        if (preferTor) context?.let { com.atrum.chat.TorManager.start(it) }
+        // При активном kill-switch (TorManager.TOR_DISABLED) демон не поднимаем — старые
+        // Tor-чаты автоматически идут напрямую (см. NostrTransport.useTor).
+        if (preferTor && !com.atrum.chat.TorManager.TOR_DISABLED)
+            context?.let { com.atrum.chat.TorManager.start(it) }
         return NostrTransport(chatId, chatPassword, myUserId, preferTor = preferTor, adminUserId = adminUserId)
     }
 

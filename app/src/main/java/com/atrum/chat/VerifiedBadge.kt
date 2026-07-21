@@ -22,7 +22,7 @@ object VerifiedBadge {
      *    аватарке в настройках → ключ копируется в буфер (см. SettingsActivity).
      */
     private val VERIFIED: Set<String> = setOf(
-        "2al8Ziz/m3VYwRQ+VLkSgGVizP5Xlcyr9LbkbzMBzwA=", // Sebastian (владелец)
+        "uC/LphU4mzf9kByPTqHH7LxpBaaLX9+T+T8fizVr688=", // Sebastian (владелец)
     )
 
     /** Ключ в списке верифицированных? (только членство, без проверки подлинности). */

@@ -27,6 +27,8 @@ object VerifiedInfoDialog {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             val w = (ctx.resources.displayMetrics.widthPixels * 0.86f).toInt()
             setLayout(w, ViewGroup.LayoutParams.WRAP_CONTENT)
+            // Убираем белую подложку навбара на планшетах с жестовой навигацией (репорт).
+            transparentNavBar()
         }
 
         view.findViewById<View>(R.id.btn_verified_ok).setOnClickListener { dialog.dismiss() }

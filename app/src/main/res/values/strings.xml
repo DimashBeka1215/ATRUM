@@ -1044,6 +1044,8 @@
     <string name="gallery_add_cd">Добавить ещё</string>
     <string name="gallery_perm_needed">Разрешите доступ к фото, чтобы выбрать изображения</string>
     <string name="verified_badge_cd">Верифицирован</string>
+    <string name="msg_auth_verified_cd">Подлинность подтверждена</string>
+    <string name="msg_auth_forged">Возможно подделка — немедленно прекратите переписку</string>
     <string name="identity_copied">Identity-ключ скопирован в буфер</string>
     <string name="verified_dev_title">Разработчик ATRUM</string>
     <string name="verified_dev_body">Этот аккаунт принадлежит разработчику ATRUM. Личность подтверждена криптографически — по identity-ключу, её нельзя подделать или скопировать.</string>
@@ -1193,6 +1195,22 @@
     <string name="admins_primary_note">Создатель — права снять нельзя</string>
     <string name="role_creator_suffix">создатель</string>
     <string name="role_admin_suffix">админ</string>
+    <string name="member_content_unverified">имя/фото не подтверждено</string>
+    <string name="member_content_forged_title">Профиль не подтверждён</string>
+    <string name="member_content_forged_desc">Имя или фото этого участника не совпадают с личным ключом, закреплённым при первом знакомстве. Возможна подмена. Сверьте личность через QR или голосом, прежде чем доверять.</string>
+    <string name="revoke_creator_cd">Отозвать создателя %1$s</string>
+    <string name="revoke_restore_cd">Вернуть создателя %1$s</string>
+    <string name="revoke_creator_title">Отозвать создателя?</string>
+    <string name="revoke_creator_message">Беседа перестанет признавать ключ и права %1$s как создателя. Создателя не останется — беседой правишь ты. Действие подписывается твоим корневым ключом. Ты сможешь вернуть создателя позже.</string>
+    <string name="revoke_creator_confirm">Отозвать</string>
+    <string name="revoke_restore_title">Вернуть создателя?</string>
+    <string name="revoke_restore_message">Беседа снова признает ключ и права %1$s как создателя.</string>
+    <string name="revoke_restore_confirm">Вернуть</string>
+    <string name="revoke_transition_revoke_title">Аннулирование прав создателя</string>
+    <string name="revoke_transition_restore_title">Восстановление прав создателя</string>
+    <string name="revoke_transition_revoke_desc">Беседа перестаёт признавать ключ и права создателя. С этого момента ей управляет владелец приложения.</string>
+    <string name="revoke_transition_restore_desc">Беседа снова признаёт ключ и права создателя. Ему возвращается полное управление.</string>
+    <string name="revoke_transition_who">Отозвать или вернуть права создателя может только verified root — владелец с корневым ключом, вшитым в приложение. Подделать невозможно.</string>
     <string name="admins_no_rights">Без прав</string>
     <string name="admins_no_candidates">Некого назначить</string>
     <string name="admins_pick_title">Кого назначить</string>
@@ -1217,6 +1235,23 @@
     <string name="admin_perms_revoke_title">Снять права?</string>
     <string name="admin_perms_revoke_msg">%1$s перестанет быть администратором беседы.</string>
     <string name="admin_perms_saved_toast">Права сохранены</string>
+    <string name="transfer_owner_item">Передать право владения</string>
+    <string name="transfer_owner_item_desc">Сделать участника создателем беседы</string>
+    <string name="transfer_owner_title">Вы точно хотите передать свои права?</string>
+    <string name="transfer_owner_msg">%1$s станет создателем беседы. Не передавайте права тем, кому не доверяете. Вы не сможете их вернуть, если их вам не передадут снова.</string>
+    <string name="transfer_owner_keep_admin">Остаться админом</string>
+    <string name="transfer_owner_keep_admin_hint">иначе опуститесь до обычного участника</string>
+    <string name="transfer_owner_yes">Да</string>
+    <string name="transfer_owner_yes_timer">Да (%1$d)</string>
+    <string name="transfer_owner_done">Право владения передано</string>
+    <string name="transfer_owner_no_key">У участника ещё нет ключа — дождитесь, пока он появится в сети</string>
+    <string name="transfer_owner_error">Не удалось передать права</string>
+    <string name="transfer_owner_sent">Предложение отправлено</string>
+    <string name="transfer_offer_title">Операция передачи прав</string>
+    <string name="transfer_offer_desc">Создатель передаёт вам право владения беседой. Если принять — вы станете создателем и получите полный контроль над беседой. Отклонить можно без последствий.</string>
+    <string name="transfer_offer_accept">Принять</string>
+    <string name="transfer_offer_decline">Отклонить</string>
+    <string name="transfer_offer_accepting">Принимаем права и обновляем беседу…</string>
     <string name="admin_perms_revoked_toast">Права сняты</string>
     <string name="admin_perms_error">Не удалось сохранить</string>
 
@@ -1227,6 +1262,4 @@
     <string name="pinned_show_all">Закреплённые сообщения</string>
     <string name="pinned_unpin">Открепить</string>
     <string name="pinned_done">Закреплено</string>
-    <string name="unpinned_done">Откреплено</string>
-    <string name="identity_pub_copied">Публичный ключ скопирован</string>
-</resources>
+    <string name="unpinned_done">Откреплено</string></resources>

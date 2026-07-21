@@ -7,7 +7,6 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Чтобы Service мог открыть Activity поверх Custom Tabs после успеха OAuth -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
@@ -205,6 +204,18 @@
             android:exported="false"
             android:theme="@style/Theme.AtrumChat" />
 
+        <!-- Полноэкранное окно входящего предложения передачи владения (ADR §10) -->
+        <activity
+            android:name=".TransferOfferActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AtrumChat" />
+
+        <!-- Полноэкранный переход при отзыве/возврате прав создателя -->
+        <activity
+            android:name=".RevokeTransitionActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AtrumChat" />
+
         <!-- Экран QR-приглашения (стилизованный QR + поделиться/сканировать) -->
         <activity
             android:name=".InviteQrActivity"
@@ -287,14 +298,9 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- Перезапуск сервиса после перезагрузки телефона -->
-        <receiver
-            android:name=".BootReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-            </intent-filter>
-        </receiver>
+        <!-- Автозапуск после перезагрузки телефона УБРАН (репорт: «сам себя перезапускает,
+             не могу закрыть»). Фоновый сервис пушей теперь стартует только когда пользователь
+             сам открыл приложение (при включённом тумблере пушей). См. BootReceiver (no-op). -->
 
         <!-- Шеринг картинки QR-приглашения через content:// -->
         <provider

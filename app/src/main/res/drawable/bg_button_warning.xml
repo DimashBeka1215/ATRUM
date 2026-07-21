@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Кнопка подтверждения передачи владения: сплошной warning (#FFB454, одинаков в обеих
+     темах). Текст поверх — гарантированно тёмный (исключение как white-on-accent, §5). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/warning" />
+    <corners android:radius="12dp" />
+</shape>

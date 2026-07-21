@@ -95,6 +95,18 @@
                 android:layout_marginStart="4dp"
                 android:visibility="gone"
                 android:contentDescription="@string/verified_badge_cd"/>
+
+            <!-- Значок подлинности авторства (ADR_MESSAGE_AUTHENTICITY.md, Фаза 4):
+                 сообщение подписано личным ключом отправителя и ключ совпал с закреплённым. -->
+            <ImageView
+                android:id="@+id/iv_auth_verified"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:layout_marginStart="4dp"
+                android:src="@drawable/ic_shield_check"
+                app:tint="@color/accent_light"
+                android:visibility="gone"
+                android:contentDescription="@string/msg_auth_verified_cd"/>
         </LinearLayout>
 
         <!-- Блок цитаты -->
@@ -366,6 +378,38 @@
                 android:layout_marginStart="10dp"
                 android:background="@drawable/bg_lp_skel"
                 android:visibility="gone" />
+        </LinearLayout>
+
+        <!-- Предупреждение о подделке авторства (ADR_MESSAGE_AUTHENTICITY.md, Фаза 4):
+             подпись не сошлась с закреплённым ключом отправителя → возможна имперсонация. -->
+        <LinearLayout
+            android:id="@+id/auth_warning_row"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="top"
+            android:layout_marginTop="5dp"
+            android:maxWidth="264dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/iv_auth_warning"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:layout_marginTop="1dp"
+                android:layout_marginEnd="5dp"
+                android:src="@drawable/ic_warning"
+                app:tint="@color/error"
+                android:contentDescription="@null"/>
+
+            <TextView
+                android:id="@+id/tv_auth_warning"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/msg_auth_forged"
+                android:textColor="@color/error"
+                android:textSize="12sp"
+                android:lineSpacingExtra="1dp"/>
         </LinearLayout>
 
         <TextView

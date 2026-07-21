@@ -101,7 +101,16 @@ data class Profile(
      */
     val verifiedPartnerIdk: String? = null,
     /** Статус пользователя — произвольный текст, задаётся в настройках. */
-    val status: String? = null
+    val status: String? = null,
+    /**
+     * Base64 Ed25519 подпись СОДЕРЖИМОГО профиля (имя/тег/аватар/статус), сделанная приватным
+     * identity-ключом (см. CryptoHelper.signProfileContent). В отличие от [identitySig], которая
+     * доказывает лишь владение ключом, эта покрывает само имя/аватар — закрывает их подмену
+     * инсайдером. Проверяется против закреплённого за userId ключа. null — старый клиент
+     * (обратная совместимость §17): тогда содержимое считается «не подтверждённым», но не
+     * отвергается (не-блокирующая детекция).
+     */
+    val contentSig: String? = null
 ) {
     fun toJsonObject(): JSONObject = JSONObject().apply {
         put("name", name)
@@ -120,6 +129,7 @@ data class Profile(
         if (identitySig != null) put("isig", identitySig)
         if (verifiedPartnerIdk != null) put("vpk", verifiedPartnerIdk)
         if (status != null) put("status", status)
+        if (contentSig != null) put("csig", contentSig)
     }
 
     companion object {
@@ -142,7 +152,8 @@ data class Profile(
                 ephemeralSig = json.optString("esig", "").takeIf { it.isNotBlank() },
                 identitySig = json.optString("isig", "").takeIf { it.isNotBlank() },
                 verifiedPartnerIdk = json.optString("vpk", "").takeIf { it.isNotBlank() },
-                status = json.optString("status", null)?.takeIf { it.isNotBlank() }
+                status = json.optString("status", null)?.takeIf { it.isNotBlank() },
+                contentSig = json.optString("csig", "").takeIf { it.isNotBlank() }
             )
         }
     }

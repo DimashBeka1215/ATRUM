@@ -377,21 +377,6 @@ class SettingsActivity : SecureActivity() {
             VerifiedBadge.isVerifiedSelf(prefs.myIdentityPubKey), animate = true
         )
 
-        // ⭐ ЛИЧНАЯ СБОРКА: долгий тап по аватарке копирует мой ПУБЛИЧНЫЙ identity-ключ.
-        // Он НЕ секретный — его нужно вписать в VerifiedBadge.VERIFIED, чтобы собеседники и
-        // админы признавали верификацию/иммунитет/модерацию. Приватная половина остаётся
-        // ТОЛЬКО на устройстве (EncryptedSharedPreferences), никуда не копируется. См.
-        // PERSONAL_BUILD.md. Обычный тап (pickAvatar) сохранён — долгий не мешает ему.
-        if (PersonalFeatures.enabled) {
-            binding.flAvatarContainer.setOnLongClickListener {
-                val pub = prefs.myIdentityPubKey
-                val clip = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clip.setPrimaryClip(android.content.ClipData.newPlainText("atrum_identity_pub", pub))
-                android.widget.Toast.makeText(this, R.string.identity_pub_copied, android.widget.Toast.LENGTH_SHORT).show()
-                true
-            }
-        }
-
         updateTopBar(name, avatar)
     }
 
@@ -544,7 +529,22 @@ class SettingsActivity : SecureActivity() {
                         .takeIf { it.isNotEmpty() }
                         ?: @Suppress("DEPRECATION") chat.chatPassword
                     val api = TransportFactory.forChat(applicationContext, chat.chatId, token, password, settingsPrefs.myUserId)
-                    ProfileSync.pushMyProfile(api, password, profile)
+                    // Личность обязательно кладём в КАЖДЫЙ пуш профиля. pushMyProfile делает
+                    // ПОЛНУЮ замену моего слота, поэтому без idk/isig смена имени/аватара из
+                    // настроек ронял бы мою верификацию (щит мигал бы у собеседников до
+                    // следующего пуша из ChatActivity), а теперь ещё и подпись содержимого
+                    // (contentSig, п.4 ADR). Домен identitySig = chat.chatId (тот же, что у
+                    // ChatActivity.computeIdentitySig / VerifiedBadge). Приватник получаем один
+                    // раз, используем для isig, затем передаём в pushMyProfile — там он затрётся.
+                    val priv = settingsPrefs.getOrCreateIdentity().first
+                    val isig = try {
+                        CryptoHelper.signWithIdentity(priv, VerifiedBadge.identitySigData(chat.chatId))
+                    } catch (_: Exception) { null }
+                    val withIdentity = profile.copy(
+                        identityPubKey = settingsPrefs.myIdentityPubKey,
+                        identitySig = isig
+                    )
+                    ProfileSync.pushMyProfile(api, password, withIdentity, priv)
                 } catch (_: Exception) {}
             }
         }

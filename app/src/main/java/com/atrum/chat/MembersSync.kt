@@ -263,6 +263,157 @@ object MembersSync {
     }
 
     /**
+     * ⭐ Фаза 3 (ADR_MESSAGE_AUTHENTICITY.md §10): подлинность members.txt ГЛАВНОГО админа
+     * по его ЛИЧНОМУ identity-ключу, а НЕ по password-derived pubkey (тот выводит любой
+     * инсайдер и подделывает бан/мут). Слот главного признаётся подлинным, если его [identityKey]
+     * совпадает с ЗАКРЕПЛЁННЫМ за админом ключом ([pinnedAdminIdk] — из инвайта/TOFU, Фаза 1) И
+     * подпись Ed25519 над [verifiedAdminSigData] валидна. Знание пароля чата этого не даёт
+     * (нет приватного identity-ключа). Отличается от [isVerifiedAdminSlot] тем, что сверяет НЕ
+     * с захардкоженным списком, а с закреплённым ключом ЭТОГО админа.
+     *
+     * Безопасный дефолт: [pinnedAdminIdk] пуст (старый чат/ключ ещё не закреплён) → null-режим
+     * решается вызывающим (applyIncoming): мягкий откат к password-гейту (§17).
+     */
+    fun isPrimaryAdminIdentityValid(chatId: String, f: MembersFile, pinnedAdminIdk: String?): Boolean {
+        if (pinnedAdminIdk.isNullOrBlank()) return false
+        val idk = f.identityKey ?: return false
+        val sig = f.identitySig ?: return false
+        if (idk != pinnedAdminIdk) return false
+        return runCatching {
+            CryptoHelper.verifyIdentitySignature(idk, verifiedAdminSigData(chatId, f), sig)
+        }.getOrDefault(false)
+    }
+
+    // ─── Передача владения беседой (ADR_MESSAGE_AUTHENTICITY.md §10) ──────────────
+    // Сертификат: текущий владелец (создатель) подписывает СВОИМ identity-ключом переход
+    // владения на identity-ключ получателя. Клиенты, проверив подпись против ЗАКРЕПЛЁННОГО
+    // ключа владельца, перепинивают владельца на новый и меняют роли. Тот же неподделываемый
+    // механизм, что и ротация ключа (смена устройства). Обкатано в песочнице (own.js, 7/7).
+
+    /**
+     * Сертификат передачи владения. [keepOldAsAdmin] — прежний владелец остаётся АДМИНОМ
+     * (совместное управление); иначе опускается до обычного участника. [sig] — подпись
+     * [fromIdk]-ключом над [transferSigData]; подделать нельзя без приватного ключа владельца.
+     */
+    data class OwnerTransfer(
+        val chatId: String,
+        val fromUserId: String,
+        val fromIdk: String,
+        val toUserId: String,
+        val toIdk: String,
+        val keepOldAsAdmin: Boolean,
+        val ts: Long,
+        /** Подпись ВЛАДЕЛЬЦА (оффер). */
+        val sig: String = "",
+        /** Подпись ПОЛУЧАТЕЛЯ (согласие). Пусто — оффер ещё не принят (двусторонняя передача). */
+        val acceptSig: String = ""
+    )
+
+    /** Домен-разделённые данные оффера (в подпись НЕ входят сами sig/acceptSig). */
+    fun transferSigData(t: OwnerTransfer): ByteArray =
+        ("atrum_owner_transfer_v1|${t.chatId}|${t.fromUserId}|${t.fromIdk}|${t.toUserId}|" +
+            "${t.toIdk}|${if (t.keepOldAsAdmin) 1 else 0}|${t.ts}").toByteArray(Charsets.UTF_8)
+
+    /** Данные согласия получателя (отдельный домен, чтобы подпись оффера нельзя было переиграть). */
+    fun transferAcceptData(t: OwnerTransfer): ByteArray =
+        ("atrum_owner_accept_v1|${t.chatId}|${t.fromUserId}|${t.fromIdk}|${t.toUserId}|" +
+            "${t.toIdk}|${if (t.keepOldAsAdmin) 1 else 0}|${t.ts}").toByteArray(Charsets.UTF_8)
+
+    /** Подписывает ОФФЕР приватным identity-ключом текущего владельца. */
+    fun signOwnerTransfer(fromPriv: ByteArray, t: OwnerTransfer): OwnerTransfer =
+        t.copy(sig = CryptoHelper.signWithIdentity(fromPriv, transferSigData(t)) ?: "")
+
+    /** Добавляет СОГЛАСИЕ получателя (подпись его приватным identity-ключом). */
+    fun signOwnerAccept(toPriv: ByteArray, t: OwnerTransfer): OwnerTransfer =
+        t.copy(acceptSig = CryptoHelper.signWithIdentity(toPriv, transferAcceptData(t)) ?: "")
+
+    /**
+     * Оффер подписан ТЕКУЩИМ владельцем? (fromIdk == закреплённый, fromUserId == текущий владелец,
+     * подпись владельца верна). Это ещё НЕ применение — только «оффер настоящий».
+     */
+    fun isOwnerOfferSigned(t: OwnerTransfer, chatId: String, pinnedAdminIdk: String?, currentAdminUserId: String?): Boolean {
+        if (pinnedAdminIdk.isNullOrBlank() || t.sig.isBlank()) return false
+        if (t.chatId != chatId) return false
+        if (t.fromIdk != pinnedAdminIdk) return false
+        if (!currentAdminUserId.isNullOrBlank() && t.fromUserId != currentAdminUserId) return false
+        if (t.toIdk.isBlank() || t.toUserId.isBlank()) return false
+        return runCatching {
+            CryptoHelper.verifyIdentitySignature(t.fromIdk, transferSigData(t), t.sig)
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Сертификат ПОЛНОСТЬЮ валиден для применения: оффер подписан владельцем И получатель
+     * подтвердил согласие своим ключом (двусторонняя передача — никому нельзя навязать права).
+     */
+    fun isOwnerTransferValid(t: OwnerTransfer, chatId: String, pinnedAdminIdk: String?, currentAdminUserId: String?): Boolean {
+        if (!isOwnerOfferSigned(t, chatId, pinnedAdminIdk, currentAdminUserId)) return false
+        if (t.acceptSig.isBlank()) return false
+        return runCatching {
+            CryptoHelper.verifyIdentitySignature(t.toIdk, transferAcceptData(t), t.acceptSig)
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Это НЕПРИНЯТЫЙ оффер лично мне? Оффер читать может любой участник (общий пароль), но
+     * «это точно Я — получатель» подтверждается ЛИЧНЫМ ключом: [OwnerTransfer.toIdk] должен
+     * совпадать с моим identity-ключом [myIdentityPubKey]. Даже увидев оффер, чужой не сможет
+     * его принять — согласие подписывается приватным ключом, которого у него нет
+     * (см. isOwnerTransferValid). userId — мягкая адресация поверх ключевой проверки.
+     */
+    fun isPendingOfferForMe(
+        t: OwnerTransfer, chatId: String, pinnedAdminIdk: String?, currentAdminUserId: String?,
+        myUserId: String, myIdentityPubKey: String
+    ): Boolean =
+        t.acceptSig.isBlank() &&
+            myIdentityPubKey.isNotBlank() && t.toIdk == myIdentityPubKey &&
+            (myUserId.isBlank() || t.toUserId == myUserId) &&
+            isOwnerOfferSigned(t, chatId, pinnedAdminIdk, currentAdminUserId)
+
+    // ─── Отзыв создателя verified-root'ом (ОБРАТИМО) ─────────────────────────────
+    // root (ключ из захардкоженного VerifiedBadge.VERIFIED — высшая инстанция сборки)
+    // подписывает состояние: revoked=true (отзыв) либо false (возврат). Выигрывает последний
+    // ts (анти-откат). Отозванный создатель сам себя НЕ вернёт — нет root-приватника; инсайдер
+    // с паролем тоже (нет ключа из VERIFIED). Обкатано в песочнице (revoke2.js, 10/10).
+
+    /**
+     * Сертификат отзыва/возврата создателя. [revoked] true — беседа перестаёт признавать
+     * [targetIdk]/права [targetUserId] как создателя; false — возврат. [sig] — подпись [rootIdk]
+     * (ключ обязан быть в VerifiedBadge.VERIFIED) над [revokeSigData].
+     */
+    data class OwnerRevoke(
+        val chatId: String,
+        val targetUserId: String,
+        val targetIdk: String,
+        val rootIdk: String,
+        val revoked: Boolean,
+        val ts: Long,
+        val sig: String = ""
+    )
+
+    /** Домен-разделённые данные отзыва/возврата (флаг [revoked] ВХОДИТ в подпись). */
+    fun revokeSigData(r: OwnerRevoke): ByteArray =
+        ("atrum_owner_revoke_v1|${r.chatId}|${r.targetUserId}|${r.targetIdk}|${r.rootIdk}|" +
+            "${if (r.revoked) 1 else 0}|${r.ts}").toByteArray(Charsets.UTF_8)
+
+    /** Подписывает отзыв/возврат приватным root-ключом (ключ обязан быть в VERIFIED). */
+    fun signOwnerRevoke(rootPriv: ByteArray, r: OwnerRevoke): OwnerRevoke =
+        r.copy(sig = CryptoHelper.signWithIdentity(rootPriv, revokeSigData(r)) ?: "")
+
+    /**
+     * Сертификат валиден: подписан ключом из ЗАХАРДКОЖЕННОГО [VerifiedBadge] (высшая инстанция —
+     * инсайдер с паролем этого не даст) и подпись Ed25519 сходится. Анти-replay по chatId.
+     */
+    fun isRevokeValid(r: OwnerRevoke, chatId: String): Boolean {
+        if (r.chatId != chatId) return false
+        if (r.sig.isBlank() || r.rootIdk.isBlank()) return false
+        if (!VerifiedBadge.isKeyVerified(r.rootIdk)) return false
+        return runCatching {
+            CryptoHelper.verifyIdentitySignature(r.rootIdk, revokeSigData(r), r.sig)
+        }.getOrDefault(false)
+    }
+
+    /**
      * Расшифровывает УЖЕ проверенный по подписи members.txt (см. класс-докстринг) и
      * применяет к локальному кэшу [ChatParticipantDao] с анти-откатом по версии
      * (Chat.membersVersion). Возвращает true, если применилась новая версия.
@@ -318,6 +469,44 @@ object MembersSync {
         // в "userId NOT IN ()" — это истинно для ЛЮБОЙ строки, т.е. пустой participants
         // стёр бы ВСЕХ локальных участников у КАЖДОГО клиента, который применил эту версию.
         if (primaryParsed.participants.isEmpty()) return false
+
+        // ⛔ Отзыв создателя (RevokeSync): если этот members.txt публикует ОТОЗВАННЫЙ создатель
+        // (его userId отозван ИЛИ файл подписан отозванным identity-ключом) — НЕ применяем. Так
+        // отозванный не вернёт контроль переопубликованием ростера (обкатано revoke2.js). Root-
+        // возврат снимает отзыв отдельным сертификатом (revoke.txt), после чего проверка не мешает.
+        if (appContext != null) {
+            val revokePrefs = Prefs(appContext)
+            if (revokePrefs.isUserRevoked(chat.chatId, primaryParsed.adminUserId)) return false
+            primaryParsed.identityKey?.let { if (revokePrefs.isIdkRevokedInChat(chat.chatId, it)) return false }
+        }
+
+        // ── Фаза 3 (ADR_MESSAGE_AUTHENTICITY.md §10): enforcement подлинности главного ──
+        // Транспортный гейт (password-derived admin-pubkey) подделываем инсайдером. Здесь
+        // проверяем НАСТОЯЩУЮ подпись главного его личным identity-ключом против ЗАКРЕПЛЁННОГО
+        // (Фаза 1 TOFU из профиля админа; позже — из инвайта).
+        //   • подпись валидна → взводим «строгий режим» для чата (adminSigningSeen);
+        //   • подписи нет/битая, НО ключ известен И строгий режим уже включён → это подделка
+        //     (инсайдер вывел password-ключ) → НЕ применяем, держим текущее состояние (баны/муты
+        //     целы, анти-rollback). Форжер может лишь блокировать обновления (liveness-DoS, §10.4).
+        //   • ключ неизвестен ИЛИ строгий режим ещё не включён → мягкий откат к password-гейту
+        //     (§17: старый админ без подписи / первый вход не отвергаются).
+        // appContext==null (напр. JoinChatActivity, первый вход) → enforcement не трогаем.
+        if (appContext != null) {
+            // Ключ ищем по ДОВЕРЕННОМУ chat.adminUserId (из инвайта), а не по adminUserId из
+            // присланного файла (его теоретически мог подставить публикующий).
+            val trustedAdminUid = chat.adminUserId ?: primaryParsed.adminUserId
+            val pinnedAdminIdk = participantDao.getOne(chat.id, trustedAdminUid)?.pinnedIdentityPubKey
+            if (isPrimaryAdminIdentityValid(chat.chatId, primaryParsed, pinnedAdminIdk)) {
+                Prefs(appContext).setAdminSigningSeen(chat.chatId)
+            }
+            // ⚠️ ENFORCEMENT ВРЕМЕННО НЕ БЛОКИРУЕТ (репорт: «права любые не выдаются»). Строгая
+            // проверка отвергала ЛЕГИТИМНЫЙ members.txt, когда закреплённый admin-ключ не совпал
+            // или ещё не созрел (смена устройства админа / незавершённый TOFU-пиннинг) — тогда
+            // роли/бан/мут не применялись. Подпись главного по-прежнему считается и пишется
+            // (adminSigningSeen выше), но применение members.txt НЕ блокируем. Жёсткий reject
+            // вернуть ПОСЛЕ надёжного решения: пиннинг admin-ключа из инвайта у всех + ротация
+            // ключа при смене устройства (сертификат). См. ADR §10.4/§10.6.
+        }
 
         // ── Gate применения + возможное слияние мультиподписи ──────────────────────
         // Без слотов/деривации/контекста — прежний путь: одиночная подпись главного,
@@ -377,7 +566,11 @@ object MembersSync {
                     mutedUntilMs = e.mutedUntilMs,
                     mutedReason = e.mutedReason,
                     mutedEvidenceIds = evidenceIdsToStore(e.mutedEvidenceIds),
-                    permissions = e.permissions
+                    permissions = e.permissions,
+                    // ⭐ Фаза 3: СОХРАНЯЕМ закреплённый identity-ключ участника (TOFU из профиля /
+                    // авторитетный из инвайта). Раньше upsertAll (REPLACE) обнулял его на КАЖДОМ
+                    // тике членства — якорь доверия к подписи админа не пережил бы синк.
+                    pinnedIdentityPubKey = existing[e.userId]?.pinnedIdentityPubKey
                 )
             }
         )
@@ -436,7 +629,19 @@ object MembersSync {
         // ушло, юнион не вернёт; чужой пин остаётся, т.к. он в слитом parsed.pinned.
         val freshForPins = chatDao.getById(chat.id)
         val myPins = freshForPins?.myPinnedMsgIds?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
-        val displayPins = LinkedHashSet(parsed.pinned).apply { addAll(myPins) }
+        val existingRoomPins = freshForPins?.pinnedMsgIds?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
+        val displayPins = LinkedHashSet(parsed.pinned).apply {
+            addAll(myPins)
+            // ⚠️ ЗАКРЕПЫ ЖИВУТ В ПАМЯТИ БЕСЕДЫ (Room) И НЕ ПРОПАДАЮТ НА ПЕРЕЗАХОДЕ (репорт).
+            // Если это чтение НЕ принесло слотов участников (mergingActive=false — обычное
+            // дело первые ~10–20с после старта, пока Tor поднимается, или флаки-чтение), оно
+            // НЕ может авторитетно судить о закрепах: parsed.pinned усечён и раньше ПЕРЕТИРАЛ
+            // сохранённый набор → закрепы «исчезали после перезахода». Теперь при неполном
+            // чтении не сужаем — сохраняем уже записанное в Room. Когда слоты придут
+            // (mergingActive=true, липкий кэш их держит) — набор снова авторитетен, включая
+            // открепления (чужой анпин при полном чтении корректно уберёт закреп).
+            if (!mergingActive) addAll(existingRoomPins)
+        }
         val newPinnedCsv = displayPins.joinToString(",")
         // Пишем ТОЛЬКО при реальном изменении — иначе безусловная запись на каждый apply
         // дёргает Flow таблицы чатов (лишние ререндеры списка = тормоза).

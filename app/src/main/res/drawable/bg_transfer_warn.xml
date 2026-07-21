@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Жёлтая плашка предупреждения для передачи владения. Полупрозрачный warning-тон
+     (theme-independent, читается на тёмной и светлой модалке). Alpha-хардкод — принятое
+     в проекте исключение для warning (ср. bg_warning_card, #52FFB454). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#1FFFB454" />
+    <stroke
+        android:width="0.5dp"
+        android:color="#66FFB454" />
+    <corners android:radius="12dp" />
+</shape>

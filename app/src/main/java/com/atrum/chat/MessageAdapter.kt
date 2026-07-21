@@ -49,6 +49,12 @@ class MessageAdapter(
     /** true — групповая беседа: подсвечивать @упоминания в тексте (см. highlightMentions). */
     var isGroupChat: Boolean = false
 
+    /**
+     * Лукап состояния подлинности авторства по сообщению (ADR_MESSAGE_AUTHENTICITY.md, Фаза 4).
+     * Заполняет ChatActivity из [ChatActivity.msgAuthByMsgId]; null → всё UNSIGNED (нейтрально).
+     */
+    var authStateFor: ((Message) -> MsgAuth)? = null
+
     /** Непрозрачность пузырьков своих сообщений (0.1–1.0). Управляется настройками. */
     var bubbleAlphaSelf: Float = 1.0f
 
@@ -461,7 +467,8 @@ class MessageAdapter(
             avatarBase64      = avatarFor(msg),
             showAvatar        = isFirstOfRun(position),
             isGroupChat       = isGroupChat,
-            isVerifiedSender  = isVerifiedSender(msg)
+            isVerifiedSender  = isVerifiedSender(msg),
+            authState         = authStateFor?.invoke(msg) ?: MsgAuth.UNSIGNED
         )
     }
 
@@ -523,6 +530,12 @@ class MessageAdapter(
         private val senderView: TextView? = itemView.findViewById(R.id.tv_sender)
         private val senderRow: View? = itemView.findViewById(R.id.sender_row)
         private val verifiedBadgeSender: VerifiedBadgeView? = itemView.findViewById(R.id.verified_badge_sender)
+        // Подлинность авторства (ADR_MESSAGE_AUTHENTICITY.md, Фаза 4). Есть только в
+        // item_message_other (входящие) — у своих сообщений null, findViewById безопасен.
+        private val ivAuthVerified: ImageView? = itemView.findViewById(R.id.iv_auth_verified)
+        private val authWarningRow: View? = itemView.findViewById(R.id.auth_warning_row)
+        private val ivAuthWarning: ImageView? = itemView.findViewById(R.id.iv_auth_warning)
+        private val tvAuthWarning: TextView? = itemView.findViewById(R.id.tv_auth_warning)
         private val textView: TextView = itemView.findViewById(R.id.tv_text)
         private val linkPreview: View? = itemView.findViewById(R.id.link_preview)
         private val lpSite: TextView? = itemView.findViewById(R.id.lp_site)
@@ -561,6 +574,35 @@ class MessageAdapter(
         private val avatarFrame: View? = itemView.findViewById(R.id.msg_avatar_frame)
         private val avatarImage: ShapeableImageView? = itemView.findViewById(R.id.iv_msg_avatar)
         private val avatarInitial: TextView? = itemView.findViewById(R.id.tv_msg_avatar_initial)
+
+        /**
+         * Показывает состояние подлинности авторства (ADR_MESSAGE_AUTHENTICITY.md, Фаза 4).
+         * VERIFIED — щит-галочка рядом с ником; FORGED — предупреждение под сообщением;
+         * UNSIGNED — ничего (нейтрально, большинство старых/переходных сообщений). Вью есть
+         * только во входящем макете; у своих сообщений ссылки null → безопасный no-op.
+         */
+        private fun bindAuthState(state: MsgAuth, glassMode: Boolean) {
+            // Щит подлинности показываем ВСЕГДА при VERIFIED — в т.ч. рядом с личной галочкой
+            // разработчика (по просьбе: щит стоит рядом с dev-галочкой). Порядок в sender_row:
+            // ник → dev-галочка → щит.
+            val showShield = state == MsgAuth.VERIFIED
+            ivAuthVerified?.visibility = if (showShield) View.VISIBLE else View.GONE
+            if (showShield) {
+                val ctx = itemView.context
+                // Glass — поверх произвольного фото: только белый (§5.1). Иначе — акцент.
+                val tint = if (glassMode) android.graphics.Color.WHITE
+                    else androidx.core.content.ContextCompat.getColor(ctx, R.color.accent_light)
+                ivAuthVerified?.setColorFilter(tint)
+            }
+            authWarningRow?.visibility = if (state == MsgAuth.FORGED) View.VISIBLE else View.GONE
+            if (state == MsgAuth.FORGED) {
+                val ctx = itemView.context
+                // Ошибка/подделка: @color/error читаем в обеих темах и поверх тёмного glass-оверлея.
+                val err = androidx.core.content.ContextCompat.getColor(ctx, R.color.error)
+                ivAuthWarning?.setColorFilter(err)
+                tvAuthWarning?.setTextColor(err)
+            }
+        }
 
         /**
          * [show] = false → INVISIBLE (не GONE!) — гуттер остаётся зарезервирован, чтобы
@@ -647,7 +689,8 @@ class MessageAdapter(
             avatarBase64: String? = null,
             showAvatar: Boolean = false,
             isGroupChat: Boolean = false,
-            isVerifiedSender: Boolean = false
+            isVerifiedSender: Boolean = false,
+            authState: MsgAuth = MsgAuth.UNSIGNED
         ) {
             if (msg.isSystem) {
                 bindSystem(msg)
@@ -669,6 +712,11 @@ class MessageAdapter(
                     (senderRow ?: it).visibility = View.GONE
                 }
             }
+
+            // Подлинность авторства (ADR_MESSAGE_AUTHENTICITY.md, Фаза 4): значок
+            // «подтверждено» рядом с ником и предупреждение о подделке под сообщением.
+            // В glass-режиме — белым поверх фото (§5.1); иначе токены accent/error.
+            bindAuthState(authState, glassMode)
 
             // ── Картинка / коллаж / стикер / голосовое ───────────────────────
             voiceContainer?.visibility = View.GONE

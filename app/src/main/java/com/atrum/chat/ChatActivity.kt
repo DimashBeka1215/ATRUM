@@ -206,6 +206,20 @@ class ChatActivity : SecureActivity() {
     private var pinnedIds: List<String> = emptyList()
     /** Мои вклады в закрепления (Room chat.myPinnedMsgIds) — что могу открепить сам. */
     private var myPinnedIds: List<String> = emptyList()
+
+    // ── Подлинность авторства (ADR_MESSAGE_AUTHENTICITY.md, Фаза 2) ───────────────
+    /** msgId → состояние подлинности (VERIFIED/FORGED/UNSIGNED). Заполняется best-effort
+     *  на тике синка (syncMessageAuth). Пишется из IO, читается при рендере — потокобезопасно.
+     *  UI ещё не использует (Фаза 4); поведение приложения не меняется. */
+    private val msgAuthByMsgId = java.util.concurrent.ConcurrentHashMap<String, MsgAuth>()
+    /** Троттл фоновой подписи своих сообщений (не чаще раза в N мс). */
+    @Volatile private var lastAuthSignMs = 0L
+
+    /** ts оффера передачи владения, для которого уже показано полноэкранное окно (анти-дубль). */
+    @Volatile private var lastLaunchedOfferTs = 0L
+    /** Троттл чтения owner.txt: передача владения редка, не дёргаем реле каждый тик (нагрузка). */
+    @Volatile private var lastOwnerCertCheckMs = 0L
+    @Volatile private var lastRevokeCheckMs = 0L
     /** Мои права в этой группе (маска, из моей записи ChatParticipant). */
     @Volatile private var myGroupPermissions: Int = 0
     /** Индекс текущего показываемого пина в плашке (листается тапом). */
@@ -700,6 +714,12 @@ class ChatActivity : SecureActivity() {
             @Suppress("DEPRECATION")
             chat = loaded.copy(transportToken = restoredToken, chatPassword = restoredPassword)
             setupUi()
+            // Плашка закреплённых — СРАЗУ из Room, как только чат загрузился, не дожидаясь
+            // сетевого синка (репорт: закрепы появлялись через ~5с после входа). onResume
+            // рисует закрепы, но на ПЕРВОМ входе он срабатывает раньше, чем инициализируется
+            // chat (грузится асинхронно), поэтому там условие ::chat.isInitialized ложно и показ
+            // пропускается. Дублируем здесь — работает и для бесед, созданных до правки (§17).
+            if (chat.isGroup) launch { refreshPinState() }
             // Прогреваем Argon2-ключ в фоне (V2 фолбэк): первое шифрование/дешифрование
             // занимает 400–700 мс, кеш после этого делает всё мгновенным.
             // Запускаем до loadMessages — к моменту расшифровки первых строк ключ уже готов.
@@ -975,7 +995,7 @@ class ChatActivity : SecureActivity() {
             verifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.chatId),
             status = prefs.myStatus.takeIf { it.isNotBlank() }
         )
-        ProfileSync.pushMyProfile(transport, chat.chatPassword, myProfile)
+        ProfileSync.pushMyProfile(transport, chat.chatPassword, myProfile, prefs.getOrCreateIdentity().first)
 
         // Групповой чат (ADR-001), только у админа: свежий allProfiles уже под рукой
         // (не зависит от того, менялся ли chat.txt) — самый быстрый путь заметить
@@ -1308,6 +1328,9 @@ class ChatActivity : SecureActivity() {
         )
         this.imageLoader = imageLoader
         adapter.isGroupChat = chat.isGroup // подсветка @упоминаний — только в группе
+        // Подлинность авторства (ADR_MESSAGE_AUTHENTICITY.md, Фаза 4): адаптер берёт состояние
+        // из карты, заполняемой best-effort на тике синка (syncMessageAuth). null → UNSIGNED.
+        adapter.authStateFor = { m -> msgAuthByMsgId[m.msgId] ?: MsgAuth.UNSIGNED }
         // Применяем уже известный индекс прочитанности (из Room) к адаптеру
         adapter.setPartnerLastReadIndex(chat.partnerLastReadIndex)
         // Начальные значения непрозрачности пузырьков (могут быть обновлены в applyWallpaper)
@@ -1425,6 +1448,14 @@ class ChatActivity : SecureActivity() {
         // посередине adapter.submit(), что предотвращает мигание при быстром потоке событий.
         lifecycleScope.launch {
             chatStore.messages.collect { messages ->
+                // Закреп следует за правкой и когда её сделал ДРУГОЙ участник (я — зритель):
+                // отредактированное сообщение сохраняет senderUserId+timestampMs, но меняет
+                // msgId (он выводится из шифртекста). Ловим это ДО переустановки currentMessages,
+                // сравнивая старую и новую ленту, и перемапливаем закреп на месте (§1.5).
+                if (::chat.isInitialized && chat.isGroup &&
+                    (pinnedIds.isNotEmpty() || myPinnedIds.isNotEmpty())) {
+                    reconcilePinsAfterEdit(currentMessages, messages)
+                }
                 currentMessages = messages
                 adapter.submit(messages)
                 
@@ -1880,6 +1911,14 @@ class ChatActivity : SecureActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Приняли передачу владения (TransferOfferActivity) → переоткрываем чат, чтобы транспорт
+        // пересоздался со СМЕНЁННЫМ adminUserId (его password-pubkey — гейт members.txt нового
+        // владельца). После recreate() человек попадает в уже прогруженный чат создателем.
+        if (::chat.isInitialized && pendingOwnerReloadChatId == chat.id) {
+            pendingOwnerReloadChatId = -1L
+            recreate()
+            return
+        }
         isInForeground = true
         // Фоновый синк членства пропускает открытый чат (он поллится своим SyncEngine) —
         // меньше параллельных loadAll через Tor, беседа грузится быстрее (репорт).
@@ -2544,6 +2583,19 @@ class ChatActivity : SecureActivity() {
                 }
             }
 
+            // Подписи авторства (ADR_MESSAGE_AUTHENTICITY.md, Фаза 2): проверяем подписи всех
+            // сообщений против закреплённых ключей (Фаза 1) и best-effort дописываем свои.
+            // Строго ПОСЛЕ TOFU-пиннинга ключей выше. Никогда не влияет на доставку/отправку —
+            // при любой ошибке подписи просто нет (UNSIGNED), см. syncMessageAuth.
+            runCatching { syncMessageAuth() }
+
+            // Передача владения (ADR §10): применяем цепочку сертификатов из owner.txt.
+            // Пока никто не передавал владение — owner.txt пуст и это no-op. Best-effort.
+            runCatching { syncOwnerCerts() }
+
+            // Отзыв/возврат создателя root'ом (RevokeSync): применяем revoke.txt. Пусто — no-op.
+            runCatching { syncRevokes() }
+
             // Кэш числа активных участников для presence-тикера (см. applyGroupPresence) —
             // обновляем раз за опрос, а не на каждый тик (~1с), чтобы не дёргать Room. Тот
             // же снимок переиспользуем ниже для баннера «X присоединился к чату».
@@ -3088,7 +3140,7 @@ class ChatActivity : SecureActivity() {
                 AppScope.launch {
                     repeat(3) { attempt ->
                         val ok = try {
-                            ProfileSync.pushMyProfile(currentTransport, chatPassword, myProfile)
+                            ProfileSync.pushMyProfile(currentTransport, chatPassword, myProfile, prefs.getOrCreateIdentity().first)
                         } catch (_: Exception) { false }
                         if (ok) {
                             // Обновляем кэш немедленно — иначе следующий write-only
@@ -3283,6 +3335,154 @@ class ChatActivity : SecureActivity() {
      * солью на каждый вызов, несжимаемо), см. подробный докстринг
      * CryptoHelper.encryptGroupMessage(). 1:1 не затронуты — там как раньше encrypt().
      */
+    /**
+     * Best-effort синхронизация подписей авторства (ADR_MESSAGE_AUTHENTICITY.md, Фаза 2).
+     * На тике синка: (1) грузит и расшифровывает blob подписей (sigs.txt), проверяет подписи
+     * всех сообщений против закреплённых ключей участников (Фаза 1) и заполняет
+     * [msgAuthByMsgId] (для показа в Фазе 4); (2) дописывает подписи к СВОИМ ещё неподписанным
+     * сообщениям и публикует обновлённый (зашифрованный) blob.
+     *
+     * ⛔ Строго best-effort и НЕ на пути отправки: всё в runCatching, любая ошибка = «подписи
+     * нет» (UNSIGNED). Строка сообщения (chat.txt) не меняется, доставка не затрагивается (§1).
+     * Пока только группы. Blob шифруется доменом чата — реле не видит связку ключ↔сообщение.
+     */
+    private suspend fun syncMessageAuth() {
+        if (!::chat.isInitialized || !chat.isGroup) return
+        val msgs = currentMessages
+        if (msgs.isEmpty()) return
+        runCatching {
+            // 1) Загрузка + расшифровка blob подписей (может отсутствовать).
+            val rawBlob = withContext(Dispatchers.IO) { transport.loadSignatures() }.trim()
+            val plain = if (rawBlob.isEmpty()) "" else
+                (CryptoHelper.decrypt(rawBlob, chat.chatPassword, chat.chatId) ?: "")
+            val sigs = MessageAuthSync.parse(plain)
+
+            // 2) Закреплённые identity-ключи участников (TOFU, Фаза 1).
+            val participants = withContext(Dispatchers.IO) { db.chatParticipantDao().getForChat(chat.id) }
+            val pinned = HashMap<String, String>()
+            for (p in participants) p.pinnedIdentityPubKey?.let { if (it.isNotBlank()) pinned[p.userId] = it }
+
+            // 3) Проверка → карта состояний. Обновляем UI ТОЛЬКО если что-то реально
+            // изменилось (иначе лишние ребайнды на каждом тике = мерцание, §14).
+            val newStates = MessageAuthSync.computeAuthStates(msgs, sigs, pinned, chat.chatId)
+            var authChanged = false
+            for ((k, v) in newStates) if (msgAuthByMsgId[k] != v) { authChanged = true; break }
+            msgAuthByMsgId.putAll(newStates)
+            if (authChanged) withContext(Dispatchers.Main) {
+                if (::adapter.isInitialized) runCatching { adapter.notifyItemRangeChanged(0, adapter.itemCount) }
+            }
+
+            // 4) Подписываем свои ещё неподписанные сообщения (троттл, только при изменении).
+            val now = System.currentTimeMillis()
+            if (now - lastAuthSignMs >= 5_000L) {
+                val (priv, pub) = prefs.getOrCreateIdentity()
+                try {
+                    val updated = MessageAuthSync.buildOwnSignatures(
+                        msgs, prefs.myUserId, pub, priv, chat.chatId, sigs
+                    )
+                    if (updated != null) {
+                        lastAuthSignMs = now
+                        val blob = encryptChatLine(MessageAuthSync.serialize(updated), chat.chatId)
+                        withContext(Dispatchers.IO) { transport.saveSignatures(blob) }
+                    }
+                } finally {
+                    priv.fill(0)
+                }
+            }
+        }
+    }
+
+    /**
+     * Best-effort применение цепочки передачи владения (ADR_MESSAGE_AUTHENTICITY.md §10).
+     * Грузит owner.txt, расшифровывает, применяет валидные переходы (OwnerSync): смена
+     * adminUserId + перепиннинг ключа владельца + понижение роли прежнего. Владелец меняется
+     * ТОЛЬКО по подписи текущего владельца — подделать нельзя. При смене — перечитываем чат из
+     * БД, чтобы adminUserId в памяти обновился. Пока owner.txt пуст — полный no-op.
+     */
+    private suspend fun syncOwnerCerts() {
+        if (!::chat.isInitialized || !chat.isGroup) return
+        // Передача владения — редкое событие. НЕ читаем owner.txt каждый тик (это была лишняя
+        // нагрузка на реле у всех участников), а раз в ~30с. На первом тике после открытия чата
+        // проверяем сразу (lastOwnerCertCheckMs=0) — ожидающий оффер всплывёт быстро. Сам оффер
+        // персистит на реле (Argon2id-шифрование) и ждёт получателя сколько угодно, не завися от
+        // того, в сети ли владелец.
+        val now = System.currentTimeMillis()
+        if (now - lastOwnerCertCheckMs < 30_000L) return
+        lastOwnerCertCheckMs = now
+        runCatching {
+            val rawBlob = withContext(Dispatchers.IO) { transport.loadOwnerCerts() }.trim()
+            if (rawBlob.isEmpty()) return
+            val plain = CryptoHelper.decrypt(rawBlob, chat.chatPassword, chat.chatId) ?: return
+            val changed = withContext(Dispatchers.IO) {
+                OwnerSync.applyOwnerChain(chat, plain, db.chatDao(), db.chatParticipantDao())
+            }
+            if (changed) {
+                // Владелец сменился (завершённая передача владения) — переоткрываем чат, чтобы
+                // транспорт пересоздался со СМЕНЁННЫМ adminUserId (его password-pubkey — гейт
+                // members.txt нового владельца). Идемпотентно: applyOwnerChain двигает владельца
+                // ровно один раз, поэтому recreate() срабатывает однократно на смену.
+                withContext(Dispatchers.Main) { runCatching { recreate() } }
+                return@runCatching
+            }
+
+            // Входящий НЕПРИНЯТЫЙ оффер лично мне → полноэкранное окно (двусторонняя передача).
+            val adminUid = chat.adminUserId
+            val pinnedAdminIdk = if (!adminUid.isNullOrBlank())
+                withContext(Dispatchers.IO) { db.chatParticipantDao().getOne(chat.id, adminUid)?.pinnedIdentityPubKey }
+            else null
+            val pending = OwnerSync.findPendingOfferForMe(chat, plain, prefs.myUserId, prefs.myIdentityPubKey, pinnedAdminIdk)
+            if (pending != null && pending.ts != lastLaunchedOfferTs &&
+                prefs.getDeclinedOwnerOffer(chat.chatId) != pending.ts) {
+                lastLaunchedOfferTs = pending.ts
+                withContext(Dispatchers.Main) {
+                    startActivity(Intent(this@ChatActivity, TransferOfferActivity::class.java).apply {
+                        putExtra(TransferOfferActivity.EXTRA_CHAT_ID, chat.id)
+                        putExtra(TransferOfferActivity.EXTRA_OFFER_TS, pending.ts)
+                    })
+                }
+            }
+        }
+    }
+
+    /**
+     * Отзыв/возврат создателя root'ом (RevokeSync). Читаем revoke.txt: при открытии чата (поймать
+     * уже существующий отзыв — live-стрим шлёт только НОВЫЕ события), по ПУШУ реле
+     * (transport.consumeRevokeDirty, revoke.txt заведён в members-стрим — мгновенно в обычном
+     * случае), И как СТРАХОВКА раз в ~12с. Страховка нужна потому, что между отзывом и возвратом
+     * чат перезагружается (переход + recreate), и restore-событие реле может прийти в это окно и
+     * не попасть в push → без страховки возврат «завис» бы. Файл крошечный, страховка лёгкая.
+     * Если сменился владелец — показываем экран перехода. Best-effort.
+     */
+    private suspend fun syncRevokes() {
+        if (!::chat.isInitialized || !chat.isGroup) return
+        val now = System.currentTimeMillis()
+        val firstOpen = lastRevokeCheckMs == 0L
+        val pushed = !firstOpen && transport.consumeRevokeDirty()
+        if (!firstOpen && !pushed && now - lastRevokeCheckMs < 12_000L) return
+        lastRevokeCheckMs = now
+        runCatching {
+            val rawBlob = withContext(Dispatchers.IO) { transport.loadRevokes() }.trim()
+            if (rawBlob.isEmpty()) return
+            val plain = CryptoHelper.decrypt(rawBlob, chat.chatPassword, chat.chatId) ?: return
+            val changed = withContext(Dispatchers.IO) {
+                RevokeSync.applyRevokes(chat, plain, db.chatDao(), db.chatParticipantDao(), prefs)
+            }
+            if (changed) {
+                // Вместо резкого recreate() — полноэкранный переход с описанием (мокап одобрен).
+                // revoke → adminUserId очистился (пусто); restore → вернулся непустым.
+                val wasRevoke = withContext(Dispatchers.IO) { db.chatDao().getById(chat.id)?.adminUserId }.isNullOrBlank()
+                withContext(Dispatchers.Main) {
+                    runCatching {
+                        startActivity(android.content.Intent(this@ChatActivity, RevokeTransitionActivity::class.java).apply {
+                            putExtra(RevokeTransitionActivity.EXTRA_CHAT_ID, chat.id)
+                            putExtra(RevokeTransitionActivity.EXTRA_REVOKE, wasRevoke)
+                        })
+                    }
+                }
+            }
+        }
+    }
+
     private fun encryptChatLine(plaintext: String, chatId: String): String =
         if (chat.isGroup) CryptoHelper.encryptGroupMessage(plaintext, chat.chatPassword, chatId)
         else CryptoHelper.encrypt(plaintext, chat.chatPassword, chatId)
@@ -5132,6 +5332,65 @@ class ChatActivity : SecureActivity() {
         }
     }
 
+    /**
+     * Обнаруживает правки закреплённых сообщений между старой и новой лентой и перемапливает
+     * закреп. Правка сохраняет senderUserId+timestampMs, но меняет msgId (он из шифртекста):
+     * если закреплённый id пропал, а сообщение с тем же автором и временем теперь имеет другой
+     * msgId — это и есть правка. Покрывает и локальную правку, и правку от другого участника,
+     * которую я вижу как зритель.
+     */
+    private fun reconcilePinsAfterEdit(oldList: List<Message>, newList: List<Message>) {
+        val pins = (pinnedIds + myPinnedIds).distinct()
+        if (pins.isEmpty()) return
+        for (pid in pins) {
+            val oldMsg = oldList.firstOrNull { it.msgId == pid } ?: continue
+            // Уже есть в новой ленте под тем же id — правки не было.
+            if (newList.any { it.msgId == pid }) continue
+            val newMsg = newList.firstOrNull {
+                it.senderUserId == oldMsg.senderUserId && it.timestampMs == oldMsg.timestampMs
+            } ?: continue
+            if (newMsg.msgId != pid && newMsg.msgId.isNotBlank()) {
+                lifecycleScope.launch { remapPinnedMsgId(pid, newMsg.msgId) }
+            }
+        }
+    }
+
+    /**
+     * Перемап закрепа при правке сообщения (закреп следует за текстом, как в ТГ). msgId
+     * привязан к шифртексту, поэтому правка меняет id — заменяем старый id на новый в Room
+     * (мой вклад + показываемое) и переопубликовываем свой слот, если старый id был в нём,
+     * чтобы у остальных участников закреп тоже обновился. Плашка перерисовывается на месте
+     * (§1.5). Ничего не делаем, если старого id в закрепах нет.
+     */
+    private suspend fun remapPinnedMsgId(oldId: String, newId: String) {
+        if (!::chat.isInitialized || !chat.isGroup || oldId == newId || oldId.isBlank() || newId.isBlank()) return
+        val db = com.atrum.chat.data.AppDatabase.get(this@ChatActivity)
+        var republishMine = false
+        withContext(Dispatchers.IO) {
+            val fresh = db.chatDao().getById(chat.id) ?: return@withContext
+            val mine = (fresh.myPinnedMsgIds?.split(",")?.filter { it.isNotBlank() } ?: emptyList()).toMutableList()
+            val shown = (fresh.pinnedMsgIds?.split(",")?.filter { it.isNotBlank() } ?: emptyList()).toMutableList()
+            var dirty = false
+            val mi = mine.indexOf(oldId)
+            if (mi >= 0) {
+                if (mine.contains(newId)) mine.removeAt(mi) else mine[mi] = newId
+                republishMine = true; dirty = true
+            }
+            val si = shown.indexOf(oldId)
+            if (si >= 0) {
+                if (shown.contains(newId)) shown.removeAt(si) else shown[si] = newId
+                dirty = true
+            }
+            if (dirty) {
+                db.chatDao().updateMyPinnedMsgIds(chat.id, mine.joinToString(","))
+                db.chatDao().updatePinnedMsgIds(chat.id, shown.joinToString(","))
+            }
+        }
+        // Переопубликовываем слот только если менялся МОЙ вклад — иначе чужие закрепы не трогаем.
+        if (republishMine) PublishScheduler.markMembersDirty(applicationContext, chat.chatId)
+        refreshPinState()
+    }
+
     /** Список всех закреплённых — прыжок к выбранному (bottom-меню в стиле Neon). */
     private fun showPinnedListSheet() {
         if (pinnedIds.isEmpty()) return
@@ -5455,6 +5714,16 @@ class ChatActivity : SecureActivity() {
             // round-trip через Tor + кворум реле, иначе правка висит "в ожидании" секундами.
             // reconcile позже бесшовно заменит pending серверной строкой (совпадение rawEncrypted).
             chatStore.confirmSent(newEncrypted)
+
+            // Закреп следует за правкой (как в ТГ): msgId выводится из шифртекста
+            // (Message.msgId = rawEncrypted.take(40)), поэтому при правке он меняется. Если
+            // это сообщение закреплено — перемапливаем закреп со старого id на новый и
+            // переопубликовываем свой слот, чтобы плашка показала новый текст, а не «потеряла»
+            // сообщение. Работает и для старых бесед (§17): те же поля Room, тот же общий слой.
+            val newMsgId = newEncrypted.take(40)
+            if (chat.isGroup && (pinnedIds.contains(msg.msgId) || myPinnedIds.contains(msg.msgId))) {
+                remapPinnedMsgId(msg.msgId, newMsgId)
+            }
 
             // PatchQueue.ReplaceLine: сериализуется с остальными PATCH-операциями. Сеть — в фоне.
             patchQueue.enqueue(PatchQueue.Action.ReplaceLine(
@@ -5858,6 +6127,13 @@ class ChatActivity : SecureActivity() {
     }
 
     companion object {
+        /**
+         * Room-id чата, который нужно переоткрыть (recreate) после приёма передачи владения —
+         * чтобы транспорт пересоздался со СМЕНЁННЫМ adminUserId (гейт members.txt). Ставит
+         * TransferOfferActivity после успешного приёма; ChatActivity снимает в onResume.
+         */
+        @Volatile var pendingOwnerReloadChatId: Long = -1L
+
         /** За сколько позиций до верха начинать подгрузку старых сообщений (ленивый рендер). */
         private const val REVEAL_THRESHOLD = 6
         /** Макс. картинок в одном коллаже. */

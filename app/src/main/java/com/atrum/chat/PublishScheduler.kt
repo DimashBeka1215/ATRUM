@@ -171,13 +171,15 @@ object PublishScheduler {
         // Закрепления (Этап 3): публикуем МОИ вклады (myPinnedMsgIds), а не показываемое
         // слияние — иначе я бы «залипал» чужие пины и мешал их откреплению.
         val pinnedList = chat.myPinnedMsgIds?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
-        // Заявка верифиц-дева: подписываем СТАБИЛЬНОЕ состояние (версия+ростер+муты/баны+пины,
-        // привязанное к chatId) приватным identity-ключом — приёмники дают за это ALL. priv
-        // затирается сразу (§1). Главному не нужно: его слот и так доверен (подпись admin-pubkey
-        // на транспортном уровне). Делаем только для не-главного, чтобы не плодить лишние поля.
+        // Подписываем СТАБИЛЬНОЕ состояние (версия+ростер+муты/баны+пины, привязанное к chatId)
+        // приватным identity-ключом. priv затирается сразу (§1). Подписывают:
+        //  • ГЛАВНЫЙ админ (Фаза 3, ADR §10) — чтобы приёмник проверил подлинность против
+        //    ЗАКРЕПЛЁННОГО admin-ключа (неподделываемо; знание пароля не даёт identity-priv).
+        //    Аддитивно: старые клиенты поле игнорируют, новые пока НЕ enforce'ят (см. applyIncoming).
+        //  • верифиц-дев не-главный — прежняя заявка на ALL (isVerifiedAdminSlot).
         var identityKey: String? = null
         var identitySig: String? = null
-        if (isVerifiedAdmin && !isPrimary) {
+        if (isPrimary || (isVerifiedAdmin && !isPrimary)) {
             val fileForSig = MembersSync.MembersFile(
                 version = newVersion, adminUserId = adminUserId, participants = entries,
                 ts = 0L, groupName = chat.groupName, groupDescription = chat.groupDescription,

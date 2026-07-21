@@ -88,12 +88,42 @@ object NeonDialog {
 
     // ── Window setup ──────────────────────────────────────────────────────────
 
-    private fun Dialog.setupWindow(ctx: Context) {
+    /**
+     * Ставит карточку [card] в ПОЛНОЭКРАННЫЙ root с Gaussian-blur снимком экрана сзади (Apple-стиль,
+     * мягкий — ScreenBlur, очертания читаются) + лёгкое затемнение ~22%. Заменяет прежний setupWindow.
+     * Тап по фону закрывает окно, если [cancelOutside] (у полноэкранного окна системный «тап вне»
+     * уже не срабатывает, поэтому вешаем сами). Карточка кликабельна — клик по ней не проваливается.
+     */
+    private fun Dialog.setContentWithBlur(ctx: Context, card: android.view.View, cancelOutside: Boolean) {
+        val root = FrameLayout(ctx)
+        val blur = ScreenBlur.capture(ctx)
+        if (blur != null) {
+            root.addView(android.widget.ImageView(ctx).apply {
+                scaleType = android.widget.ImageView.ScaleType.FIT_XY
+                setImageBitmap(blur)
+                setColorFilter(Color.argb(56, 0, 0, 0), android.graphics.PorterDuff.Mode.SRC_ATOP)
+                // ФИКСИРОВАННЫЙ размер = размер снимка (не MATCH_PARENT): при появлении клавиатуры
+                // окно сжимается (ADJUST_RESIZE), и MATCH_PARENT+FIT_XY «утрамбовывал» бы снимок в
+                // укороченную область → деформация. С фикс-размером снимок просто обрезается снизу.
+                layoutParams = FrameLayout.LayoutParams(blur.width, blur.height)
+            })
+        } else {
+            root.addView(android.view.View(ctx).apply {
+                setBackgroundColor(Color.argb(120, 0, 0, 0))
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            })
+        }
+        if (cancelOutside) root.setOnClickListener { dismiss() }
+        card.isClickable = true
+        val cw = (ctx.resources.displayMetrics.widthPixels * 0.85f).toInt()
+        root.addView(card, FrameLayout.LayoutParams(cw, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        setContentView(root)
         window?.apply {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            val w = (ctx.resources.displayMetrics.widthPixels * 0.85f).toInt()
-            setLayout(w, WindowManager.LayoutParams.WRAP_CONTENT)
-            setGravity(Gravity.CENTER)
+            setLayout(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         }
     }
 
@@ -114,7 +144,7 @@ object NeonDialog {
         items: List<Item>,
         cancellable: Boolean = true
     ): Dialog {
-        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar)
+        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar).also { it.window?.transparentNavBar() }
         dialog.setCancelable(cancellable)
         dialog.setCanceledOnTouchOutside(cancellable)
 
@@ -166,8 +196,7 @@ object NeonDialog {
             )
         })
 
-        dialog.setContentView(root)
-        dialog.setupWindow(ctx)
+        dialog.setContentWithBlur(ctx, root, cancelOutside = cancellable)
         dialog.show()
         return dialog
     }
@@ -187,7 +216,7 @@ object NeonDialog {
         onNegative: (() -> Unit)? = null,
         onPositive: () -> Unit
     ): Dialog {
-        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar)
+        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar).also { it.window?.transparentNavBar() }
         dialog.setCancelable(true)
         dialog.setCanceledOnTouchOutside(true)
 
@@ -255,8 +284,7 @@ object NeonDialog {
             })
         })
 
-        dialog.setContentView(root)
-        dialog.setupWindow(ctx)
+        dialog.setContentWithBlur(ctx, root, cancelOutside = true)
         dialog.show()
         return dialog
     }
@@ -279,7 +307,7 @@ object NeonDialog {
         onDestructive: () -> Unit,
         footnote: String? = null
     ): Dialog {
-        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar)
+        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar).also { it.window?.transparentNavBar() }
         dialog.setCancelable(true)
         dialog.setCanceledOnTouchOutside(true)
 
@@ -369,8 +397,7 @@ object NeonDialog {
             })
         }
 
-        dialog.setContentView(root)
-        dialog.setupWindow(ctx)
+        dialog.setContentWithBlur(ctx, root, cancelOutside = true)
         dialog.show()
         return dialog
     }
@@ -390,7 +417,7 @@ object NeonDialog {
         isPassword: Boolean = false,
         onPositive: (String) -> Unit
     ): Dialog {
-        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar)
+        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar).also { it.window?.transparentNavBar() }
         dialog.setCancelable(true)
         dialog.setCanceledOnTouchOutside(false)
 
@@ -489,8 +516,7 @@ object NeonDialog {
             })
         })
 
-        dialog.setContentView(root)
-        dialog.setupWindow(ctx)
+        dialog.setContentWithBlur(ctx, root, cancelOutside = false)
         // Клавиатура появляется автоматически при открытии
         dialog.window?.setSoftInputMode(
             WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE or
@@ -513,7 +539,7 @@ object NeonDialog {
         buttonText: String = "OK",
         onDismiss: (() -> Unit)? = null
     ): Dialog {
-        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar)
+        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar).also { it.window?.transparentNavBar() }
         dialog.setCancelable(true)
         dialog.setCanceledOnTouchOutside(true)
 
@@ -576,8 +602,7 @@ object NeonDialog {
             dialog.setOnDismissListener { onDismiss() }
         }
 
-        dialog.setContentView(root)
-        dialog.setupWindow(ctx)
+        dialog.setContentWithBlur(ctx, root, cancelOutside = true)
         dialog.show()
         return dialog
     }
@@ -594,7 +619,7 @@ object NeonDialog {
         buttonText: String = "OK",
         onDismiss: (() -> Unit)? = null
     ): Dialog {
-        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar)
+        val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar).also { it.window?.transparentNavBar() }
         dialog.setCancelable(true)
         dialog.setCanceledOnTouchOutside(true)
 
@@ -664,8 +689,7 @@ object NeonDialog {
 
         if (onDismiss != null) dialog.setOnDismissListener { onDismiss() }
 
-        dialog.setContentView(root)
-        dialog.setupWindow(ctx)
+        dialog.setContentWithBlur(ctx, root, cancelOutside = true)
         dialog.show()
         return dialog
     }

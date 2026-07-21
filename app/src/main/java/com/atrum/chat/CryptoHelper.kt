@@ -535,6 +535,67 @@ object CryptoHelper {
         }
     }
 
+    // ─── Подпись АВТОРСТВА сообщений (Ed25519 поверх identity-ключа) ──
+    //     ADR_MESSAGE_AUTHENTICITY.md, Фаза 0. Использует identity-пару участника
+    //     (не выводимую из общего пароля), поэтому подделать авторство инсайдер не может.
+
+    /**
+     * Домен-разделённый дайджест для подписи авторства. Привязан к чату, автору, времени и
+     * каноническому телу сообщения — подпись нельзя переиспользовать в другом чате/сообщении,
+     * а правка (меняет тело и/или время) делает старую подпись невалидной.
+     */
+    fun msgSigData(chatId: String, senderUserId: String, timestampMs: Long, canonicalContent: String): ByteArray {
+        val payload = "atrum_msgsig_v1|$chatId|$senderUserId|$timestampMs|$canonicalContent"
+        return java.security.MessageDigest.getInstance("SHA-256").digest(payload.toByteArray(Charsets.UTF_8))
+    }
+
+    /** Подписывает сообщение личным identity-ключом автора. @return base64-подпись или null. */
+    fun signMessage(
+        identityPriv: ByteArray, chatId: String, senderUserId: String,
+        timestampMs: Long, canonicalContent: String
+    ): String? = signWithIdentity(identityPriv, msgSigData(chatId, senderUserId, timestampMs, canonicalContent))
+
+    /** Проверяет подпись авторства публичным identity-ключом автора. */
+    fun verifyMessage(
+        identityPubB64: String, chatId: String, senderUserId: String,
+        timestampMs: Long, canonicalContent: String, sigB64: String
+    ): Boolean = verifyIdentitySignature(
+        identityPubB64, msgSigData(chatId, senderUserId, timestampMs, canonicalContent), sigB64
+    )
+
+    // ─── Подпись СОДЕРЖИМОГО профиля (имя/тег/аватар/статус) ──────────────────────
+    //     ADR_GROUP_CHATS.md §«Осталось укрепить», пункт 4. identitySig доказывает лишь
+    //     ВЛАДЕНИЕ ключом, но не покрывает имя/аватар — их можно подменить. Эта подпись
+    //     закрывает подмену. Обкатано в песочнице (prof.js, 6/6). Не-блокирующая детекция.
+
+    /**
+     * Домен-разделённый дайджест содержимого профиля. Аватар хешируется (может быть большим).
+     * Привязан к chatId+userId — подпись нельзя переиграть на другой чат/пользователя.
+     */
+    fun profileContentSigData(
+        chatId: String, userId: String, name: String, tag: String?, avatarBase64: String?, status: String?
+    ): ByteArray {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        val av = if (avatarBase64.isNullOrEmpty()) ""
+            else Base64.encodeToString(md.digest(avatarBase64.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
+        val payload = "atrum_profile_v1|$chatId|$userId|$name|${tag ?: ""}|$av|${status ?: ""}"
+        return java.security.MessageDigest.getInstance("SHA-256").digest(payload.toByteArray(Charsets.UTF_8))
+    }
+
+    /** Подписывает содержимое профиля личным identity-ключом. @return base64 или null. */
+    fun signProfileContent(
+        identityPriv: ByteArray, chatId: String, userId: String,
+        name: String, tag: String?, avatarBase64: String?, status: String?
+    ): String? = signWithIdentity(identityPriv, profileContentSigData(chatId, userId, name, tag, avatarBase64, status))
+
+    /** Проверяет подпись содержимого профиля публичным identity-ключом (закреплённым за userId). */
+    fun verifyProfileContent(
+        identityPubB64: String, chatId: String, userId: String,
+        name: String, tag: String?, avatarBase64: String?, status: String?, sigB64: String
+    ): Boolean = verifyIdentitySignature(
+        identityPubB64, profileContentSigData(chatId, userId, name, tag, avatarBase64, status), sigB64
+    )
+
     /**
      * Вычисляет короткий код сверки (fingerprint) из сессионного ключа.
      * SHA-256(key)[0:20] → 5 групп по 8 hex-символов, 160 бит.

@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Окно подтверждения передачи владения (ADR_MESSAGE_AUTHENTICITY.md §10). Мокап одобрен.
+     Кнопка «Да» активируется через минуту (таймер в AdminPermissionsActivity). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_settings_card"
+    android:padding="18dp">
+
+    <!-- Жёлтая плашка с вопросом -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="top"
+        android:background="@drawable/bg_transfer_warn"
+        android:padding="13dp"
+        android:layout_marginBottom="14dp">
+
+        <ImageView
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginEnd="10dp"
+            android:src="@drawable/ic_warning"
+            app:tint="@color/warning"
+            android:contentDescription="@null" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/transfer_owner_title"
+            android:textColor="@color/warning"
+            android:textSize="16sp"
+            android:fontFamily="sans-serif-medium"
+            android:lineSpacingExtra="2dp" />
+    </LinearLayout>
+
+    <!-- Пояснение (имя получателя подставляется в коде) -->
+    <TextView
+        android:id="@+id/tv_transfer_msg"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="@color/text_secondary"
+        android:textSize="13.5sp"
+        android:lineSpacingExtra="2dp"
+        android:layout_marginBottom="14dp" />
+
+    <!-- Остаться админом -->
+    <LinearLayout
+        android:id="@+id/row_keep_admin"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_transfer_check"
+        android:padding="12dp"
+        android:layout_marginBottom="16dp">
+
+        <CheckBox
+            android:id="@+id/cb_keep_admin"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:clickable="false"
+            android:focusable="false"
+            app:buttonTint="@color/accent" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/transfer_owner_keep_admin"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/transfer_owner_keep_admin_hint"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Кнопки -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/btn_transfer_cancel"
+            android:layout_width="0dp"
+            android:layout_height="46dp"
+            android:layout_weight="1"
+            android:layout_marginEnd="10dp"
+            android:gravity="center"
+            android:background="@drawable/bg_button_outline"
+            android:text="@string/btn_cancel"
+            android:textColor="@color/text_primary"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/btn_transfer_confirm"
+            android:layout_width="0dp"
+            android:layout_height="46dp"
+            android:layout_weight="1.3"
+            android:gravity="center"
+            android:background="@drawable/bg_button_warning"
+            android:textColor="#3A2600"
+            android:textSize="15sp"
+            android:fontFamily="sans-serif-medium"
+            android:alpha="0.5"
+            android:text="@string/transfer_owner_yes" />
+    </LinearLayout>
+
+</LinearLayout>

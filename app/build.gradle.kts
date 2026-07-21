@@ -26,9 +26,10 @@ android {
 
     defaultConfig {
         applicationId = "com.atrum.chat"
-        // Android 6.0. Ниже API 23 нельзя — это floor для EncryptedSharedPreferences
-        // (androidx.security-crypto), где лежат все секреты чатов.
-        minSdk = 23
+        // Android 7.0 (API 24) — реальный минимум: библиотека info.guardianproject:tor-android
+        // требует minSdk 24 (манифест-мердж падает на 23). Ниже без замены Tor-движка нельзя,
+        // да и Tor/нативный стек на Android 6 не имеет смысла.
+        minSdk = 24
         targetSdk = 34
         // ══════════════════════════════════════════════════════════════════
         // ⚠️  AI AGENT — ОБЯЗАТЕЛЬНО ЧИТАТЬ ПЕРЕД ЛЮБЫМ ИЗМЕНЕНИЕМ КОДА
@@ -45,8 +46,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 489
-        versionName = "3.43.8-beta403-minsdk23"
+        versionCode = 533
+        versionName = "3.47.9-beta447-blur-keyboard-fix"
 
         // ЛИЧНАЯ СБОРКА: по умолчанию ВЫКЛючена (обычный релиз чист). Включается в build-типе
         // debug (см. buildTypes). Личные «фишки для себя» в коде прячутся за

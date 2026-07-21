@@ -153,6 +153,17 @@ class Prefs(private val context: Context) {
         get() = prefs.getBoolean(KEY_PUSH_ENABLED, false)
         set(v) = prefs.edit().putBoolean(KEY_PUSH_ENABLED, v).apply()
 
+    /**
+     * Пользователь САМ закрыл фоновую службу (смахнул приложение из «недавних»).
+     * Пока флаг взведён — резервный воркер НЕ поднимает службу заново (репорт: «сам себя
+     * перезапускает, не могу закрыть»). Сбрасывается, когда пользователь снова открывает
+     * приложение или включает пуши. Различает «закрыл я» (не воскрешать) и «убила система в
+     * Doze, пока свёрнуто» (тихо поднять, чтобы фоновые уведомления не пропадали).
+     */
+    var serviceUserDismissed: Boolean
+        get() = prefs.getBoolean(KEY_SVC_DISMISSED, false)
+        set(v) = prefs.edit().putBoolean(KEY_SVC_DISMISSED, v).apply()
+
     /** Суммарное число непрочитанных, о котором уже показан пуш (анти-повтор/звон). */
     var pushNotifiedTotal: Int
         get() = prefs.getInt(KEY_PUSH_TOTAL, 0)
@@ -454,6 +465,66 @@ class Prefs(private val context: Context) {
 
     fun setMembersMergeSig(chatId: String, sig: String) {
         prefs.edit().putString("members_merge_sig_$chatId", sig).apply()
+    }
+
+    /**
+     * Фаза 3 (ADR_MESSAGE_AUTHENTICITY.md §10): видели ли мы хоть раз ВАЛИДНУЮ identity-подпись
+     * админа для этого чата. Пока false — строгая проверка НЕ включается (мягкий откат к
+     * password-гейту, §17: старый админ без подписи не должен отвергаться). Как только пришла
+     * валидная подпись — включаем enforcement: неподписанный/битый members.txt считаем подделкой.
+     * Взводится только вперёд (никогда не сбрасывается сам — иначе форжер «откатит» строгий режим).
+     */
+    fun getAdminSigningSeen(chatId: String): Boolean =
+        prefs.getBoolean("admin_signing_seen_$chatId", false)
+
+    fun setAdminSigningSeen(chatId: String) {
+        prefs.edit().putBoolean("admin_signing_seen_$chatId", true).apply()
+    }
+
+    // ─── Отзыв создателя verified-root'ом (RevokeSync, обратимо) ──────────────────
+    // Локальное применённое состояние отзыва на чат: JSON userId → {r:Bool, ts:Long, idk:String}.
+    // Анти-откат по ts (принимаем только строго новее применённого). Используется для очистки
+    // владельца и для отвержения members.txt/offer'ов от отозванного (см. MembersSync.applyIncoming).
+    private fun revokeBlob(chatId: String): org.json.JSONObject =
+        runCatching { org.json.JSONObject(prefs.getString("rvk_$chatId", "{}") ?: "{}") }
+            .getOrDefault(org.json.JSONObject())
+
+    /** ts последнего ПРИМЕНЁННОГО сертификата отзыва/возврата для [userId] (0 — не было). */
+    fun getRevokeTs(chatId: String, userId: String): Long =
+        revokeBlob(chatId).optJSONObject(userId)?.optLong("ts", 0L) ?: 0L
+
+    /** Применяет состояние (после проверки подписи и анти-отката вызывающим). */
+    fun setRevokeEntry(chatId: String, userId: String, revoked: Boolean, ts: Long, idk: String) {
+        val blob = revokeBlob(chatId)
+        blob.put(userId, org.json.JSONObject().apply { put("r", revoked); put("ts", ts); put("idk", idk) })
+        prefs.edit().putString("rvk_$chatId", blob.toString()).apply()
+    }
+
+    /** [userId] сейчас отозван как создатель? */
+    fun isUserRevoked(chatId: String, userId: String): Boolean =
+        revokeBlob(chatId).optJSONObject(userId)?.optBoolean("r", false) ?: false
+
+    /** Есть ли в чате отозванный участник с таким identity-ключом (для отвержения его members.txt)? */
+    fun isIdkRevokedInChat(chatId: String, idk: String): Boolean {
+        if (idk.isBlank()) return false
+        val blob = revokeBlob(chatId)
+        val it = blob.keys()
+        while (it.hasNext()) {
+            val e = blob.optJSONObject(it.next()) ?: continue
+            if (e.optBoolean("r", false) && e.optString("idk", "") == idk) return true
+        }
+        return false
+    }
+
+    /**
+     * ts оффера передачи владения, который пользователь ОТКЛОНИЛ (чтобы не показывать окно
+     * повторно для того же оффера). Новый оффер (другой ts) снова покажется.
+     */
+    fun getDeclinedOwnerOffer(chatId: String): Long =
+        prefs.getLong("owner_offer_declined_$chatId", 0L)
+
+    fun setDeclinedOwnerOffer(chatId: String, ts: Long) {
+        prefs.edit().putLong("owner_offer_declined_$chatId", ts).apply()
     }
 
     /** Токен последнего слитого состояния, за который уже выдано уведомление о МОЁМ статусе. */
@@ -833,6 +904,7 @@ class Prefs(private val context: Context) {
         private const val KEY_ONBOARDED = "onboarded"
         private const val KEY_BIOMETRIC = "biometric_enabled"
         private const val KEY_PUSH_ENABLED = "push_enabled"
+        private const val KEY_SVC_DISMISSED = "svc_user_dismissed"
         private const val KEY_PUSH_TOTAL = "push_notified_total"
         private const val KEY_BATTERY_HINT = "battery_hint_shown"
         private const val KEY_ROOT_WARN = "root_warning_shown"

@@ -7,6 +7,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.lifecycle.lifecycleScope
 import com.atrum.chat.data.AppDatabase
+import com.atrum.chat.transport.TransportFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -88,6 +89,109 @@ class AdminPermissionsActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.btn_revoke).apply {
             visibility = if (isExisting) android.view.View.VISIBLE else android.view.View.GONE
             setOnClickListener { confirmRevoke(userName) }
+        }
+
+        // Передать право владения (ADR_MESSAGE_AUTHENTICITY.md §10). Экран открыт только у
+        // владельца, передаём именно этому участнику (userId).
+        findViewById<android.view.View>(R.id.row_transfer_owner).setOnClickListener {
+            showTransferDialog(userName)
+        }
+    }
+
+    /** Окно подтверждения с минутным таймером и галочкой «остаться админом». */
+    private fun showTransferDialog(recipientName: String) {
+        val view = layoutInflater.inflate(R.layout.dialog_transfer_ownership, null)
+        val dialog = android.app.Dialog(this).apply {
+            requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+            setContentView(view)
+            window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+            window?.setLayout((resources.displayMetrics.widthPixels * 0.88f).toInt(),
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        view.findViewById<TextView>(R.id.tv_transfer_msg).text =
+            getString(R.string.transfer_owner_msg, recipientName)
+        val cb = view.findViewById<android.widget.CheckBox>(R.id.cb_keep_admin)
+        view.findViewById<android.view.View>(R.id.row_keep_admin).setOnClickListener { cb.isChecked = !cb.isChecked }
+        view.findViewById<TextView>(R.id.btn_transfer_cancel).setOnClickListener { dialog.dismiss() }
+
+        val confirm = view.findViewById<TextView>(R.id.btn_transfer_confirm)
+        confirm.isEnabled = false
+        confirm.text = getString(R.string.transfer_owner_yes_timer, 60)
+        val timer = object : android.os.CountDownTimer(60_000L, 1000L) {
+            override fun onTick(msLeft: Long) {
+                confirm.text = getString(R.string.transfer_owner_yes_timer, ((msLeft + 999L) / 1000L).toInt())
+            }
+            override fun onFinish() {
+                confirm.text = getString(R.string.transfer_owner_yes)
+                confirm.isEnabled = true
+                confirm.alpha = 1f
+            }
+        }
+        timer.start()
+        confirm.setOnClickListener {
+            if (!confirm.isEnabled) return@setOnClickListener
+            confirm.isEnabled = false
+            performTransfer(cb.isChecked, dialog)
+        }
+        dialog.setOnDismissListener { timer.cancel() }
+        dialog.show()
+    }
+
+    /**
+     * Генерирует и публикует сертификат передачи владения (OwnerSync), применяет локально.
+     * Коды: 0 — успех, 2 — у получателя ещё нет identity-ключа, иначе ошибка.
+     */
+    private fun performTransfer(keepAdmin: Boolean, dialog: android.app.Dialog) {
+        lifecycleScope.launch {
+            val code = withContext(Dispatchers.IO) {
+                runCatching {
+                    val db = AppDatabase.get(this@AdminPermissionsActivity)
+                    val chat = db.chatDao().getById(chatRoomId) ?: return@runCatching 1
+                    if (chat.adminUserId.isNullOrBlank() || chat.adminUserId != prefs.myUserId) return@runCatching 1
+                    val recipientIdk = db.chatParticipantDao().getOne(chat.id, userId)?.pinnedIdentityPubKey
+                    if (recipientIdk.isNullOrBlank()) return@runCatching 2
+                    val (priv, _) = prefs.getOrCreateIdentity()
+                    val cert = try {
+                        MembersSync.signOwnerTransfer(
+                            priv,
+                            MembersSync.OwnerTransfer(
+                                chatId = chat.chatId, fromUserId = prefs.myUserId, fromIdk = prefs.myIdentityPubKey,
+                                toUserId = userId, toIdk = recipientIdk, keepOldAsAdmin = keepAdmin,
+                                ts = System.currentTimeMillis()
+                            )
+                        )
+                    } finally { priv.fill(0) }
+                    if (cert.sig.isBlank()) return@runCatching 1
+                    val password = prefs.getChatPassword(chat.chatId).ifEmpty { @Suppress("DEPRECATION") chat.chatPassword }
+                    val token = prefs.getChatToken(chat.chatId).ifEmpty { @Suppress("DEPRECATION") chat.transportToken }
+                    val transport = TransportFactory.forChat(
+                        applicationContext, chat.chatId, token, password, prefs.myUserId, adminUserId = chat.adminUserId
+                    )
+                    // Публикуем ОФФЕР (только подпись владельца). Владение сменится ТОЛЬКО после
+                    // того, как получатель примет (подпишет согласие) — двусторонняя передача,
+                    // никому нельзя навязать права. Локально сейчас НИЧЕГО не меняем.
+                    val existingRaw = transport.loadOwnerCerts().trim()
+                    val existingPlain = if (existingRaw.isEmpty()) "" else (CryptoHelper.decrypt(existingRaw, password, chat.chatId) ?: "")
+                    val newPlain = OwnerSync.appendCert(existingPlain, cert)
+                    transport.saveOwnerCerts(CryptoHelper.encryptGroupMessage(newPlain, password, chat.chatId))
+                    0
+                }.getOrDefault(1)
+            }
+            when (code) {
+                0 -> {
+                    android.widget.Toast.makeText(this@AdminPermissionsActivity, getString(R.string.transfer_owner_sent), android.widget.Toast.LENGTH_SHORT).show()
+                    runCatching { dialog.dismiss() }
+                    finish()
+                }
+                2 -> {
+                    android.widget.Toast.makeText(this@AdminPermissionsActivity, getString(R.string.transfer_owner_no_key), android.widget.Toast.LENGTH_LONG).show()
+                    runCatching { dialog.dismiss() }
+                }
+                else -> {
+                    android.widget.Toast.makeText(this@AdminPermissionsActivity, getString(R.string.transfer_owner_error), android.widget.Toast.LENGTH_SHORT).show()
+                    runCatching { dialog.dismiss() }
+                }
+            }
         }
     }
 

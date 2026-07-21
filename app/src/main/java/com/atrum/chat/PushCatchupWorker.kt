@@ -26,7 +26,12 @@ class PushCatchupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
 
     override suspend fun doWork(): Result {
         val ctx = applicationContext
-        if (!Prefs(ctx).pushEnabled) return Result.success()
+        val prefs = Prefs(ctx)
+        // Поднимаем службу заново ТОЛЬКО если пуши включены И пользователь НЕ закрывал её сам
+        // (не смахивал приложение). Так фоновые уведомления переживают Doze-kill системы, но
+        // после осознанного закрытия пользователем служба НЕ воскресает (репорт: «сам себя
+        // перезапускает, не могу закрыть»). Флаг снимается при открытии приложения.
+        if (!prefs.pushEnabled || prefs.serviceUserDismissed) return Result.success()
         runCatching { MessageWatchService.start(ctx) }
         return Result.success()
     }

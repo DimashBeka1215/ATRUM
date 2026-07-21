@@ -42,6 +42,14 @@ class MessageWatchService : Service() {
     private val transports = ConcurrentHashMap<Long, ChatTransport>()
     private val watches = ConcurrentHashMap<Long, AutoCloseable>()
 
+    // «Пропускать лишнее» (репорт: «греет CPU в фоне»): на каждом тике самое дорогое —
+    // расшифровка (Argon2/AES) членства и непрочитанных. Если зашифрованный контент чата
+    // с прошлого тика НЕ изменился, повторно расшифровывать и применять нечего — тяжёлую
+    // работу пропускаем, а число непрочитанных берём уже посчитанное. Ключ — chat.id,
+    // значение — хеш зашифрованного контента (без расшифровки).
+    private val lastGroupSyncHash = ConcurrentHashMap<Long, Int>()
+    private val lastRecomputeHash = ConcurrentHashMap<Long, Int>()
+
     private val prefs by lazy { Prefs(applicationContext) }
     private val db by lazy { AppDatabase.get(applicationContext) }
 
@@ -55,7 +63,11 @@ class MessageWatchService : Service() {
             startForeground(NotificationHelper.FGS_ID, notif)
         }
         if (loopJob == null) loopJob = scope.launch { loop() }
-        return START_STICKY
+        // START_NOT_STICKY (было START_STICKY): если систему убила службу или пользователь
+        // закрыл приложение — НЕ воскрешаем её сами (репорт: «сам себя перезапускает, не
+        // могу закрыть»). Служба работает, пока приложение открыто/в фоне; пользователь сам
+        // решает — оставить в фоне или закрыть.
+        return START_NOT_STICKY
     }
 
     private suspend fun loop() {
@@ -112,6 +124,8 @@ class MessageWatchService : Service() {
                 runCatching { entry.value.close() }
                 it.remove()
                 transports.remove(entry.key)
+                lastGroupSyncHash.remove(entry.key)
+                lastRecomputeHash.remove(entry.key)
             }
         }
 
@@ -178,6 +192,14 @@ class MessageWatchService : Service() {
             if (chat.chatId == App.currentOpenChatId) continue
             runCatching {
                 val all = t.loadAll()
+                // Пропуск неизменного: хеш зашифрованного членства/профиля/слотов. Если он
+                // совпал с прошлым тиком — расшифровывать и применять нечего (дорогой Argon2
+                // не запускаем). checkMuteExpiry (по времени) идёт отдельно и не зависит от этого.
+                val syncHash = (all.membersContent.hashCode() * 31 + all.groupProfileContent.hashCode()) * 31 +
+                    all.memberSlots.joinToString("").hashCode() * 31 +
+                    all.profileSlotsSigned.joinToString("").hashCode()
+                if (lastGroupSyncHash[chat.id] == syncHash) return@runCatching
+                lastGroupSyncHash[chat.id] = syncHash
                 val password = prefs.getChatPassword(chat.chatId).takeIf { it.isNotEmpty() }
                     ?: @Suppress("DEPRECATION") chat.chatPassword
                 runCatching {
@@ -311,17 +333,27 @@ class MessageWatchService : Service() {
             if (chat.isGroup && db.chatParticipantDao().getOne(chat.id, myUserId)?.banned == true) continue
             val t = transports[chat.id] ?: continue
             try {
+                val content = NostrMessageStore.render(t.chatId)
+                // Пропуск неизменного: если контент чата и позиция «прочитано» не менялись
+                // с прошлого тика — расшифровывать строки заново незачем (это самый дорогой
+                // шаг). Берём уже посчитанное число непрочитанных и идём дальше. render() —
+                // это только чтение локального стора, без расшифровки, поэтому дёшево.
+                val recomputeHash = content.hashCode() * 31 + chat.lastSeenLineCount
+                if (lastRecomputeHash[chat.id] == recomputeHash) {
+                    totalUnread += chat.unreadCount
+                    continue
+                }
+                lastRecomputeHash[chat.id] = recomputeHash
                 val password = prefs.getChatPassword(chat.chatId).takeIf { it.isNotEmpty() }
                     ?: @Suppress("DEPRECATION") chat.chatPassword
                 // FS: устанавливаем сессионный ключ, только если его нет, чтобы не нагружать CPU в фоне.
                 if (!CryptoHelper.hasSessionKey(chat.chatId)) {
                     CryptoHelper.ensureSessionKey(
-                        chat.chatId, 
-                        prefs.getEphemeralPriv(chat.chatId), 
+                        chat.chatId,
+                        prefs.getEphemeralPriv(chat.chatId),
                         chat.partnerEphemeralPubKeyB64
                     )
                 }
-                val content = NostrMessageStore.render(t.chatId)
                 val lines = content.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
                 val mentionIds = ArrayList<String>()
                 val unread = if (lines.size <= chat.lastSeenLineCount) 0 else {
@@ -381,9 +413,13 @@ class MessageWatchService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // Приложение смахнули из «недавних» — сервис не должен молча умирать,
-        // иначе уведомления перестанут приходить. Перезапускаем, если пуши включены.
-        if (prefs.pushEnabled) runCatching { start(applicationContext) }
+        // Приложение СМАХНУЛИ из «недавних» — это осознанное закрытие пользователем.
+        // Помечаем флагом и НЕ воскрешаем (репорт: «сам себя перезапускает, не могу закрыть»):
+        // резервный воркер увидит флаг и не поднимет службу обратно. Фоновые уведомления при
+        // обычном сворачивании (Home) не трогаются — служба продолжает работать; воскрешение
+        // после Doze-kill (когда пользователь НЕ закрывал) остаётся, флаг там не взведён.
+        runCatching { prefs.serviceUserDismissed = true }
+        runCatching { stopSelf() }
         super.onTaskRemoved(rootIntent)
     }
 
@@ -406,7 +442,11 @@ class MessageWatchService : Service() {
          * foreground — уведомления должны приходить на любом экране (репорт). Файлы
          * членства крошечные, поэтому опрос дёшев.
          */
-        private const val MEMBERSHIP_SYNC_MS = 8_000L
+        // Фон: реже, чтобы не греть процессор и дать устройству спать (репорт: «греет CPU
+        // в фоне»). Новые сообщения и так приходят мгновенно через стрим-подписку; этот опрос —
+        // подстраховка для членства/непрочитанных, ему частота не нужна. Цена: фоновые
+        // уведомления (бан/мут/непрочитанное) могут отстать до ~30с.
+        private const val MEMBERSHIP_SYNC_MS = 30_000L
         /** Тот же синк на переднем плане — чуть реже фона, но открытый чат пропускается
          *  (skip в syncAllGroupMembership), так что конкуренции за Tor нет. 10с — баланс
          *  между скоростью уведомлений и нагрузкой. */

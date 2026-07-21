@@ -58,7 +58,10 @@ class NostrTransport(
      *    при нестабильном Tor-соединении в публичных сетях.
      */
     override val useTor: Boolean
-        get() = preferTor
+        // Пока включён глобальный kill-switch Tor (TorManager.TOR_DISABLED) — идём НАПРЯМУЮ,
+        // даже если чат помечен как Tor. Иначе транспорт ждал бы Tor, который не поднимается
+        // («Tor или ничего»), и сети бы не было. Снимут флаг — вернётся прежнее поведение.
+        get() = preferTor && !com.atrum.chat.TorManager.TOR_DISABLED
 
     /**
      * true, если для ЭТОГО (прямого, не-Tor) транспорта сейчас активен пользовательский
@@ -689,9 +692,13 @@ class NostrTransport(
     private fun membersStreamFilter(sinceSec: Long): JSONObject = JSONObject().apply {
         put("kinds", JSONArray().put(FILE_KIND))
         put("#t", JSONArray().put(channelId))
-        put("#d", JSONArray().put(wireName("members.txt")).put(wireName("groupprofile.txt")))
+        put("#d", JSONArray().put(wireName("members.txt")).put(wireName("groupprofile.txt")).put(wireName("revoke.txt")))
         put("since", sinceSec)
     }
+
+    /** Реле прислало пушем новое событие revoke.txt (отзыв/возврат создателя) — читать по пушу. */
+    @Volatile private var revokeDirty = false
+    override fun consumeRevokeDirty(): Boolean { val d = revokeDirty; revokeDirty = false; return d }
 
     /** Набор реле, для которых сейчас ВЫПОЛНЯЕТСЯ попытка подписки (защита от шторма). */
     private val connectingRelays = java.util.Collections.synchronizedSet(HashSet<String>())
@@ -718,7 +725,12 @@ class NostrTransport(
         // событие с реле → сразу forceSync, как у сообщений. Фильтр по d-тегам не пускает
         // сюда частые presence-профили. §1: только триггер чтения, тайминги не меняем.
         val onEventMembers: (NostrEvent) -> Unit = { ev ->
-            if (ev.kind == FILE_KIND) onNew()
+            if (ev.kind == FILE_KIND) {
+                // Пуш события revoke.txt → взводим флаг, чтобы ChatActivity прочитал ИМЕННО его
+                // (по пушу, а не по таймеру — никаких холостых чтений revoke.txt).
+                if (ev.tags.any { it.size >= 2 && it[0] == "d" && it[1] == wireName("revoke.txt") }) revokeDirty = true
+                onNew()
+            }
         }
         val job = watchScope.launch {
             while (isActive) {

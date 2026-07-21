@@ -177,6 +177,64 @@
                 android:textColor="@color/error"
                 android:textSize="14sp"
                 android:visibility="gone" />
+
+            <!-- Передать право владения (ADR_MESSAGE_AUTHENTICITY.md §10). Только у владельца
+                 (экран и так открыт лишь у него). Отделён от прав-тумблеров — это не право,
+                 а смена создателя беседы. -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="0.5dp"
+                android:layout_marginTop="20dp"
+                android:background="@color/border" />
+
+            <LinearLayout
+                android:id="@+id/row_transfer_owner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingVertical="15dp"
+                android:paddingHorizontal="2dp"
+                android:background="?attr/selectableItemBackground">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_marginEnd="14dp"
+                    android:src="@drawable/ic_crown"
+                    app:tint="@color/warning"
+                    android:contentDescription="@null" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/transfer_owner_item"
+                        android:textColor="@color/warning"
+                        android:textSize="15sp"
+                        android:fontFamily="sans-serif-medium" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/transfer_owner_item_desc"
+                        android:textColor="@color/text_tertiary"
+                        android:textSize="12sp"
+                        android:layout_marginTop="1dp" />
+                </LinearLayout>
+
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:src="@drawable/ic_chevron_right"
+                    app:tint="@color/text_quaternary"
+                    android:contentDescription="@null" />
+            </LinearLayout>
         </LinearLayout>
     </ScrollView>
 

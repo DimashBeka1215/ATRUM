@@ -13,8 +13,12 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.graphics.toColorInt
 import androidx.core.net.toUri
+import androidx.lifecycle.lifecycleScope
 import com.atrum.chat.databinding.ActivityCreditsBinding
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class Supporter(
     val nameRu: String,
@@ -23,6 +27,11 @@ data class Supporter(
     val quoteEn: String,
     val avatarColor: String? = null,
     val avatarRes: Int? = null,
+    /**
+     * URL аватарки — грузится из СЕТИ во время открытия экрана, а НЕ хранится в APK (по просьбе).
+     * Пока грузится/если офлайн — показывается инициал (avatarColor). Приоритет: avatarRes → avatarUrl → инициал.
+     */
+    val avatarUrl: String? = null,
     val clickUrl: String? = null
 )
 
@@ -61,6 +70,15 @@ class CreditsActivity : AppCompatActivity() {
             avatarColor = "#1A1A2E",
             avatarRes = R.drawable.avatar_sebastian,
             clickUrl = "https://youtube.com/shorts/lZt99dXc10o?feature=share"
+        ),
+        Supporter(
+            nameRu = "Никита Попов",
+            nameEn = "Nikita Popov",
+            quoteRu = "«Интернет — это живой организм. Если его отравлять и медленно душить, то, возможно, он поймёт, что заражён паразитами, и отправит антитела на устранение проблем. Мы — те самые антитела, которые чинят способ связи между людьми.»",
+            quoteEn = "«The internet is a living organism. If you poison it and slowly strangle it, maybe it will realize it's infected with parasites and send antibodies to fix the problems. We are those antibodies — the ones repairing how people connect.»",
+            avatarColor = "#101010",
+            // Фото НЕ в APK — грузится из сети (ImgBB) при открытии экрана, фолбэк — инициал «Н».
+            avatarUrl = "https://i.ibb.co.com/G3P1G9q1/IMG-20260721-045915-449.jpg"
         ),
     )
 
@@ -111,6 +129,8 @@ class CreditsActivity : AppCompatActivity() {
                 }
                 val name = if (isRu) supporter.nameRu else supporter.nameEn
                 tvInitial.text = name.trim().firstOrNull()?.uppercase() ?: "?"
+                // Фото из СЕТИ (по просьбе — НЕ в APK): грузим поверх инициала, заменяем когда придёт.
+                if (!supporter.avatarUrl.isNullOrBlank()) loadRemoteAvatar(supporter.avatarUrl, ivAvatar, flInitial)
             }
 
             itemView.findViewById<TextView>(R.id.tvName).text =
@@ -142,6 +162,36 @@ class CreditsActivity : AppCompatActivity() {
                     startHeartbeat(avatarTarget, heartbeatDelays[index % heartbeatDelays.size])
                 }
             }, animDelay)
+        }
+    }
+
+    /** HTTP-клиент только для аватарок сторонников (прямое соединение, не Tor — экран благодарностей). */
+    private val avatarHttp by lazy { okhttp3.OkHttpClient() }
+
+    /**
+     * Грузит аватарку сторонника ИЗ СЕТИ (по просьбе — не хранить фото в APK). Пока грузится/если
+     * офлайн — остаётся инициал. Заменяем на месте по готовности (§1.5). Ошибки глушим — просто инициал.
+     */
+    private fun loadRemoteAvatar(
+        url: String,
+        iv: com.google.android.material.imageview.ShapeableImageView,
+        initial: View
+    ) {
+        lifecycleScope.launch {
+            val bmp = withContext(Dispatchers.IO) {
+                runCatching {
+                    avatarHttp.newCall(okhttp3.Request.Builder().url(url).build()).execute().use { resp ->
+                        if (!resp.isSuccessful) return@runCatching null
+                        val bytes = resp.body?.bytes() ?: return@runCatching null
+                        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    }
+                }.getOrNull()
+            }
+            if (bmp != null && !isFinishing && !isDestroyed) {
+                iv.setImageBitmap(bmp)
+                iv.visibility = View.VISIBLE
+                initial.visibility = View.GONE
+            }
         }
     }
 

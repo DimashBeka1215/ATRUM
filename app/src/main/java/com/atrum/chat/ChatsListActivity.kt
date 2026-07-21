@@ -994,7 +994,10 @@ class ChatsListActivity : SecureActivity() {
                     adminUserId = adminId,
                     participantLimit = chat.participantLimit,
                     groupNameSeed = chat.groupName ?: chat.partnerName,
-                    ttlMillis = groupTtlMillis
+                    ttlMillis = groupTtlMillis,
+                    // Вкладываем СВОЙ identity-ключ только если приглашает сам админ (Фаза 3) —
+                    // тогда у получателя ключ закрепится авторитетно из инвайта (не TOFU).
+                    adminIdentityPubKey = if (adminId == prefs.myUserId) prefs.myIdentityPubKey else null
                 )
             } else {
                 InviteCodec.encode(

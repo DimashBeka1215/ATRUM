@@ -1423,7 +1423,12 @@ class PartnerProfileActivity : AppCompatActivity() {
             }
             database.chatParticipantDao().observeForChat(chat.id).collect { fresh ->
                 latestParticipants = fresh
-                renderGroupMembersRows(fresh, lastGroupProfiles, chat)
+                // ⚠️ Свежий chat из БД: adminUserId мог измениться в фоне (отзыв/возврат создателя,
+                // передача владения). Без перечитывания роль «Создатель» рисовалась бы по
+                // устаревшему adminUserId — префикс не исчезал бы после отзыва (репорт).
+                val freshChat = withContext(Dispatchers.IO) { database.chatDao().getById(chat.id) } ?: chat
+                groupChatCached = freshChat
+                renderGroupMembersRows(fresh, lastGroupProfiles, freshChat)
                 // Новый участник, чьего профиля (имя/аватар) ещё нет в кэше — подтянуть
                 // профили немедленно, не дожидаясь следующего тика 3с-опроса выше.
                 if (fresh.any { it.userId !in lastGroupProfiles }) pullAndRenderProfiles(fresh)
@@ -1517,6 +1522,13 @@ class PartnerProfileActivity : AppCompatActivity() {
                     VerifiedBadge.isVerifiedDev(chat.chatId, member.userId, profile) ||
                         (isMe && VerifiedBadge.isVerifiedSelf(prefs.myIdentityPubKey))
                 )
+                // ⚠️ Подлинность содержимого профиля в сигнатуре: без неё поздно пришедший
+                // contentSig (или его несовпадение) не перерисовал бы строку → пометка
+                // «не подтверждено» не появлялась бы до полной пересборки списка (§14).
+                append(':').append(
+                    if (profile != null) ProfileAuth.contentAuth(chat.chatId, profile, member.pinnedIdentityPubKey).name
+                    else "NS"
+                )
                 append('|')
             }
             append("admin=").append(chat.adminUserId).append(",meAdmin=").append(groupIsAdmin)
@@ -1561,6 +1573,14 @@ class PartnerProfileActivity : AppCompatActivity() {
             val memberVerified = VerifiedBadge.isVerifiedDev(chat.chatId, member.userId, profile) ||
                 (isMe && VerifiedBadge.isVerifiedSelf(prefs.myIdentityPubKey))
             val effBanned = member.banned && !memberVerified
+
+            // Подлинность СОДЕРЖИМОГО профиля (имя/фото/статус) против закреплённого TOFU-ключа
+            // (ADR_GROUP_CHATS.md §4, ProfileAuth). FORGED = профиль заявляет закреплённый ключ,
+            // но валидную подпись содержимого дать не может → возможная подмена. Для верифи-
+            // цированного дева подавляем (он неподделываем/доверенный). Не срабатывает при обычной
+            // переустановке собеседника — там idk ≠ pinned (смена ключа), это не forgery.
+            val contentForged = profile != null && !memberVerified &&
+                ProfileAuth.contentAuth(chat.chatId, profile, member.pinnedIdentityPubKey) == ProfileAuth.ContentAuth.FORGED
 
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -1633,6 +1653,7 @@ class PartnerProfileActivity : AppCompatActivity() {
                 val (txt, colorRes) = when {
                     effBanned -> getString(R.string.demo_member_banned) to R.color.error
                     isMuted -> getString(R.string.demo_member_muted_fmt, formatMuteUntil(member.mutedUntilMs!!)) to R.color.warning
+                    contentForged -> getString(R.string.member_content_unverified) to R.color.warning
                     isOnline -> getString(R.string.demo_member_online) to R.color.accent
                     else -> getString(R.string.demo_member_offline) to R.color.text_tertiary
                 }
@@ -1642,6 +1663,30 @@ class PartnerProfileActivity : AppCompatActivity() {
             }
             col.addView(nameTv); col.addView(statusTv)
             row.addView(avatarView); row.addView(col)
+
+            // Пометка подлинности содержимого: контурный треугольник справа от имени, тап —
+            // пояснение (§0/§9, только при FORGED; в норме ряд без значка). Виден ВСЕМ, не
+            // только модераторам — это сигнал безопасности, а не действие модерации.
+            if (contentForged) {
+                val rvWarn = android.util.TypedValue()
+                theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, rvWarn, true)
+                val warnIcon = ImageButton(this).apply {
+                    setImageResource(R.drawable.ic_alert_triangle)
+                    setColorFilter(ContextCompat.getColor(this@PartnerProfileActivity, R.color.warning))
+                    setBackgroundResource(rvWarn.resourceId)
+                    contentDescription = getString(R.string.member_content_unverified)
+                    layoutParams = LinearLayout.LayoutParams(dp(30), dp(30)).also { it.marginStart = dp(2) }
+                    setPadding(dp(6), dp(6), dp(6), dp(6))
+                    setOnClickListener {
+                        NeonDialog.showInfo(
+                            this@PartnerProfileActivity,
+                            getString(R.string.member_content_forged_title),
+                            getString(R.string.member_content_forged_desc)
+                        )
+                    }
+                }
+                row.addView(warnIcon)
+            }
 
             // Значок личной статистики — только у СВОЕЙ строки и только для НЕ-админа
             // (админ уже видит статистику всех, включая себя, через кнопку в шапке
@@ -1717,6 +1762,33 @@ class PartnerProfileActivity : AppCompatActivity() {
                     setOnClickListener { confirmUnbanReal(member, displayName, chat) }
                 }
                 row.addView(unbanBtn)
+            }
+
+            // Отзыв/возврат создателя — ТОЛЬКО verified root (ключ реально в VerifiedBadge.VERIFIED,
+            // не просто PersonalFeatures — иначе подпись отзыва была бы невалидна). На строке
+            // создателя (isAdminRow) — «отозвать» (красный щит-X); на уже отозванном участнике —
+            // «вернуть» (акцентный щит-галка). Обратимо (revoke2.js, 10/10).
+            val iAmRoot = VerifiedBadge.isKeyVerified(prefs.myIdentityPubKey)
+            val memberRevoked = prefs.isUserRevoked(chat.chatId, member.userId)
+            if (iAmRoot && !isMe && (isAdminRow || memberRevoked)) {
+                val rvRoot = android.util.TypedValue()
+                theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, rvRoot, true)
+                val revokeBtn = ImageButton(this).apply {
+                    if (memberRevoked) {
+                        setImageResource(R.drawable.ic_shield_check)
+                        setColorFilter(ContextCompat.getColor(this@PartnerProfileActivity, R.color.accent))
+                        contentDescription = getString(R.string.revoke_restore_cd, displayName)
+                    } else {
+                        setImageResource(R.drawable.ic_shield_x)
+                        setColorFilter(ContextCompat.getColor(this@PartnerProfileActivity, R.color.error))
+                        contentDescription = getString(R.string.revoke_creator_cd, displayName)
+                    }
+                    setBackgroundResource(rvRoot.resourceId)
+                    layoutParams = LinearLayout.LayoutParams(dp(30), dp(30)).also { it.marginStart = dp(2) }
+                    setPadding(dp(6), dp(6), dp(6), dp(6))
+                    setOnClickListener { confirmRevoke(member, displayName, chat, revoke = !memberRevoked) }
+                }
+                row.addView(revokeBtn)
             }
 
             // ⚙️ ВРЕМЕННЫЙ ДИАГНОСТ (только личная сборка, убрать после отладки): долгий тап
@@ -2220,6 +2292,70 @@ class PartnerProfileActivity : AppCompatActivity() {
 
     /** Presence-таймаут для online-статуса в списке участников (тот же порядок, что и в ChatActivity). */
     private val ONLINE_EXPIRY_MS_LOCAL = 20_000L
+
+    /** Диалог отзыва/возврата создателя (только verified root). Обратимо — предупреждаем мягко. */
+    private fun confirmRevoke(
+        member: com.atrum.chat.data.ChatParticipant, displayName: String,
+        chat: com.atrum.chat.data.Chat, revoke: Boolean
+    ) {
+        NeonDialog.showConfirm(
+            ctx = this,
+            title = getString(if (revoke) R.string.revoke_creator_title else R.string.revoke_restore_title),
+            message = getString(if (revoke) R.string.revoke_creator_message else R.string.revoke_restore_message, displayName),
+            positiveText = getString(if (revoke) R.string.revoke_creator_confirm else R.string.revoke_restore_confirm),
+            positiveIsDestructive = revoke,
+            negativeText = getString(R.string.btn_cancel),
+            onPositive = { doRevoke(member, chat, revoke) }
+        )
+    }
+
+    /**
+     * Отзыв (revoke=true) / возврат (false) создателя. Подписывает сертификат корневым ключом
+     * (обязан быть в VerifiedBadge.VERIFIED), публикует в revoke.txt и применяет локально сразу
+     * (§1.5). Неподделываемо, обратимо (revoke2.js, 10/10).
+     */
+    private fun doRevoke(member: com.atrum.chat.data.ChatParticipant, chat: com.atrum.chat.data.Chat, revoke: Boolean) {
+        if (!VerifiedBadge.isKeyVerified(prefs.myIdentityPubKey)) return
+        lifecycleScope.launch {
+            val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val targetIdk = database.chatParticipantDao().getOne(chat.id, member.userId)?.pinnedIdentityPubKey
+                        ?: return@runCatching false
+                    val password = prefs.getChatPassword(chat.chatId).ifEmpty { @Suppress("DEPRECATION") chat.chatPassword }
+                    val token = prefs.getChatToken(chat.chatId).ifEmpty { @Suppress("DEPRECATION") chat.transportToken }
+                    val transport = com.atrum.chat.transport.TransportFactory.forChat(
+                        applicationContext, chat.chatId, token, password, prefs.myUserId, adminUserId = chat.adminUserId
+                    )
+                    val (priv, pub) = prefs.getOrCreateIdentity()
+                    val cert = try {
+                        if (!VerifiedBadge.isKeyVerified(pub)) return@runCatching false
+                        MembersSync.signOwnerRevoke(priv, MembersSync.OwnerRevoke(
+                            chatId = chat.chatId, targetUserId = member.userId, targetIdk = targetIdk,
+                            rootIdk = pub, revoked = revoke, ts = System.currentTimeMillis()
+                        ))
+                    } finally { priv.fill(0) }
+                    if (cert.sig.isBlank()) return@runCatching false
+                    val existingRaw = transport.loadRevokes().trim()
+                    val existingPlain = if (existingRaw.isEmpty()) "" else (CryptoHelper.decrypt(existingRaw, password, chat.chatId) ?: "")
+                    val newPlain = RevokeSync.appendCert(existingPlain, cert)
+                    transport.saveRevokes(CryptoHelper.encryptGroupMessage(newPlain, password, chat.chatId))
+                    RevokeSync.applyRevokes(chat, newPlain, database.chatDao(), database.chatParticipantDao(), prefs)
+                    true
+                }.getOrDefault(false)
+            }
+            if (ok) {
+                val fresh = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
+                groupChatCached = withContext(Dispatchers.IO) { database.chatDao().getById(chat.id) } ?: chat
+                lastRenderedMembersSignature = "" // отзыв не в сигнатуре — форсим перерисовку
+                renderGroupMembersRows(fresh, emptyMap(), groupChatCached ?: chat)
+            } else {
+                android.widget.Toast.makeText(
+                    this@PartnerProfileActivity, R.string.invite_create_failed, android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
 
     private fun confirmBanReal(member: com.atrum.chat.data.ChatParticipant, displayName: String, chat: com.atrum.chat.data.Chat) {
         NeonDialog.showConfirm(

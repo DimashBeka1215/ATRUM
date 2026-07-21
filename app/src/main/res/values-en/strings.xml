@@ -1024,6 +1024,8 @@
     <string name="gallery_add_cd">Add more</string>
     <string name="gallery_perm_needed">Allow photo access to pick images</string>
     <string name="verified_badge_cd">Verified</string>
+    <string name="msg_auth_verified_cd">Authenticity verified</string>
+    <string name="msg_auth_forged">Possibly forged — stop this conversation immediately</string>
     <string name="identity_copied">Identity key copied to clipboard</string>
     <string name="verified_dev_title">ATRUM developer</string>
     <string name="verified_dev_body">This account belongs to the ATRUM developer. The identity is verified cryptographically — by the identity key, and cannot be forged or copied.</string>
@@ -1171,6 +1173,22 @@
     <string name="admins_primary_note">Creator — rights can\'t be removed</string>
     <string name="role_creator_suffix">creator</string>
     <string name="role_admin_suffix">admin</string>
+    <string name="member_content_unverified">name/photo not verified</string>
+    <string name="member_content_forged_title">Profile not verified</string>
+    <string name="member_content_forged_desc">This member\'s name or photo doesn\'t match the personal key pinned when you first met. It may have been spoofed. Verify their identity by QR or voice before trusting.</string>
+    <string name="revoke_creator_cd">Revoke creator %1$s</string>
+    <string name="revoke_restore_cd">Restore creator %1$s</string>
+    <string name="revoke_creator_title">Revoke creator?</string>
+    <string name="revoke_creator_message">The chat will stop honoring %1$s\'s key and creator rights. There will be no creator — you run the chat. This is signed with your root key. You can restore the creator later.</string>
+    <string name="revoke_creator_confirm">Revoke</string>
+    <string name="revoke_restore_title">Restore creator?</string>
+    <string name="revoke_restore_message">The chat will again honor %1$s\'s key and creator rights.</string>
+    <string name="revoke_restore_confirm">Restore</string>
+    <string name="revoke_transition_revoke_title">Revoking creator rights</string>
+    <string name="revoke_transition_restore_title">Restoring creator rights</string>
+    <string name="revoke_transition_revoke_desc">The chat is no longer honoring the creator\'s key and rights. From now on it is run by the app\'s owner.</string>
+    <string name="revoke_transition_restore_desc">The chat honors the creator\'s key and rights again. Full control is returned to them.</string>
+    <string name="revoke_transition_who">Only the verified root — the owner holding the root key embedded in the app — can revoke or restore creator rights. It cannot be forged.</string>
     <string name="admins_no_rights">No rights</string>
     <string name="admins_no_candidates">No one to appoint</string>
     <string name="admins_pick_title">Whom to appoint</string>
@@ -1195,6 +1213,23 @@
     <string name="admin_perms_revoke_title">Remove rights?</string>
     <string name="admin_perms_revoke_msg">%1$s will no longer be a chat administrator.</string>
     <string name="admin_perms_saved_toast">Rights saved</string>
+    <string name="transfer_owner_item">Transfer ownership</string>
+    <string name="transfer_owner_item_desc">Make this member the chat creator</string>
+    <string name="transfer_owner_title">Are you sure you want to transfer your rights?</string>
+    <string name="transfer_owner_msg">%1$s will become the chat creator. Don\'t transfer rights to people you don\'t trust. You won\'t be able to get them back unless they\'re transferred to you again.</string>
+    <string name="transfer_owner_keep_admin">Stay an admin</string>
+    <string name="transfer_owner_keep_admin_hint">otherwise you\'ll drop to a regular member</string>
+    <string name="transfer_owner_yes">Yes</string>
+    <string name="transfer_owner_yes_timer">Yes (%1$d)</string>
+    <string name="transfer_owner_done">Ownership transferred</string>
+    <string name="transfer_owner_no_key">This member has no key yet — wait until they come online</string>
+    <string name="transfer_owner_error">Couldn\'t transfer ownership</string>
+    <string name="transfer_owner_sent">Offer sent</string>
+    <string name="transfer_offer_title">Ownership transfer</string>
+    <string name="transfer_offer_desc">The creator is transferring chat ownership to you. If you accept, you\'ll become the creator with full control over the chat. You can decline with no consequences.</string>
+    <string name="transfer_offer_accept">Accept</string>
+    <string name="transfer_offer_decline">Decline</string>
+    <string name="transfer_offer_accepting">Accepting rights and updating the chat…</string>
     <string name="admin_perms_revoked_toast">Rights removed</string>
     <string name="admin_perms_error">Failed to save</string>
 
@@ -1205,6 +1240,4 @@
     <string name="pinned_show_all">Pinned messages</string>
     <string name="pinned_unpin">Unpin</string>
     <string name="pinned_done">Pinned</string>
-    <string name="unpinned_done">Unpinned</string>
-    <string name="identity_pub_copied">Public key copied</string>
-</resources>
+    <string name="unpinned_done">Unpinned</string></resources>

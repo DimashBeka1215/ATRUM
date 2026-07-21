@@ -470,6 +470,27 @@ class JoinChatActivity : SecureActivity() {
                     }
                 }
 
+                // ⭐ Фаза 3 (ADR_MESSAGE_AUTHENTICITY.md §10): закрепляем identity-ключ админа
+                // ИЗ ИНВАЙТА — авторитетно и ДО сети, поэтому его нельзя подменить фейковым
+                // профилем (TOFU-poisoning). Ставим ПОСЛЕ применения членства/ростера, не затирая
+                // banned/perm; дальше ключ переживает синк (MembersSync.upsertAll его сохраняет).
+                invite.adminIdentityPubKey?.takeIf { it.isNotBlank() }?.let { adminIdk ->
+                    val adminUid = invite.adminUserId
+                    if (!adminUid.isNullOrBlank()) withContext(Dispatchers.IO) {
+                        val pDao = db.chatParticipantDao()
+                        if (pDao.getOne(newGroupChatId, adminUid) == null) {
+                            pDao.upsert(
+                                com.atrum.chat.data.ChatParticipant(
+                                    ownerId = newGroupChatId, userId = adminUid,
+                                    banned = false, pinnedIdentityPubKey = adminIdk
+                                )
+                            )
+                        } else {
+                            pDao.pinIdentityIfEmpty(newGroupChatId, adminUid, adminIdk)
+                        }
+                    }
+                }
+
                 // Публикуем свой профиль в фоне — сигнал "я здесь" всем участникам. Членство
                 // считается из этого профиля напрямую (GroupRosterSync), без зависимости от
                 // того, в сети ли админ; клиент админа при случае ещё и внесёт нас в
@@ -503,7 +524,7 @@ class JoinChatActivity : SecureActivity() {
                 )
                 AppScope.launch {
                     try {
-                        ProfileSync.pushMyProfile(transport, invite.chatPassword, myGroupProfile)
+                        ProfileSync.pushMyProfile(transport, invite.chatPassword, myGroupProfile, prefs.getOrCreateIdentity().first)
                     } catch (_: Exception) {}
                 }
 

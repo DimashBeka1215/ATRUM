@@ -27,8 +27,14 @@ class App : Application() {
         // TransportFactory / CreateChat / Join). Прямые чаты Tor не поднимают.
         // Как только Tor поднялся — заранее прогреваем цепочки к реле.
         AppScope.launch {
-            TorManager.status.first { it == TorManager.TorStatus.READY }
-            NostrRelayPool.prewarm(NostrTransport.RELAYS)
+            if (TorManager.TOR_DISABLED) {
+                // Tor выключен (kill-switch) — греем ПРЯМЫЕ соединения сразу, не ждём Tor READY
+                // (он не наступит), иначе корутина повисла бы, а прогрев не сработал.
+                NostrRelayPool.prewarm(NostrTransport.RELAYS, useTor = false)
+            } else {
+                TorManager.status.first { it == TorManager.TorStatus.READY }
+                NostrRelayPool.prewarm(NostrTransport.RELAYS)
+            }
         }
         // Подчищаем кадры стикеров прошлых версий формата (в фоне — это файловый I/O).
         Thread {
@@ -64,6 +70,11 @@ class App : Application() {
         // Migrate chat secrets from plaintext Room DB to EncryptedSharedPreferences
         // before the DB migration zeroes them out (MIGRATION_9_10).
         migrateChatSecretsToPrefs(prefs)
+        // Пользователь открыл приложение → снимаем флаг «сам закрыл»: дальше фоновая доставка
+        // и резервное воскрешение при Doze-kill снова разрешены. Осознанное закрытие (смахивание
+        // из «недавних») снова взведёт флаг, и служба не будет воскресать (репорт: «не могу
+        // закрыть»). См. MessageWatchService.onTaskRemoved / PushCatchupWorker.
+        prefs.serviceUserDismissed = false
         if (prefs.pushEnabled) {
             MessageWatchService.start(this)
             PushCatchupWorker.schedule(this)

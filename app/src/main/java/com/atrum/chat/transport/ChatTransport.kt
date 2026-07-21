@@ -202,6 +202,14 @@ interface ChatTransport {
     fun isWatchHealthy(): Boolean = true
 
     /**
+     * true (одноразово) — с последней проверки реле ПРИСЛАЛО пушем новое событие revoke.txt
+     * (отзыв/возврат создателя). Позволяет читать revoke.txt строго по пушу, а не по таймеру
+     * (никаких холостых чтений). Флаг сбрасывается при чтении. По умолчанию false — транспорты
+     * без стрима сюда не попадают (revoke применится при переоткрытии чата).
+     */
+    fun consumeRevokeDirty(): Boolean = false
+
+    /**
      * Загружает содержимое chat.txt только если оно изменилось с последнего запроса.
      * Возвращает null если контент не изменился (HTTP 304 Not Modified) — UI не нужно обновлять.
      *
@@ -376,6 +384,40 @@ interface ChatTransport {
             true
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Подписи авторства сообщений (ADR_MESSAGE_AUTHENTICITY.md, Фаза 2).
+    // Отдельный файл "sigs.txt" — как reactions.txt: строка сообщения (chat.txt) НЕ
+    // меняется, старые клиенты этот файл не читают → нулевой риск доставки (§1).
+    // Содержимое ШИФРУЕТСЯ вызывающим (ChatActivity) доменом чата — чтобы реле не
+    // видело связку identityPubKey↔msgId (§1 Безопасность). Здесь — только файловый I/O.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Загружает (зашифрованный) blob подписей. Пустая строка, если файла нет. */
+    suspend fun loadSignatures(): String = loadFileOrNull("sigs.txt") ?: ""
+
+    /** Перезаписывает blob подписей. Вызывающий уже зашифровал содержимое. */
+    suspend fun saveSignatures(encryptedBlob: String) = saveFile("sigs.txt", encryptedBlob.ifBlank { "\n" })
+
+    /**
+     * Цепочка сертификатов передачи владения (ADR_MESSAGE_AUTHENTICITY.md §10). Отдельный
+     * файл "owner.txt" — как sigs.txt: старые клиенты его не читают. Содержимое ШИФРУЕТСЯ
+     * вызывающим доменом чата. Пусто, если файла нет.
+     */
+    suspend fun loadOwnerCerts(): String = loadFileOrNull("owner.txt") ?: ""
+
+    /** Перезаписывает (зашифрованную) цепочку сертификатов владения. */
+    suspend fun saveOwnerCerts(encryptedBlob: String) = saveFile("owner.txt", encryptedBlob.ifBlank { "\n" })
+
+    /**
+     * Сертификаты отзыва/возврата создателя verified-root'ом (RevokeSync). Отдельный файл
+     * "revoke.txt" — как owner.txt: старые клиенты его не читают (§17). Содержимое ШИФРУЕТСЯ
+     * вызывающим доменом чата. Пусто, если файла нет.
+     */
+    suspend fun loadRevokes(): String = loadFileOrNull("revoke.txt") ?: ""
+
+    /** Перезаписывает (зашифрованную) цепочку сертификатов отзыва. */
+    suspend fun saveRevokes(encryptedBlob: String) = saveFile("revoke.txt", encryptedBlob.ifBlank { "\n" })
 
     /**
      * Загружает зашифрованный контент изображения по ссылке.

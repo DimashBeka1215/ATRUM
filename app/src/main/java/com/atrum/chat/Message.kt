@@ -1,6 +1,13 @@
 package com.atrum.chat
 
 /**
+ * Состояние подлинности авторства сообщения (ADR_MESSAGE_AUTHENTICITY.md).
+ * UNSIGNED — подписи нет; VERIFIED — подпись валидна и ключ совпал; FORGED — подпись
+ * не сошлась (возможна имперсонация). В Фазе 0 используется только значение UNSIGNED.
+ */
+enum class MsgAuth { UNSIGNED, VERIFIED, FORGED }
+
+/**
  * Расшифрованное сообщение, готовое к показу в UI.
  *
  * Картинка может храниться тремя способами:
@@ -78,7 +85,16 @@ data class Message(
      * не сохраняется в NostrMessageStore/на реле. Рендерится отдельной облегчённой
      * веткой в MessageAdapter (без пузырька/реакций/медиа) — см. TYPE_SYSTEM.
      */
-    val isSystem: Boolean = false
+    val isSystem: Boolean = false,
+    /**
+     * Состояние подлинности авторства (ADR_MESSAGE_AUTHENTICITY.md, Фаза 0).
+     * UNSIGNED — подписи нет (старое/переходное сообщение), показываем без значка.
+     * VERIFIED — подпись валидна и ключ совпал с закреплённым для userId.
+     * FORGED   — подпись невалидна или ключ не совпал → «не подтверждено / возможно подделка».
+     * Пока только память (как isPending): проставляется на приёме, не шифруется и не синкается.
+     * В Фазе 0 всегда UNSIGNED — поведение не меняется, поле зарезервировано под Фазы 1–2.
+     */
+    val authState: MsgAuth = MsgAuth.UNSIGNED
 ) {
     val isReply: Boolean get() = quotedSender != null
     /** Стабильный уникальный ключ сообщения для режима выбора. */

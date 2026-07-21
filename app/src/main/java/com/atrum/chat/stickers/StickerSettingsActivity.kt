@@ -14,6 +14,7 @@ import com.atrum.chat.AppLock
 import com.atrum.chat.NeonDialog
 import com.atrum.chat.Prefs
 import com.atrum.chat.R
+import com.atrum.chat.transparentNavBar
 import com.atrum.chat.databinding.ActivityStickerSettingsBinding
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -191,7 +192,7 @@ class StickerSettingsActivity : AppCompatActivity() {
     }
 
     private fun showPackStickers(pack: StickerPack) {
-        val dialog = android.app.Dialog(this, android.R.style.Theme_Translucent_NoTitleBar)
+        val dialog = android.app.Dialog(this, android.R.style.Theme_Translucent_NoTitleBar).also { it.window?.transparentNavBar() }
         val dialogBinding = com.atrum.chat.databinding.DialogStickerPackInfoBinding.inflate(layoutInflater)
         dialog.setContentView(dialogBinding.root)
 

@@ -60,6 +60,9 @@ object GroupRosterSync {
 
         val activeIds = HashSet<String>()   // опубликовали профиль и НЕ вышли
         val leftIds = HashSet<String>()     // опубликовали профиль с left/deleted
+        // TOFU-пиннинг (ADR_MESSAGE_AUTHENTICITY.md, Фаза 1): собираем identityPubKey (idk)
+        // по каждому СВЕРЕННОМУ участнику, чтобы закрепить его как якорь авторства.
+        val idkByUid = HashMap<String, String>()
 
         for (slot in signedSlots) {
             val profiles = ProfileSync.parseProfiles(slot.content, password, chat.chatId)
@@ -69,6 +72,8 @@ object GroupRosterSync {
                 // Слот подписан ключом участника → принимаем только «свой» userId.
                 if (!pubkeyForUserId(uid).equals(slot.signerPubkey, ignoreCase = true)) continue
                 if (p.left || p.deleted) leftIds.add(uid) else activeIds.add(uid)
+                // Личный ключ берём только из полного профиля (presence-обновления его не несут).
+                p.identityPubKey?.takeIf { it.isNotBlank() }?.let { idkByUid[uid] = it }
             }
         }
 
@@ -96,6 +101,15 @@ object GroupRosterSync {
             if (existing.banned) continue
             participantDao.removeIfNotBanned(chat.id, uid)
             changed = true
+        }
+
+        // 3) TOFU-пиннинг identity-ключа (Фаза 1): фиксируем ПЕРВЫЙ наблюдаемый idk за каждым
+        // активным участником. pinIdentityIfEmpty ставит ключ только если он ещё пуст, поэтому
+        // поздняя подмена профиля уже закреплённый ключ не перепишет. Композицию ростера это не
+        // меняет (changed не трогаем) — только внутренний якорь доверия для проверки авторства.
+        for (uid in activeIds) {
+            val idk = idkByUid[uid] ?: continue
+            participantDao.pinIdentityIfEmpty(chat.id, uid, idk)
         }
 
         return changed
