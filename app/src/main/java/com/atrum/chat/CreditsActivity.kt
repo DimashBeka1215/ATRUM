@@ -80,6 +80,15 @@ class CreditsActivity : AppCompatActivity() {
             // Фото НЕ в APK — грузится из сети (ImgBB) при открытии экрана, фолбэк — инициал «Н».
             avatarUrl = "https://i.ibb.co.com/G3P1G9q1/IMG-20260721-045915-449.jpg"
         ),
+        Supporter(
+            nameRu = "Star Bling",
+            nameEn = "Star Bling",
+            quoteRu = "«За то реакции есть!!!»",
+            quoteEn = "«But hey, at least there are reactions!!!»",
+            avatarColor = "#1A1030",
+            // Фото НЕ в APK — грузится из сети (postimg) при открытии экрана, фолбэк — инициал «S».
+            avatarUrl = "https://i.postimg.cc/qq3kbVhz/IMG-20260722-160528-718.jpg"
+        ),
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -90,7 +99,7 @@ class CreditsActivity : AppCompatActivity() {
         binding.btnBack.setOnClickListener { finish() }
 
         val isRu = resources.configuration.locales[0].language == "ru"
-        binding.tvCount.text = if (isRu) "${supporters.size} человека" else "${supporters.size} supporters"
+        binding.tvCount.text = if (isRu) "${supporters.size} ${ruPeople(supporters.size)}" else "${supporters.size} supporters"
 
         buildSupportersList(isRu)
         animateEntrance()
@@ -282,6 +291,18 @@ class CreditsActivity : AppCompatActivity() {
         }
         dialog.setContentView(view)
         dialog.show()
+    }
+
+    /** Русское склонение слова «человек» для счётчика: 1 → человек, 2–4 → человека, 5+ → человек. */
+    private fun ruPeople(n: Int): String {
+        val m100 = n % 100
+        val m10 = n % 10
+        return when {
+            m100 in 11..14 -> "человек"
+            m10 == 1 -> "человек"
+            m10 in 2..4 -> "человека"
+            else -> "человек"
+        }
     }
 
     private fun openUrl(url: String) {
