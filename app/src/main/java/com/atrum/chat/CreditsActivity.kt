@@ -32,7 +32,9 @@ data class Supporter(
      * Пока грузится/если офлайн — показывается инициал (avatarColor). Приоритет: avatarRes → avatarUrl → инициал.
      */
     val avatarUrl: String? = null,
-    val clickUrl: String? = null
+    val clickUrl: String? = null,
+    /** Тап по карточке открывает аватар крупно по центру (лёгкое затемнение фона). */
+    val zoomAvatarOnTap: Boolean = false
 )
 
 class CreditsActivity : AppCompatActivity() {
@@ -87,7 +89,8 @@ class CreditsActivity : AppCompatActivity() {
             quoteEn = "«But hey, at least there are reactions!!!»",
             avatarColor = "#1A1030",
             // Фото НЕ в APK — грузится из сети (postimg) при открытии экрана, фолбэк — инициал «S».
-            avatarUrl = "https://i.postimg.cc/qq3kbVhz/IMG-20260722-160528-718.jpg"
+            avatarUrl = "https://i.postimg.cc/qq3kbVhz/IMG-20260722-160528-718.jpg",
+            zoomAvatarOnTap = true
         ),
     )
 
@@ -150,6 +153,9 @@ class CreditsActivity : AppCompatActivity() {
             if (supporter.clickUrl != null) {
                 (itemView as android.view.ViewGroup).getChildAt(0)
                     .setOnClickListener { openUrl(supporter.clickUrl) }
+            } else if (supporter.zoomAvatarOnTap) {
+                (itemView as android.view.ViewGroup).getChildAt(0)
+                    .setOnClickListener { showAvatarOverlay(ivAvatar.drawable) }
             }
 
             if (index == supporters.size - 1) {
@@ -291,6 +297,67 @@ class CreditsActivity : AppCompatActivity() {
         }
         dialog.setContentView(view)
         dialog.show()
+    }
+
+    /**
+     * Показывает аватар сторонника КРУПНО по центру экрана с лёгким затемнением фона.
+     * Кастомный Dialog (не системное окно, §10 DESIGN): прозрачное окно + window-dim ~0.55,
+     * круглый аватар со скруглением как в карточке, тап в любом месте — закрыть, плавное появление.
+     * Битмап берётся уже загруженный (из ivAvatar) — второй раз из сети не тянем.
+     */
+    private fun showAvatarOverlay(drawable: android.graphics.drawable.Drawable?) {
+        if (drawable == null || isFinishing || isDestroyed) return
+
+        val density = resources.displayMetrics.density
+        fun dp(v: Int) = (v * density).toInt()
+
+        val container = android.widget.FrameLayout(this).apply {
+            layoutParams = android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            isClickable = true
+            isFocusable = true
+        }
+
+        val iv = com.google.android.material.imageview.ShapeableImageView(this).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(dp(220), dp(220)).apply {
+                gravity = android.view.Gravity.CENTER
+            }
+            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+            shapeAppearanceModel = com.google.android.material.shape.ShapeAppearanceModel
+                .builder(context, R.style.ShapeAppearance_AtrumChat_Circle, 0).build()
+            strokeColor = android.content.res.ColorStateList.valueOf(
+                androidx.core.content.ContextCompat.getColor(context, R.color.accent_light)
+            )
+            strokeWidth = dp(2).toFloat()
+            setImageDrawable(drawable)
+        }
+        container.addView(iv)
+
+        val dialog = android.app.Dialog(this)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setContentView(container)
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0.55f) // лёгкое затемнение фона за аватаром
+        }
+        container.setOnClickListener { dialog.dismiss() }
+        dialog.show()
+
+        // Плавное появление: fade + лёгкий pop (§8 DESIGN: alpha, ≤300ms)
+        iv.alpha = 0f
+        iv.scaleX = 0.86f
+        iv.scaleY = 0.86f
+        iv.animate().alpha(1f).scaleX(1f).scaleY(1f)
+            .setDuration(220)
+            .setInterpolator(android.view.animation.OvershootInterpolator(0.9f))
+            .start()
     }
 
     /** Русское склонение слова «человек» для счётчика: 1 → человек, 2–4 → человека, 5+ → человек. */

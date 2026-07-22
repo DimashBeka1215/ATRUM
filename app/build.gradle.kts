@@ -49,8 +49,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 576
-        versionName = "3.49.32-beta490-credit-starbling"
+        versionCode = 577
+        versionName = "3.49.33-beta491-starbling-avatarzoom"
 
         // ЛИЧНАЯ СБОРКА: по умолчанию ВЫКЛючена (обычный релиз чист). Включается в build-типе
         // debug (см. buildTypes). Личные «фишки для себя» в коде прячутся за
