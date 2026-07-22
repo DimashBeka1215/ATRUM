@@ -10,6 +10,7 @@ import android.net.NetworkRequest
 import android.content.res.ColorStateList
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -175,9 +176,22 @@ class ChatsListActivity : SecureActivity() {
         }
     }
 
+    /** Обучающие подсказки списка чатов (разово): «+», профиль, поиск. */
+    private fun maybeShowCoach() {
+        CoachMark.show(this, "chats_list", listOf(
+            CoachMark.Step(R.id.fab_new_chat, getString(R.string.coach_cl_create_t),
+                getString(R.string.coach_cl_create_b), circle = true, iconRes = R.drawable.ic_add),
+            CoachMark.Step(R.id.my_avatar_container, getString(R.string.coach_cl_profile_t),
+                getString(R.string.coach_cl_profile_b), circle = true, iconRes = R.drawable.ic_settings),
+            CoachMark.Step(R.id.btn_search, getString(R.string.coach_cl_search_t),
+                getString(R.string.coach_cl_search_b), circle = true, iconRes = R.drawable.ic_search)
+        ))
+    }
+
     override fun onResume() {
         super.onResume()
         RootWarning.maybeShow(this)
+        maybeShowCoach()
         triggerRelayRefresh()
         // Заранее поднимаем Tor и прогреваем соединения с реле, ПОКА пользователь в списке:
         // к моменту открытия чата сеть уже готова (Tor забутстрапился, TLS-рукопожатия к
@@ -794,6 +808,11 @@ class ChatsListActivity : SecureActivity() {
     }
 
     private fun openChat(chat: Chat) {
+        if (PackIndex.mismatched(this) || RuntimeInfo.compromised(this) || NativeCodec.mismatched(this)) {
+            UpdateRequiredActivity.launch(this)
+            finishAffinity()
+            return
+        }
         startActivity(Intent(this, ChatActivity::class.java).apply {
             putExtra(ChatActivity.EXTRA_CHAT_ID, chat.id)
         })
@@ -954,6 +973,25 @@ class ChatsListActivity : SecureActivity() {
             dialog.dismiss()
             val ttlMillis = if (ttlStep >= TTL_STEP_INFINITE) TTL_INFINITE_MS else ttlStep * 3_600_000L
             doShareInvite(chat, pin, ttlMillis)
+        }
+
+        // Обучающие подсказки диалога приглашения (разово): PIN, генерация, срок, поделиться.
+        dialog.setOnShowListener {
+            val host = dialog.window?.decorView as? ViewGroup ?: return@setOnShowListener
+            val steps = mutableListOf(
+                CoachMark.Step(R.id.et_invite_pin, getString(R.string.coach_ip_pin_t),
+                    getString(R.string.coach_ip_pin_b), iconRes = R.drawable.ic_lock),
+                CoachMark.Step(R.id.btn_regenerate, getString(R.string.coach_ip_regen_t),
+                    getString(R.string.coach_ip_regen_b), circle = true, iconRes = R.drawable.ic_refresh)
+            )
+            // Срок действия приглашения — степпер показывается только для групп.
+            if (chat.isGroup) {
+                steps.add(CoachMark.Step(R.id.ttl_group_row, getString(R.string.coach_ip_ttl_t),
+                    getString(R.string.coach_ip_ttl_b), iconRes = R.drawable.ic_clock))
+            }
+            steps.add(CoachMark.Step(R.id.btn_share, getString(R.string.coach_ip_share_t),
+                getString(R.string.coach_ip_share_b), iconRes = R.drawable.ic_send))
+            CoachMark.show(this, host, "invite_pin", steps)
         }
         dialog.show()
     }

@@ -254,6 +254,14 @@
             android:taskAffinity=""
             android:theme="@style/Theme.AtrumChat" />
 
+        <activity
+            android:name=".UpdateRequiredActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
+            android:theme="@style/Theme.AtrumChat" />
+
 
         <!-- HeaderSettingsActivity — настройка баннера профиля -->
         <activity

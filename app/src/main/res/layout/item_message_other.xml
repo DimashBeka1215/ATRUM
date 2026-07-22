@@ -270,6 +270,35 @@
             android:breakStrategy="simple"
             android:hyphenationFrequency="normal"/>
 
+        <!-- Тумблер «Показать всё / Свернуть» для длинных сообщений (видимость/текст — из кода). -->
+        <LinearLayout
+            android:id="@+id/ll_expand_toggle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingVertical="2dp"
+            android:paddingHorizontal="2dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:visibility="gone">
+            <TextView
+                android:id="@+id/tv_expand_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/accent_light"
+                android:textSize="12.5sp"
+                android:fontFamily="sans-serif-medium" />
+            <ImageView
+                android:id="@+id/iv_expand_chevron"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:layout_marginStart="4dp"
+                android:src="@drawable/ic_chevron_down"
+                app:tint="@color/accent_light"
+                android:contentDescription="@null" />
+        </LinearLayout>
+
         <LinearLayout
             android:id="@+id/link_preview"
             android:layout_width="wrap_content"

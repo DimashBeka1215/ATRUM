@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Клип-форма матовой карточки: скругления для clipToOutline (внутри — блюр + тинт).
+     Почти прозрачная заливка нужна только чтобы дать outline для обрезки по скруглению. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#14000000" />
+    <corners android:radius="16dp" />
+    <stroke android:width="1dp" android:color="#26FFFFFF" />
+</shape>

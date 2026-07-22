@@ -125,3 +125,9 @@
 # Snowflake/obfs4.
 -keep class IPtProxy.** { *; }
 -dontwarn IPtProxy.**
+
+-allowaccessmodification
+
+-keepclasseswithmembernames,includedescriptorclasses class com.atrum.chat.NativeCodec {
+    native <methods>;
+}

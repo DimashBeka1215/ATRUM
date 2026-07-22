@@ -102,6 +102,22 @@ class InviteQrActivity : AppCompatActivity() {
                 putExtra(QrScanActivity.EXTRA_MODE, QrScanActivity.MODE_INVITE)
             })
         }
+
+        // Обучающие подсказки экрана приглашения (разово): QR, код-пароль и все 4 кнопки.
+        CoachMark.show(this, "invite_qr", listOf(
+            CoachMark.Step(R.id.iv_qr, getString(R.string.coach_iq_qr_t),
+                getString(R.string.coach_iq_qr_b), iconRes = R.drawable.ic_qr),
+            CoachMark.Step(R.id.tv_pin, getString(R.string.coach_iq_pin_t),
+                getString(R.string.coach_iq_pin_b), iconRes = R.drawable.ic_lock),
+            CoachMark.Step(R.id.btn_save_gallery, getString(R.string.coach_iq_save_t),
+                getString(R.string.coach_iq_save_b), circle = true, iconRes = R.drawable.ic_download),
+            CoachMark.Step(R.id.btn_copy_qr, getString(R.string.coach_iq_copyqr_t),
+                getString(R.string.coach_iq_copyqr_b), circle = true, iconRes = R.drawable.ic_image_outline),
+            CoachMark.Step(R.id.btn_copy_text, getString(R.string.coach_iq_share_t),
+                getString(R.string.coach_iq_share_b), circle = true, iconRes = R.drawable.ic_copy),
+            CoachMark.Step(R.id.btn_scan, getString(R.string.coach_iq_scan_t),
+                getString(R.string.coach_iq_scan_b), circle = true, iconRes = R.drawable.ic_qr)
+        ))
     }
 
     /** Имя альбома галереи для QR-кодов Atrum. */

@@ -148,7 +148,26 @@ class AdminPermissionsActivity : AppCompatActivity() {
                     val db = AppDatabase.get(this@AdminPermissionsActivity)
                     val chat = db.chatDao().getById(chatRoomId) ?: return@runCatching 1
                     if (chat.adminUserId.isNullOrBlank() || chat.adminUserId != prefs.myUserId) return@runCatching 1
-                    val recipientIdk = db.chatParticipantDao().getOne(chat.id, userId)?.pinnedIdentityPubKey
+                    val password = prefs.getChatPassword(chat.chatId).ifEmpty { @Suppress("DEPRECATION") chat.chatPassword }
+                    val token = prefs.getChatToken(chat.chatId).ifEmpty { @Suppress("DEPRECATION") chat.transportToken }
+                    val transport = TransportFactory.forChat(
+                        applicationContext, chat.chatId, token, password, prefs.myUserId, adminUserId = chat.adminUserId
+                    )
+                    // Ключ получателя: сперва закреплённый (TOFU). Если ещё не закреплён — берём из
+                    // его ЖИВОГО профиля и закрепляем на месте (то же, что делает GroupRosterSync,
+                    // но по требованию: не заставляем «ждать, пока закрепится»). Профиль с ключом
+                    // появляется, как только получатель хоть раз открыл чат. Передача всё равно
+                    // безопасна: принять оффер может только владелец этого ключа (подпись согласия).
+                    var recipientIdk = db.chatParticipantDao().getOne(chat.id, userId)?.pinnedIdentityPubKey
+                    if (recipientIdk.isNullOrBlank()) {
+                        val liveIdk = runCatching {
+                            ProfileSync.pullProfiles(transport, password)[userId]?.identityPubKey
+                        }.getOrNull()
+                        if (!liveIdk.isNullOrBlank()) {
+                            db.chatParticipantDao().pinIdentityIfEmpty(chat.id, userId, liveIdk)
+                            recipientIdk = db.chatParticipantDao().getOne(chat.id, userId)?.pinnedIdentityPubKey ?: liveIdk
+                        }
+                    }
                     if (recipientIdk.isNullOrBlank()) return@runCatching 2
                     val (priv, _) = prefs.getOrCreateIdentity()
                     val cert = try {
@@ -162,11 +181,6 @@ class AdminPermissionsActivity : AppCompatActivity() {
                         )
                     } finally { priv.fill(0) }
                     if (cert.sig.isBlank()) return@runCatching 1
-                    val password = prefs.getChatPassword(chat.chatId).ifEmpty { @Suppress("DEPRECATION") chat.chatPassword }
-                    val token = prefs.getChatToken(chat.chatId).ifEmpty { @Suppress("DEPRECATION") chat.transportToken }
-                    val transport = TransportFactory.forChat(
-                        applicationContext, chat.chatId, token, password, prefs.myUserId, adminUserId = chat.adminUserId
-                    )
                     // Публикуем ОФФЕР (только подпись владельца). Владение сменится ТОЛЬКО после
                     // того, как получатель примет (подпишет согласие) — двусторонняя передача,
                     // никому нельзя навязать права. Локально сейчас НИЧЕГО не меняем.

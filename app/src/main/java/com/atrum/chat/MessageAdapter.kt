@@ -46,6 +46,10 @@ class MessageAdapter(
     /** true = Atmospheric Glass UI mode: полупрозрачные пузырьки поверх обоев. */
     var glassMode: Boolean = false
 
+    /** msgId сообщений, развёрнутых пользователем («Показать всё»). Живёт в рамках сессии;
+     *  по умолчанию длинные сообщения свёрнуты. Сворачивание/разворот — см. applyMessageCollapse. */
+    private val expandedMsgIds = HashSet<String>()
+
     /** true — групповая беседа: подсвечивать @упоминания в тексте (см. highlightMentions). */
     var isGroupChat: Boolean = false
 
@@ -248,6 +252,9 @@ class MessageAdapter(
     companion object {
         private const val TYPE_SELF = 1
         private const val TYPE_OTHER = 2
+        /** Длинные сообщения: сворачивать при >= COLLAPSE_TRIGGER строк, показывать COLLAPSE_LINES. */
+        private const val COLLAPSE_LINES = 10
+        private const val COLLAPSE_TRIGGER = 14
         /** Локальное системное сообщение (см. Message.isSystem) — без пузырька/медиа/реакций. */
         private const val TYPE_SYSTEM = 3
 
@@ -424,7 +431,7 @@ class MessageAdapter(
             else -> R.layout.item_message_other
         }
         val view = LayoutInflater.from(parent.context).inflate(layoutId, parent, false)
-        return VH(view, { imageLoader }, loadScope, onCollageImageClick)
+        return VH(view, { imageLoader }, loadScope, onCollageImageClick, expandedMsgIds)
     }
 
     override fun onBindViewHolder(holder: VH, position: Int, payloads: MutableList<Any>) {
@@ -525,7 +532,9 @@ class MessageAdapter(
         itemView: View,
         private val getImageLoader: () -> ImageLoader?,
         private val loadScope: CoroutineScope?,
-        private val onCollageImageClick: (refs: List<String>, startIndex: Int) -> Unit
+        private val onCollageImageClick: (refs: List<String>, startIndex: Int) -> Unit,
+        /** Общий с адаптером набор развёрнутых сообщений (VH не inner — передаём ссылкой). */
+        private val expandedMsgIds: HashSet<String>
     ) : RecyclerView.ViewHolder(itemView) {
         private val senderView: TextView? = itemView.findViewById(R.id.tv_sender)
         private val senderRow: View? = itemView.findViewById(R.id.sender_row)
@@ -537,6 +546,9 @@ class MessageAdapter(
         private val ivAuthWarning: ImageView? = itemView.findViewById(R.id.iv_auth_warning)
         private val tvAuthWarning: TextView? = itemView.findViewById(R.id.tv_auth_warning)
         private val textView: TextView = itemView.findViewById(R.id.tv_text)
+        private val expandToggle: View? = itemView.findViewById(R.id.ll_expand_toggle)
+        private val expandLabel: TextView? = itemView.findViewById(R.id.tv_expand_label)
+        private val expandChevron: ImageView? = itemView.findViewById(R.id.iv_expand_chevron)
         private val linkPreview: View? = itemView.findViewById(R.id.link_preview)
         private val lpSite: TextView? = itemView.findViewById(R.id.lp_site)
         private val lpTitle: TextView? = itemView.findViewById(R.id.lp_title)
@@ -651,6 +663,88 @@ class MessageAdapter(
             textView.text = msg.text
             itemView.isClickable = false
             itemView.isLongClickable = false
+        }
+
+        // ── Сворачивание длинных сообщений ────────────────────────────────────────
+        /**
+         * Длинные сообщения (>= COLLAPSE_TRIGGER строк) сворачиваются до COLLAPSE_LINES с тумблером
+         * «Показать всё»/«Свернуть». Состояние — по msgId ([expandedMsgIds]). Число строк оцениваем
+         * StaticLayout при ширине пузыря (maxWidth) — синхронно, без гонок ресайкла.
+         */
+        private fun applyMessageCollapse(msg: Message) {
+            // Сброс возможной фиксированной высоты от прошлой анимации (ресайкл VH).
+            textView.layoutParams?.let {
+                if (it.height != ViewGroup.LayoutParams.WRAP_CONTENT) { it.height = ViewGroup.LayoutParams.WRAP_CONTENT; textView.layoutParams = it }
+            }
+            val toggle = expandToggle
+            if (toggle == null || textView.visibility != View.VISIBLE || msg.text.isBlank()) {
+                toggle?.visibility = View.GONE
+                textView.maxLines = Integer.MAX_VALUE
+                textView.ellipsize = null
+                return
+            }
+            val fullLines = estimateFullLineCount(textView)
+            if (fullLines < COLLAPSE_TRIGGER) {
+                toggle.visibility = View.GONE
+                textView.maxLines = Integer.MAX_VALUE
+                textView.ellipsize = null
+                return
+            }
+            val expanded = msg.msgId in expandedMsgIds
+            textView.maxLines = if (expanded) Integer.MAX_VALUE else COLLAPSE_LINES
+            textView.ellipsize = if (expanded) null else android.text.TextUtils.TruncateAt.END
+            toggle.visibility = View.VISIBLE
+            updateToggle(expanded)
+            toggle.setOnClickListener {
+                val nowExpanded = msg.msgId !in expandedMsgIds
+                if (nowExpanded) expandedMsgIds.add(msg.msgId) else expandedMsgIds.remove(msg.msgId)
+                animateExpand(nowExpanded)
+                updateToggle(nowExpanded)
+            }
+        }
+
+        private fun updateToggle(expanded: Boolean) {
+            expandLabel?.setText(if (expanded) R.string.msg_collapse else R.string.msg_show_all)
+            expandChevron?.animate()?.rotation(if (expanded) 180f else 0f)?.setDuration(220)?.start()
+        }
+
+        private fun estimateFullLineCount(tv: TextView): Int {
+            val maxW = tv.maxWidth
+            if (maxW <= 0 || maxW == Integer.MAX_VALUE) return 0
+            val width = maxW - tv.paddingLeft - tv.paddingRight
+            if (width <= 0) return 0
+            val text = tv.text ?: return 0
+            return runCatching {
+                android.text.StaticLayout.Builder.obtain(text, 0, text.length, tv.paint, width)
+                    .setLineSpacing(tv.lineSpacingExtra, tv.lineSpacingMultiplier)
+                    .build().lineCount
+            }.getOrDefault(0)
+        }
+
+        /** Плавная анимация высоты пузыря при разворачивании/сворачивании (~260 мс). */
+        private fun animateExpand(expand: Boolean) {
+            val tv = textView
+            val startH = tv.height
+            tv.maxLines = if (expand) Integer.MAX_VALUE else COLLAPSE_LINES
+            tv.ellipsize = if (expand) null else android.text.TextUtils.TruncateAt.END
+            tv.measure(
+                View.MeasureSpec.makeMeasureSpec(tv.width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            )
+            val endH = tv.measuredHeight
+            if (startH == endH) return
+            val lp = tv.layoutParams
+            android.animation.ValueAnimator.ofInt(startH, endH).apply {
+                duration = 260
+                interpolator = android.view.animation.DecelerateInterpolator(1.3f)
+                addUpdateListener { lp.height = it.animatedValue as Int; tv.layoutParams = lp }
+                addListener(object : android.animation.AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                        lp.height = ViewGroup.LayoutParams.WRAP_CONTENT; tv.layoutParams = lp
+                    }
+                })
+                start()
+            }
         }
 
         fun resumeSticker() {
@@ -804,6 +898,7 @@ class MessageAdapter(
                 }
             }
 
+            applyMessageCollapse(msg)
             bindLinkPreview(msg)
             timeView.text = time
 

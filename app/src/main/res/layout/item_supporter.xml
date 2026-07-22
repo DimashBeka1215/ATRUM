@@ -2,7 +2,9 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="vertical">
+    android:orientation="vertical"
+    android:clipChildren="false"
+    android:clipToPadding="false">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -13,14 +15,19 @@
         android:paddingVertical="14dp"
         android:background="?attr/selectableItemBackground"
         android:clickable="true"
-        android:focusable="true">
+        android:focusable="true"
+        android:clipChildren="false"
+        android:clipToPadding="false">
 
-        <!-- Avatar wrapper: glow ring (анимируется) + аватарка (неподвижна) -->
+        <!-- Avatar wrapper: glow ring (анимируется) + аватарка (неподвижна). clipChildren=false —
+             чтобы пульсирующее круглое свечение не обрезалось по квадратным границам контейнера. -->
         <FrameLayout
             android:id="@+id/flAvatarWrapper"
             android:layout_width="66dp"
             android:layout_height="66dp"
-            android:layout_marginEnd="14dp">
+            android:layout_marginEnd="14dp"
+            android:clipChildren="false"
+            android:clipToPadding="false">
 
             <!-- Glow-кольцо — пульсирует и вращается -->
             <View

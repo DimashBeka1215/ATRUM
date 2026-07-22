@@ -337,21 +337,22 @@
             android:orientation="vertical"
             android:visibility="gone">
 
-            <!-- Avatar preview: glow + avatar (неподвижна) -->
+            <!-- Avatar preview: вращающееся неон-кольцо (портал) + аватар (неподвижен) -->
             <FrameLayout
                 android:id="@+id/fl_avatar_container"
                 android:layout_width="240dp"
                 android:layout_height="240dp"
                 android:layout_gravity="center_horizontal"
-                android:layout_marginTop="8dp">
+                android:layout_marginTop="44dp">
 
-                <!-- Желеобразная рамка вокруг аватарки -->
-                <FrameLayout
-                    android:id="@+id/fl_avatar_glow"
-                    android:layout_width="140dp"
-                    android:layout_height="140dp"
+                <!-- Неон-кольцо портала (как в окне приглашения) — медленно вращается из кода. -->
+                <ImageView
+                    android:id="@+id/iv_avatar_portal"
+                    android:layout_width="210dp"
+                    android:layout_height="210dp"
                     android:layout_gravity="center"
-                    android:background="@drawable/bg_avatar_glow_ring" />
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_portal_neon" />
 
                 <!-- Аватарка — неподвижна -->
                 <com.google.android.material.imageview.ShapeableImageView

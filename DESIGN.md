@@ -169,6 +169,28 @@ Padding: 6dp vertical, 12dp horizontal. Текст: 13sp.
 `Theme.AtrumChat.BottomSheet`: `@color/surface` background, topLeft=20dp, topRight=20dp скругление.
 Drag handle: 4×32dp, `@color/border`, 2dp radius, centered, marginTop=8dp.
 
+### 4.9 Полосы загрузки (прогресс) — СТАНДАРТ ⛔
+
+Единая полоса загрузки для ВСЕГО приложения — `@drawable/bg_progress_bar` (тонкая, с фиолетовым
+градиентом). Использовать её для любого детерминированного прогресса: скачивание, приём, обработка,
+передача и т.п. Не изобретать свои полосы в каждом экране — везде одна и та же.
+
+```xml
+<ProgressBar
+    style="@android:style/Widget.ProgressBar.Horizontal"
+    android:layout_width="match_parent"
+    android:layout_height="4dp"
+    android:progressDrawable="@drawable/bg_progress_bar"
+    android:max="100"
+    android:progress="0" />
+```
+
+- Высота: **4dp**. Скругление трека и заливки: 4dp. `max=100`.
+- Трек (фон): `#0D000000` (5% чёрный) — минималистичный, нейтральный.
+- Заливка: линейный градиент `#E0B1FF → #9D4EDD → #5A189A` (светлый → акцент → тёмно-фиолетовый).
+- Эталон использования: раздел «Стикеры» (`activity_sticker_settings`, `pbDownload`), окно передачи
+  прав (`TransferOfferActivity`). Индетерминированный спиннер — отдельно (`ProgressBar` без стиля).
+
 ---
 
 ## 5. Иконки

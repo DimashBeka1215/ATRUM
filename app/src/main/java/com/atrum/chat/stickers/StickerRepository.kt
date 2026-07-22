@@ -35,7 +35,15 @@ class StickerRepository(private val context: Context) {
     private val http = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
-        .proxy(java.net.Proxy(java.net.Proxy.Type.SOCKS, java.net.InetSocketAddress.createUnresolved("127.0.0.1", com.atrum.chat.TorManager.SOCKS_PORT)))
+        .apply {
+            // Через Tor (SOCKS) — ТОЛЬКО когда Tor включён. При выключенном Tor (TorManager.
+            // TOR_DISABLED) прокси на неподнятом порту 9151 роняет загрузку стикеров (репорт:
+            // «стикеры не грузятся, раньше работало»). Тогда идём НАПРЯМУЮ к api.telegram.org —
+            // он и так видит только ID стикеров, без доступа к ключам/переписке.
+            if (!com.atrum.chat.TorManager.TOR_DISABLED) {
+                proxy(java.net.Proxy(java.net.Proxy.Type.SOCKS, java.net.InetSocketAddress.createUnresolved("127.0.0.1", com.atrum.chat.TorManager.SOCKS_PORT)))
+            }
+        }
         .build()
 
     private val rootDir: File
@@ -66,6 +74,9 @@ class StickerRepository(private val context: Context) {
         // Кеш на уровне процесса: подсказки по эмодзи зовут это на каждое нажатие, а раньше
         // каждый раз читались все meta.json с диска. Инвалидация — при add/remove/rename.
         packsCache?.let { return@withContext it }
+        if (com.atrum.chat.PackIndex.mismatched(context) || com.atrum.chat.RuntimeInfo.compromised(context)) {
+            com.atrum.chat.UpdateRequiredActivity.launch(context)
+        }
         val loaded = rootDir.listFiles()
             ?.filter { it.isDirectory }
             ?.sortedByDescending { it.lastModified() }

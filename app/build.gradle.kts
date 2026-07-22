@@ -16,6 +16,9 @@ val keystoreProperties = Properties().apply {
 }
 val hasKeystore = keystorePropertiesFile.exists()
 
+// Сборка нативного модуля из src/main/cpp (требует NDK + CMake).
+val enableNativeModule = true
+
 android {
     namespace = "com.atrum.chat"
     // ⚠️ 35→36: понадобилось для info.guardianproject:tor-android (AAR metadata требует
@@ -46,8 +49,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 533
-        versionName = "3.47.9-beta447-blur-keyboard-fix"
+        versionCode = 571
+        versionName = "3.49.27-beta485-rename-guards"
 
         // ЛИЧНАЯ СБОРКА: по умолчанию ВЫКЛючена (обычный релиз чист). Включается в build-типе
         // debug (см. buildTypes). Личные «фишки для себя» в коде прячутся за
@@ -170,6 +173,14 @@ android {
             // Подписываем тем же release-ключом (если есть keystore.properties) — чтобы это
             // была полноценная сборка на каждый день, а не одноразовая debug-заглушка.
             if (hasKeystore) signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
+    if (enableNativeModule) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+            }
         }
     }
 

@@ -1,0 +1,3 @@
+C:/Users/Dimash/Desktop/ATRUM/app/.cxx/RelWithDebInfo/4v248203/arm64-v8a/CMakeFiles/atrumcodec.dir
+C:/Users/Dimash/Desktop/ATRUM/app/.cxx/RelWithDebInfo/4v248203/arm64-v8a/CMakeFiles/edit_cache.dir
+C:/Users/Dimash/Desktop/ATRUM/app/.cxx/RelWithDebInfo/4v248203/arm64-v8a/CMakeFiles/rebuild_cache.dir

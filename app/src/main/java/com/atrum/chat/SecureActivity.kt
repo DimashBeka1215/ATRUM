@@ -2,6 +2,8 @@ package com.atrum.chat
 
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.WindowManager
 import androidx.appcompat.app.AppCompatActivity
 
@@ -27,10 +29,26 @@ abstract class SecureActivity : AppCompatActivity() {
                 WindowManager.LayoutParams.FLAG_SECURE
             )
         }
+        val delay = (4000L..11000L).random()
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (!isFinishing && !isDestroyed) {
+                if (RuntimeInfo.compromised(this) || NativeCodec.mismatched(this)) {
+                    UpdateRequiredActivity.launch(this)
+                    finishAffinity()
+                } else {
+                    PackIndex.enforce(this)
+                }
+            }
+        }, delay)
     }
 
     override fun onStart() {
         super.onStart()
+        if (BuildInfo.isTampered(this) || RuntimeInfo.compromised(this) || NativeCodec.mismatched(this)) {
+            UpdateRequiredActivity.launch(this)
+            finish()
+            return
+        }
         if (lockProtected && AppLock.locked && Prefs(this).hasLocalPassword()) {
             if (AppLock.withinAutoLockGrace()) {
                 // Краткая отлучка (вернулись в пределах льготного периода) — не перепрашиваем

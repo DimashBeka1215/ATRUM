@@ -357,6 +357,8 @@
     <string name="group_description_dialog_title">Group description</string>
     <string name="tester_item_group_profile_demo">Preview: group chat profile</string>
     <string name="tester_item_group_profile_demo_desc">Demo screen (members, ban, editing)</string>
+    <string name="tester_item_block">Show block screen</string>
+    <string name="tester_item_block_desc">Red screen + vibration, no way out</string>
     <string name="cc_password_label">Connection password</string>
     <string name="cc_password_hint">Enter password</string>
     <string name="cc_password_helper">Share this password with your contact to connect. It encrypts all messages end-to-end.</string>
@@ -755,7 +757,7 @@
     <string name="sticker_error_not_found">Pack not found</string>
     <string name="sticker_error_network">Network error while loading stickers</string>
     <string name="sticker_network_error_title">Loading issue</string>
-    <string name="sticker_network_error_message">Failed to connect to Telegram servers. We use Tor (port 9050) for privacy, but it may be unstable in some networks. If stickers aren\'t loading, try using a VPN. Telegram only sees sticker IDs and has no access to your keys or chats.</string>
+    <string name="sticker_network_error_message">Failed to connect to Telegram servers. Check your internet, and if Telegram is blocked on your network, use a VPN. Telegram only sees sticker IDs and has no access to your keys or chats.</string>
 
     <!-- Sticker onboarding -->
     <string name="sticker_onboarding_title">How to add stickers</string>
@@ -1189,6 +1191,23 @@
     <string name="revoke_transition_revoke_desc">The chat is no longer honoring the creator\'s key and rights. From now on it is run by the app\'s owner.</string>
     <string name="revoke_transition_restore_desc">The chat honors the creator\'s key and rights again. Full control is returned to them.</string>
     <string name="revoke_transition_who">Only the verified root — the owner holding the root key embedded in the app — can revoke or restore creator rights. It cannot be forged.</string>
+    <string name="group_welcome_title_created">You created a group</string>
+    <string name="group_welcome_title_joined">You joined a group</string>
+    <string name="group_welcome_subtitle">Private and secure</string>
+    <string name="group_welcome_features_header">What groups can do</string>
+    <string name="group_welcome_f1">End-to-end encryption on your device</string>
+    <string name="group_welcome_f2">Past stays unreadable even if the password leaks</string>
+    <string name="group_welcome_f3">Works even when the creator is offline</string>
+    <string name="group_welcome_f4">Message authenticity — no impersonation</string>
+    <string name="group_welcome_f5">Photos, voice, stickers, reactions, pins</string>
+    <string name="group_welcome_f6">Join by code or QR, no public links</string>
+    <string name="group_welcome_admin_header">What the admin can do</string>
+    <string name="group_welcome_a1">Ban and mute members</string>
+    <string name="group_welcome_a2">Grant helpers specific rights</string>
+    <string name="group_welcome_a3">Transfer ownership</string>
+    <string name="group_welcome_ok">Got it</string>
+    <string name="msg_show_all">Show all</string>
+    <string name="msg_collapse">Collapse</string>
     <string name="admins_no_rights">No rights</string>
     <string name="admins_no_candidates">No one to appoint</string>
     <string name="admins_pick_title">Whom to appoint</string>
@@ -1222,7 +1241,7 @@
     <string name="transfer_owner_yes">Yes</string>
     <string name="transfer_owner_yes_timer">Yes (%1$d)</string>
     <string name="transfer_owner_done">Ownership transferred</string>
-    <string name="transfer_owner_no_key">This member has no key yet — wait until they come online</string>
+    <string name="transfer_owner_no_key">The recipient hasn\'t published their identity key yet. Ask them to open this chat once — then the transfer can be completed.</string>
     <string name="transfer_owner_error">Couldn\'t transfer ownership</string>
     <string name="transfer_owner_sent">Offer sent</string>
     <string name="transfer_offer_title">Ownership transfer</string>
@@ -1240,4 +1259,66 @@
     <string name="pinned_show_all">Pinned messages</string>
     <string name="pinned_unpin">Unpin</string>
     <string name="pinned_done">Pinned</string>
-    <string name="unpinned_done">Unpinned</string></resources>
+    <string name="unpinned_done">Unpinned</string>
+
+    <!-- Coach marks -->
+    <string name="coach_skip">Skip</string>
+    <string name="coach_next">Next</string>
+    <string name="coach_done">Got it</string>
+    <!-- Chats list -->
+    <string name="coach_cl_create_t">Create a chat</string>
+    <string name="coach_cl_create_b">Tap the plus to create a private or group chat — encryption and password are set up for you.</string>
+    <string name="coach_cl_profile_t">Your profile</string>
+    <string name="coach_cl_profile_b">Avatar, name, privacy, theme and notifications — all here.</string>
+    <string name="coach_cl_search_t">Search</string>
+    <string name="coach_cl_search_b">Quickly find a chat by name.</string>
+    <!-- Create chat -->
+    <string name="coach_cc_p2p_t">Private chat</string>
+    <string name="coach_cc_p2p_b">A secure one-on-one chat. After creating it you\'ll get an invite code for the other person.</string>
+    <string name="coach_cc_join_t">Join</string>
+    <string name="coach_cc_join_b">Already have a code or QR? Enter someone\'s chat by invitation.</string>
+    <string name="coach_cc_bt_t">Nearby (Bluetooth)</string>
+    <string name="coach_cc_bt_b">Message people nearby, without the internet.</string>
+    <!-- Invite / QR -->
+    <string name="coach_iq_qr_t">QR invite</string>
+    <string name="coach_iq_qr_b">Let the other person scan this code to enter the chat.</string>
+    <string name="coach_iq_pin_t">Code-password</string>
+    <string name="coach_iq_pin_b">A one-time password for entry. Share it separately from the QR.</string>
+    <string name="coach_iq_save_t">Save to gallery</string>
+    <string name="coach_iq_save_b">Saves the invite image to your phone\'s photo gallery.</string>
+    <string name="coach_iq_copyqr_t">Copy QR</string>
+    <string name="coach_iq_copyqr_b">Copies the QR image — paste it anywhere.</string>
+    <string name="coach_iq_share_t">Send the invite</string>
+    <string name="coach_iq_share_b">Copies the invite link. Paste it into any messenger and send it.</string>
+    <string name="coach_iq_scan_t">Scan</string>
+    <string name="coach_iq_scan_b">The other way around — scan someone\'s code to join yourself.</string>
+    <!-- Invite PIN dialog -->
+    <string name="coach_ip_pin_t">Set a PIN</string>
+    <string name="coach_ip_pin_b">The code the recipient enters to join. Make up any you like.</string>
+    <string name="coach_ip_regen_t">Generate a code</string>
+    <string name="coach_ip_regen_b">Don\'t want to think one up — generate a random PIN.</string>
+    <string name="coach_ip_ttl_t">Invite lifetime</string>
+    <string name="coach_ip_ttl_b">Use − and + to set how many hours the invite lasts. After the “Expires…” time the code stops working.</string>
+    <string name="coach_ip_share_t">Share</string>
+    <string name="coach_ip_share_b">Done — send the invite. Give the PIN to the recipient separately.</string>
+    <!-- Join chat -->
+    <string name="coach_jn_input_t">Paste the invite</string>
+    <string name="coach_jn_input_b">Paste the invite code you were given into this field.</string>
+    <string name="coach_jn_scan_t">Or scan a QR</string>
+    <string name="coach_jn_scan_b">Point the camera at the other person\'s QR code instead of typing.</string>
+    <string name="coach_jn_connect_t">Enter the chat</string>
+    <string name="coach_jn_connect_b">Tap to connect. You\'ll need a one-time PIN from the other person.</string>
+
+    <string name="ur_block_title">App has been modified</string>
+    <string name="ur_block_desc">This is an unofficial build of ATRUM. Its signature does not match the original.</string>
+    <string name="ur_block_warn">Launch is blocked. A modified version can steal your messages and keys. Do not enter passwords into it.</string>
+    <string name="ur_vibration_note">Vibration cannot be turned off</string>
+    <string name="ur_link_source_title">Official source code</string>
+    <string name="ur_link_source_url">github.com/DimashBeka1215/ATRUM</string>
+    <string name="ur_link_tg_title">Telegram channel</string>
+    <string name="ur_link_tg_url">t.me/Atrum_Chat</string>
+    <string name="ur_link_chat_title">Telegram chat</string>
+    <string name="ur_link_chat_desc">ATRUM community</string>
+    <string name="ur_locked_note">Back button is disabled</string>
+    <string name="ur_btn_uninstall">Uninstall app</string>
+</resources>

@@ -163,6 +163,12 @@ class NostrTransport(
     // Паритет с Legacy (один GET на всё): профили обрабатываются в основном цикле
     // (presence/typing/online, галочки прочтения, имя/аватар, V3-ключ).
 
+    // Мгновенный локальный снимок БЕЗ сети (§1.5) — рендер из долговечного NostrMessageStore.
+    // Может быть пустым (новый/пустой чат) — тогда открытие мгновенно показывает «пусто», а не
+    // ждёт реле. Реакции/профили тут пустые: их подтянет ближайший сетевой тик.
+    override suspend fun loadLocalSnapshotOrNull(): AllChannelData =
+        AllChannelData(NostrMessageStore.render(channelId), "", "")
+
     override suspend fun loadAll(): AllChannelData {
         val events = queryAllRelays(chatFilter())
             ?: return lastGoodAll ?: AllChannelData(NostrMessageStore.render(channelId), "", "")

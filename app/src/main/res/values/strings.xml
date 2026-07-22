@@ -362,6 +362,8 @@
     <string name="group_description_dialog_title">Описание группы</string>
     <string name="tester_item_group_profile_demo">Предпросмотр: профиль группы</string>
     <string name="tester_item_group_profile_demo_desc">Демо-экран (участники, бан, редактирование)</string>
+    <string name="tester_item_block">Показать экран блокировки</string>
+    <string name="tester_item_block_desc">Красный экран + вибрация, выхода нет</string>
     <string name="cc_password_label">Пароль для подключения</string>
     <string name="cc_password_hint">Введите пароль</string>
     <string name="cc_password_helper">Этот пароль нужно передать собеседнику для подключения. Он шифрует все сообщения end-to-end.</string>
@@ -818,7 +820,7 @@
     <string name="sticker_error_not_found">Пак не найден</string>
     <string name="sticker_error_network">Ошибка сети при загрузке стикеров</string>
     <string name="sticker_network_error_title">Проблема с загрузкой</string>
-    <string name="sticker_network_error_message">Не удалось связаться с серверами Telegram. Для приватности мы используем Tor (порт 9050), но в некоторых сетях он может работать нестабильно. Если стикеры не грузятся — попробуйте включить VPN. Telegram видит только ID стикеров и не имеет доступа к вашим ключам или перепискам.</string>
+    <string name="sticker_network_error_message">Не удалось связаться с серверами Telegram. Проверьте интернет, а если Telegram заблокирован в вашей сети — включите VPN. Telegram видит только ID стикеров и не имеет доступа к вашим ключам или перепискам.</string>
 
     <!-- Sticker onboarding -->
     <string name="sticker_onboarding_title">Как добавить стикеры</string>
@@ -1211,6 +1213,23 @@
     <string name="revoke_transition_revoke_desc">Беседа перестаёт признавать ключ и права создателя. С этого момента ей управляет владелец приложения.</string>
     <string name="revoke_transition_restore_desc">Беседа снова признаёт ключ и права создателя. Ему возвращается полное управление.</string>
     <string name="revoke_transition_who">Отозвать или вернуть права создателя может только verified root — владелец с корневым ключом, вшитым в приложение. Подделать невозможно.</string>
+    <string name="group_welcome_title_created">Вы создали беседу</string>
+    <string name="group_welcome_title_joined">Вы вступили в беседу</string>
+    <string name="group_welcome_subtitle">Приватную и защищённую</string>
+    <string name="group_welcome_features_header">Что умеют беседы</string>
+    <string name="group_welcome_f1">Сквозное шифрование на устройстве</string>
+    <string name="group_welcome_f2">Прошлое нечитаемо даже при утечке пароля</string>
+    <string name="group_welcome_f3">Работает без создателя в сети</string>
+    <string name="group_welcome_f4">Подлинность автора — подделать нельзя</string>
+    <string name="group_welcome_f5">Фото, голос, стикеры, реакции, закрепы</string>
+    <string name="group_welcome_f6">Вход по коду или QR, без публичных ссылок</string>
+    <string name="group_welcome_admin_header">Что может администратор</string>
+    <string name="group_welcome_a1">Бан и мут участников</string>
+    <string name="group_welcome_a2">Отдельные права помощникам</string>
+    <string name="group_welcome_a3">Передача владения</string>
+    <string name="group_welcome_ok">Понятно</string>
+    <string name="msg_show_all">Показать всё</string>
+    <string name="msg_collapse">Свернуть</string>
     <string name="admins_no_rights">Без прав</string>
     <string name="admins_no_candidates">Некого назначить</string>
     <string name="admins_pick_title">Кого назначить</string>
@@ -1244,7 +1263,7 @@
     <string name="transfer_owner_yes">Да</string>
     <string name="transfer_owner_yes_timer">Да (%1$d)</string>
     <string name="transfer_owner_done">Право владения передано</string>
-    <string name="transfer_owner_no_key">У участника ещё нет ключа — дождитесь, пока он появится в сети</string>
+    <string name="transfer_owner_no_key">У получателя ещё нет опубликованного identity-ключа. Попросите его один раз открыть этот чат — ключ появится, и передачу можно будет завершить.</string>
     <string name="transfer_owner_error">Не удалось передать права</string>
     <string name="transfer_owner_sent">Предложение отправлено</string>
     <string name="transfer_offer_title">Операция передачи прав</string>
@@ -1262,4 +1281,66 @@
     <string name="pinned_show_all">Закреплённые сообщения</string>
     <string name="pinned_unpin">Открепить</string>
     <string name="pinned_done">Закреплено</string>
-    <string name="unpinned_done">Откреплено</string></resources>
+    <string name="unpinned_done">Откреплено</string>
+
+    <!-- Обучающие подсказки (CoachMark) -->
+    <string name="coach_skip">Пропустить</string>
+    <string name="coach_next">Далее</string>
+    <string name="coach_done">Понятно</string>
+    <!-- Список чатов -->
+    <string name="coach_cl_create_t">Создать чат</string>
+    <string name="coach_cl_create_b">Нажмите «плюс», чтобы создать личный или групповой чат — шифрование и пароль настроятся сами.</string>
+    <string name="coach_cl_profile_t">Ваш профиль</string>
+    <string name="coach_cl_profile_b">Аватар, имя, приватность, тема и уведомления — всё здесь.</string>
+    <string name="coach_cl_search_t">Поиск</string>
+    <string name="coach_cl_search_b">Быстро найдите нужный чат по имени.</string>
+    <!-- Создание чата -->
+    <string name="coach_cc_p2p_t">Личный чат</string>
+    <string name="coach_cc_p2p_b">Защищённый чат один-на-один. После создания вы получите код-приглашение для собеседника.</string>
+    <string name="coach_cc_join_t">Присоединиться</string>
+    <string name="coach_cc_join_b">Уже есть код или QR? Войдите в чужой чат по приглашению.</string>
+    <string name="coach_cc_bt_t">Рядом (Bluetooth)</string>
+    <string name="coach_cc_bt_b">Обмен сообщениями поблизости, без интернета.</string>
+    <!-- Приглашение / QR -->
+    <string name="coach_iq_qr_t">QR-приглашение</string>
+    <string name="coach_iq_qr_b">Дайте собеседнику отсканировать этот код, чтобы войти в чат.</string>
+    <string name="coach_iq_pin_t">Код-пароль</string>
+    <string name="coach_iq_pin_b">Одноразовый пароль для входа. Передайте его отдельно от QR.</string>
+    <string name="coach_iq_save_t">Сохранить в галерею</string>
+    <string name="coach_iq_save_b">Сохранит картинку приглашения в фотогалерею телефона.</string>
+    <string name="coach_iq_copyqr_t">Скопировать QR</string>
+    <string name="coach_iq_copyqr_b">Копирует картинку QR — можно вставить куда угодно.</string>
+    <string name="coach_iq_share_t">Отправить приглашение</string>
+    <string name="coach_iq_share_b">Копирует текст-ссылку. Вставьте в любой мессенджер и отправьте собеседнику.</string>
+    <string name="coach_iq_scan_t">Сканировать</string>
+    <string name="coach_iq_scan_b">Наоборот — отсканируйте чужой код, чтобы присоединиться самому.</string>
+    <!-- Диалог «PIN для приглашения» -->
+    <string name="coach_ip_pin_t">Придумайте PIN</string>
+    <string name="coach_ip_pin_b">Код, который получатель введёт при входе. Придумайте любой.</string>
+    <string name="coach_ip_regen_t">Сгенерировать код</string>
+    <string name="coach_ip_regen_b">Не хотите придумывать — сгенерируйте случайный PIN.</string>
+    <string name="coach_ip_ttl_t">Срок жизни приглашения</string>
+    <string name="coach_ip_ttl_b">Кнопками − и + задайте, сколько часов действует приглашение. После времени «Истекает…» код перестаёт работать.</string>
+    <string name="coach_ip_share_t">Поделиться</string>
+    <string name="coach_ip_share_b">Готово — отправьте приглашение. PIN передайте получателю отдельно.</string>
+    <!-- Присоединение к чату -->
+    <string name="coach_jn_input_t">Вставьте приглашение</string>
+    <string name="coach_jn_input_b">Вставьте код-приглашение, который вам дали, в это поле.</string>
+    <string name="coach_jn_scan_t">Или сканируйте QR</string>
+    <string name="coach_jn_scan_b">Наведите камеру на QR-код собеседника вместо ввода кода.</string>
+    <string name="coach_jn_connect_t">Войти в чат</string>
+    <string name="coach_jn_connect_b">Нажмите, чтобы подключиться. Понадобится одноразовый PIN от собеседника.</string>
+
+    <string name="ur_block_title">Приложение изменено</string>
+    <string name="ur_block_desc">Это неофициальная сборка ATRUM. Подпись не совпадает с оригинальной.</string>
+    <string name="ur_block_warn">Запуск заблокирован. Изменённая версия может похитить ваши сообщения и ключи. Не вводите в неё пароли.</string>
+    <string name="ur_vibration_note">Вибрация не отключается</string>
+    <string name="ur_link_source_title">Официальный исходник</string>
+    <string name="ur_link_source_url">github.com/DimashBeka1215/ATRUM</string>
+    <string name="ur_link_tg_title">Telegram-канал</string>
+    <string name="ur_link_tg_url">t.me/Atrum_Chat</string>
+    <string name="ur_link_chat_title">Telegram-чат</string>
+    <string name="ur_link_chat_desc">Сообщество ATRUM</string>
+    <string name="ur_locked_note">Кнопка «назад» отключена</string>
+    <string name="ur_btn_uninstall">Удалить приложение</string>
+</resources>

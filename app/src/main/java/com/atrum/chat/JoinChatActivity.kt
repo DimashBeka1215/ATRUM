@@ -144,6 +144,18 @@ class JoinChatActivity : SecureActivity() {
                 clearStatus()
             }
         })
+
+        // Обучающие подсказки экрана присоединения (разово, если не автозаход по ссылке).
+        if (incoming.isNullOrBlank()) {
+            CoachMark.show(this, "join_chat", listOf(
+                CoachMark.Step(R.id.et_password, getString(R.string.coach_jn_input_t),
+                    getString(R.string.coach_jn_input_b), iconRes = R.drawable.ic_link),
+                CoachMark.Step(R.id.btn_scan_qr, getString(R.string.coach_jn_scan_t),
+                    getString(R.string.coach_jn_scan_b), iconRes = R.drawable.ic_qr),
+                CoachMark.Step(R.id.btn_connect, getString(R.string.coach_jn_connect_t),
+                    getString(R.string.coach_jn_connect_b), iconRes = R.drawable.ic_lock)
+            ))
+        }
     }
 
     override fun onDestroy() {

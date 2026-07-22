@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Компактная МАТОВАЯ плашка при первом заходе в беседу (мокап одобрен, как в ТГ). Карточка = один
+     LinearLayout, размер СТРОГО по контенту (wrap_content). Фон (матовый блюр области под карточкой +
+     пурпурный тинт) задаётся из кода как LayerDrawable — так дочерние match_parent не раздувают её на
+     весь экран. Здесь фон-плейсхолдер = только тинт (до подстановки блюра). clipToOutline режет по
+     скруглению. Без кнопки — тап скрывает. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/welcome_card"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/bg_group_welcome_tint"
+    android:clipToOutline="true"
+    android:clickable="true"
+    android:focusable="true"
+    android:padding="16dp">
+
+    <TextView
+        android:id="@+id/tv_welcome_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="@string/group_welcome_title_created"
+        android:textColor="@color/white"
+        android:textSize="15sp"
+        android:fontFamily="sans-serif-medium"
+        android:layout_marginBottom="12dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/group_welcome_features_header"
+        android:textColor="#D9FFFFFF"
+        android:textSize="12sp"
+        android:fontFamily="sans-serif-medium"
+        android:layout_marginBottom="4dp" />
+
+    <LinearLayout style="@style/GwRow">
+        <ImageView style="@style/GwIcon" android:src="@drawable/ic_lock" app:tint="@color/white" />
+        <TextView style="@style/GwText" android:text="@string/group_welcome_f1" />
+    </LinearLayout>
+    <LinearLayout style="@style/GwRow">
+        <ImageView style="@style/GwIcon" android:src="@drawable/ic_shield_check" app:tint="@color/white" />
+        <TextView style="@style/GwText" android:text="@string/group_welcome_f2" />
+    </LinearLayout>
+    <LinearLayout style="@style/GwRow">
+        <ImageView style="@style/GwIcon" android:src="@drawable/ic_p2p_network" app:tint="@color/white" />
+        <TextView style="@style/GwText" android:text="@string/group_welcome_f3" />
+    </LinearLayout>
+    <LinearLayout style="@style/GwRow">
+        <ImageView style="@style/GwIcon" android:src="@drawable/ic_shield" app:tint="@color/white" />
+        <TextView style="@style/GwText" android:text="@string/group_welcome_f4" />
+    </LinearLayout>
+    <LinearLayout style="@style/GwRow">
+        <ImageView style="@style/GwIcon" android:src="@drawable/ic_image_outline" app:tint="@color/white" />
+        <TextView style="@style/GwText" android:text="@string/group_welcome_f5" />
+    </LinearLayout>
+    <LinearLayout style="@style/GwRow">
+        <ImageView style="@style/GwIcon" android:src="@drawable/ic_qr" app:tint="@color/white" />
+        <TextView style="@style/GwText" android:text="@string/group_welcome_f6" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/welcome_admin_section"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginTop="12dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/group_welcome_admin_header"
+            android:textColor="#D9FFFFFF"
+            android:textSize="12sp"
+            android:fontFamily="sans-serif-medium"
+            android:layout_marginBottom="4dp" />
+
+        <LinearLayout style="@style/GwRow">
+            <ImageView style="@style/GwIcon" android:src="@drawable/ic_ban" app:tint="@color/white" />
+            <TextView style="@style/GwText" android:text="@string/group_welcome_a1" />
+        </LinearLayout>
+        <LinearLayout style="@style/GwRow">
+            <ImageView style="@style/GwIcon" android:src="@drawable/ic_people" app:tint="@color/white" />
+            <TextView style="@style/GwText" android:text="@string/group_welcome_a2" />
+        </LinearLayout>
+        <LinearLayout style="@style/GwRow">
+            <ImageView style="@style/GwIcon" android:src="@drawable/ic_crown" app:tint="@color/white" />
+            <TextView style="@style/GwText" android:text="@string/group_welcome_a3" />
+        </LinearLayout>
+    </LinearLayout>
+
+</LinearLayout>

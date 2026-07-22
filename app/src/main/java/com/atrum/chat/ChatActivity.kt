@@ -126,6 +126,10 @@ class ChatActivity : SecureActivity() {
 
     /** Coroutine собирающая события syncEngine в процессор данных. */
     private var syncCollectorJob: Job? = null
+    /** Периодический тикер отзыва/владения (revoke.txt/owner.txt) — независим от контента чата. */
+    private var ownerRevokeTickerJob: Job? = null
+    /** Приветственная плашка беседы, пока показана (уходит плавно при первом сообщении). */
+    private var groupWelcomeCard: android.view.View? = null
 
     /**
      * Лёгкий ре-рид ЛОКАЛЬНОГО чата (Избранное / системный «Уведомления»). Эти чаты не
@@ -1437,6 +1441,13 @@ class ChatActivity : SecureActivity() {
         // В ответ мы делаем forceSync(0L): SyncEngine немедленно читает канал и обновляет UI.
         transportWatch = transport.watchMessages {
             syncEngine.forceSync(0L)
+            // Push события revoke.txt → применяем отзыв/возврат создателя СРАЗУ (мгновенно, как мут),
+            // не дожидаясь 2.5с-тикера. consumeRevokeDirty сбрасывает флаг → тикер не прочитает дважды;
+            // lastRevokeCheckMs держит его 12с-гейт. Идемпотентно (анти-откат), гонки безопасны.
+            if (::chat.isInitialized && chat.isGroup && transport.consumeRevokeDirty()) {
+                lastRevokeCheckMs = System.currentTimeMillis()
+                lifecycleScope.launch { runCatching { readAndApplyRevokes() } }
+            }
         }
         // watchProfiles специфичен для Nostr: мгновенное обновление presence/typing собеседника.
         profilesWatch = transport.watchProfiles { content ->
@@ -1458,7 +1469,14 @@ class ChatActivity : SecureActivity() {
                 }
                 currentMessages = messages
                 adapter.submit(messages)
-                
+
+                // Приветственная плашка беседы: показываем пока беседа ПУСТА, плавно убираем при
+                // первом сообщении (своём или чужом). Только беседы, только пока не показывали.
+                if (::chat.isInitialized && chat.isGroup && !prefs.isGroupWelcomeShown(chat.chatId)) {
+                    if (messages.isEmpty()) maybeShowGroupWelcome()
+                    else if (groupWelcomeCard != null) dismissGroupWelcome()
+                }
+
                 // Раскрываем чат, если есть данные.
                 if (messages.isNotEmpty() || (contentLoaded && chatStore.lastRemote.isEmpty())) {
                     binding.rvMessages.post { maybeReveal() }
@@ -2154,6 +2172,27 @@ class ChatActivity : SecureActivity() {
         // и при открытии, и при возврате (startPolling — из onCreate и onResume). Для
         // локального чата warmUp() — no-op. См. ChatTransport.warmUp / NostrTransport.warmUp.
         if (::transport.isInitialized) transport.warmUp()
+
+        // Мгновенный показ из ДОЛГОВЕЧНОГО локального стора (§1.5): не ждём первого сетевого
+        // чтения. Nostr/реле медленны на холодном старте, а ПУСТОЙ чат вообще ждал сеть просто
+        // чтобы подтвердить «пусто» — отсюда ощущение «грузится долго, хотя грузить нечего».
+        // Рендер с диска синхронный; сеть обновит на месте следующим тиком (§1.5, без мерцания —
+        // дедуп по контенту). Если кэш этой сессии уже показал чат (firstLoadComplete) — пропускаем.
+        if (::transport.isInitialized && !firstLoadComplete && !chat.isFavorites) {
+            lifecycleScope.launch {
+                val local = withContext(Dispatchers.IO) { runCatching { transport.loadLocalSnapshotOrNull() }.getOrNull() }
+                if (local != null && !firstLoadComplete) {
+                    runCatching { processChannelData(local) }
+                    // Пустой локальный контент мог не снять оверлей через коллектор сообщений —
+                    // снимаем явно, чтобы пустой чат открывался мгновенно, а не ждал сеть.
+                    if (!firstLoadComplete) {
+                        firstLoadComplete = true
+                        revealMessages()
+                    }
+                }
+            }
+        }
+
         if (chat.isFavorites) {
             // Локальный чат (Избранное / «Уведомления»): сети нет, но файл на диске
             // меняется извне (SystemNotifications). Лёгкий ре-рид: первый проход снимает
@@ -2184,6 +2223,32 @@ class ChatActivity : SecureActivity() {
         syncCollectorJob = lifecycleScope.launch {
             syncEngine.events.collect { data ->
                 processChannelData(data)
+            }
+        }
+
+        // Отзыв/возврат создателя (revoke.txt) и передача владения (owner.txt) читают ОТДЕЛЬНЫЕ
+        // файлы, а не контент чата. SyncEngine вызывает processChannelData только при изменении
+        // контента (304 → пропуск), поэтому в простаивающем чате отзыв применялся лишь при
+        // следующем сообщении/перезаходе. Свой лёгкий тикер решает это: он крутится независимо
+        // от контента; внутренние гейты (push/12с у revoke, 30с у owner) делают его почти
+        // бесплатным (в большинстве тиков — мгновенный no-op без сети). Только для бесед.
+        ownerRevokeTickerJob?.cancel()
+        ownerRevokeTickerJob = lifecycleScope.launch {
+            while (isActive) {
+                if (::chat.isInitialized && chat.isGroup) {
+                    // Отложенная перезагрузка после принятия передачи владения в TransferOfferActivity:
+                    // пересоздаём ПОКА окно передачи ещё сверху → чат грузится ЗА окном (§1.5), без
+                    // отдельного экрана загрузки после. onResume — запасной путь, если recreate в
+                    // stopped-состоянии отложится. Сбрасываем флаг, чтобы не пересоздать дважды.
+                    if (pendingOwnerReloadChatId == chat.id) {
+                        pendingOwnerReloadChatId = -1L
+                        withContext(Dispatchers.Main) { runCatching { recreate() } }
+                        return@launch
+                    }
+                    runCatching { syncOwnerCerts() }
+                    runCatching { syncRevokes() }
+                }
+                delay(2500L)
             }
         }
     }
@@ -2589,12 +2654,11 @@ class ChatActivity : SecureActivity() {
             // при любой ошибке подписи просто нет (UNSIGNED), см. syncMessageAuth.
             runCatching { syncMessageAuth() }
 
-            // Передача владения (ADR §10): применяем цепочку сертификатов из owner.txt.
-            // Пока никто не передавал владение — owner.txt пуст и это no-op. Best-effort.
-            runCatching { syncOwnerCerts() }
-
-            // Отзыв/возврат создателя root'ом (RevokeSync): применяем revoke.txt. Пусто — no-op.
-            runCatching { syncRevokes() }
+            // Передача владения (owner.txt) и отзыв/возврат создателя (revoke.txt) вынесены в
+            // отдельный ownerRevokeTicker (см. startPolling): они читают ОТДЕЛЬНЫЕ файлы, а не
+            // контент чата, а processChannelData вызывается лишь при изменении контента (304 →
+            // пропуск). В простаивающем чате здесь они бы не срабатывали (репорт: «вторая попытка
+            // забрать права — только через перезаход»).
 
             // Кэш числа активных участников для presence-тикера (см. applyGroupPresence) —
             // обновляем раз за опрос, а не на каждый тик (~1с), чтобы не дёргать Room. Тот
@@ -3460,6 +3524,17 @@ class ChatActivity : SecureActivity() {
         val pushed = !firstOpen && transport.consumeRevokeDirty()
         if (!firstOpen && !pushed && now - lastRevokeCheckMs < 12_000L) return
         lastRevokeCheckMs = now
+        readAndApplyRevokes()
+    }
+
+    /**
+     * Чтение revoke.txt + применение (без гейтинга по интервалу). Зовётся тикером [syncRevokes]
+     * (страховка/простой) И НАПРЯМУЮ по push-событию revoke.txt (watchMessages callback) — чтобы
+     * отзыв/возврат применялся push-МГНОВЕННО, как мут, а не ждал 2.5с-тикер. Идемпотентно
+     * (RevokeSync.applyRevokes — анти-откат по ts), поэтому двойной вызов безопасен.
+     */
+    private suspend fun readAndApplyRevokes() {
+        if (!::chat.isInitialized || !chat.isGroup) return
         runCatching {
             val rawBlob = withContext(Dispatchers.IO) { transport.loadRevokes() }.trim()
             if (rawBlob.isEmpty()) return
@@ -3473,14 +3548,98 @@ class ChatActivity : SecureActivity() {
                 val wasRevoke = withContext(Dispatchers.IO) { db.chatDao().getById(chat.id)?.adminUserId }.isNullOrBlank()
                 withContext(Dispatchers.Main) {
                     runCatching {
+                        // Окно перехода поверх, а чат СРАЗУ перезагружается ПОД ним (recreate).
                         startActivity(android.content.Intent(this@ChatActivity, RevokeTransitionActivity::class.java).apply {
                             putExtra(RevokeTransitionActivity.EXTRA_CHAT_ID, chat.id)
                             putExtra(RevokeTransitionActivity.EXTRA_REVOKE, wasRevoke)
                         })
+                        recreate()
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Приветственная плашка беседы (view_group_welcome, мокап одобрен) — один раз при первом заходе
+     * (флаг в prefs). Glass поверх обоев: возможности бесед + права администратора (раздел прав —
+     * только у создателя). Закрывается «Понятно»; тап по затемнению поглощается (не проваливается в чат).
+     */
+    private fun maybeShowGroupWelcome() {
+        if (!::chat.isInitialized || !chat.isGroup) return
+        if (prefs.isGroupWelcomeShown(chat.chatId)) return
+        if (groupWelcomeCard != null) return // уже показана
+        if (currentMessages.isNotEmpty()) return // беседа не пуста — плашка не нужна
+        val contentRoot = findViewById<android.view.ViewGroup>(android.R.id.content) ?: return
+        // Снимок чата ДО добавления карточки — иначе блюр захватил бы саму карточку.
+        val snapshot = ScreenBlur.capture(this, radius = 10)
+        val card = layoutInflater.inflate(R.layout.view_group_welcome, contentRoot, false)
+        val amCreator = !chat.adminUserId.isNullOrBlank() && chat.adminUserId == prefs.myUserId
+        card.findViewById<TextView>(R.id.tv_welcome_title).setText(
+            if (amCreator) R.string.group_welcome_title_created else R.string.group_welcome_title_joined
+        )
+        card.findViewById<View>(R.id.welcome_admin_section).visibility =
+            if (amCreator) View.VISIBLE else View.GONE
+        // Тап по карточке НЕ закрывает (clickable=true в layout поглощает тап) — уходит только при
+        // первом сообщении (см. коллектор сообщений → dismissGroupWelcome), плавно.
+        groupWelcomeCard = card
+        card.alpha = 0f // проявится входной анимацией (после позиционирования и блюра в post)
+        // Позиция по центру чата. Сообщение не «застревает» под плашкой, потому что скрытие
+        // плашки привязано к моменту появления первого сообщения (см. коллектор → dismissGroupWelcome):
+        // плашка гаснет в тот же кадр, что и приходит сообщение → кроссфейд, а не статичное перекрытие.
+        val lp = android.widget.FrameLayout.LayoutParams(
+            (resources.displayMetrics.widthPixels * 0.86f).toInt(),
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.view.Gravity.CENTER
+        )
+        contentRoot.addView(card, lp)
+        card.post {
+            runCatching {
+                // Матовый блюр области ПОД карточкой (как в ТГ, только за ней).
+                if (snapshot != null) {
+                    val loc = IntArray(2); card.getLocationOnScreen(loc)
+                    val x = loc[0].coerceIn(0, (snapshot.width - 1).coerceAtLeast(0))
+                    val y = loc[1].coerceIn(0, (snapshot.height - 1).coerceAtLeast(0))
+                    val w = card.width.coerceAtMost(snapshot.width - x)
+                    val h = card.height.coerceAtMost(snapshot.height - y)
+                    if (w > 0 && h > 0) {
+                        val cropped = android.graphics.Bitmap.createBitmap(snapshot, x, y, w, h)
+                        val blurD = android.graphics.drawable.BitmapDrawable(resources, cropped)
+                        val tintD = androidx.core.content.ContextCompat.getDrawable(this, R.drawable.bg_group_welcome_tint)
+                        card.background = android.graphics.drawable.LayerDrawable(arrayOf(blurD, tintD))
+                    }
+                }
+                // Входная анимация (зеркально уходу): проявляется + чуть увеличивается + мягко
+                // «опускается» на место сверху, ~380 мс. Больше не появляется резко.
+                card.pivotX = card.width / 2f
+                card.pivotY = card.height / 2f
+                card.scaleX = 0.94f; card.scaleY = 0.94f
+                card.translationY = -card.height * 0.14f
+                card.animate()
+                    .alpha(1f).scaleX(1f).scaleY(1f).translationY(0f)
+                    .setDuration(380)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator(1.4f))
+                    .start()
+            }
+        }
+    }
+
+    /** Плавно убирает приветственную плашку беседы (при первом сообщении): гаснет + чуть уменьшается
+     *  + мягко оседает, ~450 мс. После — удаляет вью и ставит флаг «показано» (больше не появится). */
+    private fun dismissGroupWelcome() {
+        val card = groupWelcomeCard ?: return
+        groupWelcomeCard = null
+        if (::chat.isInitialized) prefs.setGroupWelcomeShown(chat.chatId)
+        card.pivotX = card.width / 2f
+        card.pivotY = card.height / 2f
+        card.animate()
+            .alpha(0f)
+            .scaleX(0.94f).scaleY(0.94f)
+            .translationY(-card.height * 0.14f) // приподнимается вверх, освобождая ленту
+            .setDuration(380)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(1.4f))
+            .withEndAction { (card.parent as? android.view.ViewGroup)?.removeView(card) }
+            .start()
     }
 
     private fun encryptChatLine(plaintext: String, chatId: String): String =

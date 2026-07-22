@@ -20,6 +20,11 @@ class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        appCtx = applicationContext
+        if (BuildInfo.isTampered(this)) {
+            UpdateRequiredActivity.launch(this)
+            return
+        }
         ImageCache.init(this)
         ChatSnapshotCache.init(this)
         com.atrum.chat.transport.NostrMessageStore.init(this)
@@ -136,6 +141,9 @@ class App : Application() {
         /** true пока хотя бы один экран на переднем плане. Фоновый сервис пушей по
          *  этому флагу НЕ опрашивает сеть, пока приложение открыто. */
         @Volatile var inForeground: Boolean = false
+
+        /** Глобальный app-контекст для не-Activity кода. Ставится первым делом в onCreate. */
+        @Volatile var appCtx: android.content.Context? = null
 
         /** chatId открытого сейчас чата (или null). Фоновый синк членделения групп
          *  пропускает его — этот чат и так поллится своим ChatActivity (1с), а лишний

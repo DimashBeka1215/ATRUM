@@ -25,12 +25,9 @@ class RevokeTransitionActivity : AppCompatActivity() {
         private const val FINISH_DELAY_MS = 4800L
     }
 
-    private var chatRoomId: Long = -1L
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_revoke_transition)
-        chatRoomId = intent.getLongExtra(EXTRA_CHAT_ID, -1L)
         val revoke = intent.getBooleanExtra(EXTRA_REVOKE, true)
 
         val icon = findViewById<ImageView>(R.id.iv_icon)
@@ -58,12 +55,10 @@ class RevokeTransitionActivity : AppCompatActivity() {
             start()
         }
 
-        // По окончании — просим открытый чат перезайти (пересоздать транспорт с новым adminUserId)
-        // и закрываемся: человек попадает в уже прогруженную беседу.
-        pb.postDelayed({
-            if (chatRoomId >= 0L) ChatActivity.pendingOwnerReloadChatId = chatRoomId
-            finish()
-        }, FINISH_DELAY_MS)
+        // Перезагрузку чата НЕ дёргаем отсюда: ChatActivity уже вызвал recreate() при запуске
+        // этого окна, и беседа грузится ПОД ним, пока идёт анимация. По окончании просто
+        // закрываемся — человек попадает в уже прогруженный чат, без отдельного экрана загрузки.
+        pb.postDelayed({ finish() }, FINISH_DELAY_MS)
     }
 
     /** Назад во время перехода не закрываем «в пустоту» — ждём завершения полосы. */

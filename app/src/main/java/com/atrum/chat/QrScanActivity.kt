@@ -5,12 +5,15 @@ import android.content.pm.PackageManager
 import android.hardware.camera2.CaptureRequest
 import android.os.Bundle
 import android.util.Size
+import android.view.MotionEvent
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
@@ -24,6 +27,7 @@ import com.google.zxing.MultiFormatReader
 import com.google.zxing.PlanarYUVLuminanceSource
 import com.google.zxing.common.HybridBinarizer
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -114,11 +118,31 @@ class QrScanActivity : AppCompatActivity() {
 
             runCatching {
                 provider.unbindAll()
-                provider.bindToLifecycle(
+                val camera = provider.bindToLifecycle(
                     this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis
                 )
+                setupTapToFocus(camera)
             }.onFailure { finish() }
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    /**
+     * Тап по превью — ручная наводка фокуса на точку касания. Непрерывный автофокус
+     * (CONTINUOUS_PICTURE) иногда «плавает» и долго не ловит резкость на близком QR; тап даёт
+     * пользователю мгновенно навести фокус туда, где код, и заметно ускоряет распознавание.
+     */
+    private fun setupTapToFocus(camera: Camera) {
+        binding.previewView.setOnTouchListener { v, e ->
+            if (e.action == MotionEvent.ACTION_UP) {
+                val point = binding.previewView.meteringPointFactory.createPoint(e.x, e.y)
+                val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF)
+                    .setAutoCancelDuration(3, TimeUnit.SECONDS)
+                    .build()
+                runCatching { camera.cameraControl.startFocusAndMetering(action) }
+                v.performClick()
+            }
+            true
+        }
     }
 
     /**
@@ -142,16 +166,32 @@ class QrScanActivity : AppCompatActivity() {
         }
     }
 
+    /** Переиспользуемый буфер Y-плоскости кадра — чтобы не аллоцировать ~1 МБ на КАЖДЫЙ кадр
+     *  (иначе постоянные GC-паузы дёргают анализ и скан «залипает»). Растёт только при
+     *  необходимости; декод синхронный на одном потоке, поэтому переиспользование безопасно. */
+    private var frameBuf = ByteArray(0)
+
     private fun decode(proxy: ImageProxy) {
         if (handled.get()) { proxy.close(); return }
         try {
             val plane = proxy.planes.firstOrNull() ?: return
             val buffer = plane.buffer
-            val data = ByteArray(buffer.remaining())
-            buffer.get(data)
+            val need = buffer.remaining()
+            if (frameBuf.size < need) frameBuf = ByteArray(need)
+            val data = frameBuf
+            buffer.get(data, 0, need)
             val w = proxy.width
             val h = proxy.height
-            val source = PlanarYUVLuminanceSource(data, plane.rowStride, h, 0, 0, w.coerceAtMost(plane.rowStride), h, false)
+            // Декодим ТОЛЬКО центральный квадрат кадра, а не всю картинку 1280×720. Пользователь
+            // наводит QR в центральное окно сканера (ScanOverlayView, сторона 0.62 экрана), поэтому
+            // код всегда в центре кадра. Кроп ~70% отбрасывает >50% пикселей → ZXing (с TRY_HARDER)
+            // бинаризует и ищет finder-паттерны на порядок быстрее, и не отвлекается на фон.
+            // Это и есть причина «безумно долгого» скана: раньше тяжёлый декод гонялся по всему кадру.
+            val wClamped = w.coerceAtMost(plane.rowStride)
+            val side = (minOf(wClamped, h) * 7 / 10).coerceAtLeast(2)
+            val left = (wClamped - side) / 2
+            val top = (h - side) / 2
+            val source = PlanarYUVLuminanceSource(data, plane.rowStride, h, left, top, side, side, false)
             val bitmap = BinaryBitmap(HybridBinarizer(source))
             val result = try {
                 reader.decodeWithState(bitmap)

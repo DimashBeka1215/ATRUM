@@ -481,6 +481,29 @@ class Prefs(private val context: Context) {
         prefs.edit().putBoolean("admin_signing_seen_$chatId", true).apply()
     }
 
+    /** Показана ли приветственная плашка беседы (разовая, при первом заходе). */
+    fun isGroupWelcomeShown(chatId: String): Boolean =
+        prefs.getBoolean("group_welcome_$chatId", false)
+
+    fun setGroupWelcomeShown(chatId: String) {
+        prefs.edit().putBoolean("group_welcome_$chatId", true).apply()
+    }
+
+    // ─── Обучающие подсказки (CoachMark), разово на каждый тур ────────────────────
+    /** Показан ли обучающий тур [key] (например «chats_list», «create_chat»). */
+    fun isCoachShown(key: String): Boolean = prefs.getBoolean("coach_$key", false)
+
+    fun setCoachShown(key: String) {
+        prefs.edit().putBoolean("coach_$key", true).apply()
+    }
+
+    /** Сбросить все обучающие подсказки — чтобы показать обучение заново (настройка). */
+    fun resetAllCoach() {
+        val ed = prefs.edit()
+        for (k in prefs.all.keys) if (k.startsWith("coach_")) ed.remove(k)
+        ed.apply()
+    }
+
     // ─── Отзыв создателя verified-root'ом (RevokeSync, обратимо) ──────────────────
     // Локальное применённое состояние отзыва на чат: JSON userId → {r:Bool, ts:Long, idk:String}.
     // Анти-откат по ts (принимаем только строго новее применённого). Используется для очистки

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Полупрозрачный пурпурный тинт поверх матового блюра (как в ТГ). Блюр читается сквозь него. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:startColor="#B34A2578"
+        android:endColor="#B32A1544"
+        android:angle="135" />
+    <corners android:radius="16dp" />
+    <stroke android:width="1dp" android:color="#26FFFFFF" />
+</shape>

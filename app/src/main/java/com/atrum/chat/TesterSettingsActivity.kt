@@ -43,9 +43,14 @@ class TesterSettingsActivity : SecureActivity() {
             )
         }
 
+        binding.itemBlockPreview.setOnClickListener {
+            UpdateRequiredActivity.launch(this)
+        }
+
         binding.itemScreenshots.visibility = View.VISIBLE
         binding.itemCrash.visibility = View.VISIBLE
         binding.itemGroupProfileDemo.visibility = View.VISIBLE
+        binding.itemBlockPreview.visibility = View.VISIBLE
     }
 
     private fun showCrashConfirmDialog() {

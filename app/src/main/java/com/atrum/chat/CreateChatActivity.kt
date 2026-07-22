@@ -240,6 +240,19 @@ class CreateChatActivity : SecureActivity() {
         startAvatarAnimations()
 
         showScreen(Screen.CHOICE)
+        maybeShowCoach()
+    }
+
+    /** Обучающие подсказки экрана выбора (разово): создать / присоединиться / рядом. */
+    private fun maybeShowCoach() {
+        CoachMark.show(this, "create_chat", listOf(
+            CoachMark.Step(R.id.card_p2p, getString(R.string.coach_cc_p2p_t),
+                getString(R.string.coach_cc_p2p_b), iconRes = R.drawable.ic_person),
+            CoachMark.Step(R.id.card_join, getString(R.string.coach_cc_join_t),
+                getString(R.string.coach_cc_join_b), iconRes = R.drawable.ic_link),
+            CoachMark.Step(R.id.card_bt, getString(R.string.coach_cc_bt_t),
+                getString(R.string.coach_cc_bt_b), iconRes = R.drawable.ic_bluetooth)
+        ))
     }
 
     override fun onBackPressed() {
@@ -271,25 +284,18 @@ class CreateChatActivity : SecureActivity() {
     // ═══ Avatar animations ═══
 
     private fun startAvatarAnimations() {
-        // Желе-эффект: scaleX и scaleY анимируются в противофазе —
-        // когда рамка растягивается по X, она сжимается по Y, и наоборот.
-        val jellyX = ObjectAnimator.ofFloat(
-            binding.flAvatarGlow, View.SCALE_X,
-            1f, 1.07f, 0.95f, 1.04f, 0.98f, 1f
+        // Медленное вращение неон-кольца портала вокруг аватара (как в окне приглашения,
+        // JoinChatActivity.startPortalAnimation). Аватар в центре неподвижен. 20с, линейно.
+        val rotate = android.view.animation.RotateAnimation(
+            0f, 360f,
+            android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f,
+            android.view.animation.Animation.RELATIVE_TO_SELF, 0.5f
         ).apply {
-            duration = 2_200
-            repeatCount = ObjectAnimator.INFINITE
-            interpolator = AccelerateDecelerateInterpolator()
+            duration = 20_000
+            repeatCount = android.view.animation.Animation.INFINITE
+            interpolator = android.view.animation.LinearInterpolator()
         }
-        val jellyY = ObjectAnimator.ofFloat(
-            binding.flAvatarGlow, View.SCALE_Y,
-            1f, 0.95f, 1.07f, 0.98f, 1.04f, 1f
-        ).apply {
-            duration = 2_200
-            repeatCount = ObjectAnimator.INFINITE
-            interpolator = AccelerateDecelerateInterpolator()
-        }
-        AnimatorSet().apply { playTogether(jellyX, jellyY); start() }
+        binding.ivAvatarPortal.startAnimation(rotate)
 
         // Fade-in при входе на экран
         binding.flAvatarContainer.alpha = 0f

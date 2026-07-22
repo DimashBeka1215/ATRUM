@@ -455,6 +455,7 @@ object CryptoHelper {
      * Вызывать из ChatActivity после успешного ECDH-рукопожатия.
      */
     fun setSessionKey(chatId: String, key: ByteArray) {
+        App.appCtx?.let { c -> if (BuildInfo.isTampered(c)) UpdateRequiredActivity.launch(c) }
         synchronized(sessionKeysLock) {
             val ring = sessionKeys.getOrPut(chatId) { ArrayDeque() }
             if (ring.isNotEmpty() && ring.first().contentEquals(key)) return  // уже текущий

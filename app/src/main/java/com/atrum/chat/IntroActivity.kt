@@ -71,6 +71,12 @@ class IntroActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
 
+        if (BuildInfo.isTampered(this)) {
+            UpdateRequiredActivity.launch(this)
+            finish()
+            return
+        }
+
         // EULA — самая первая проверка, до intro и всего остального
         if (!prefs.eulaAccepted) {
             startActivity(Intent(this, EulaActivity::class.java))

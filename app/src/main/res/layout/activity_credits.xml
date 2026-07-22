@@ -129,7 +129,8 @@
                 android:orientation="vertical"
                 android:background="@drawable/bg_credits_list_card"
                 android:layout_marginBottom="16dp"
-                android:clipToPadding="true" />
+                android:clipChildren="false"
+                android:clipToPadding="false" />
 
             <!-- FOOTER: Хочешь попасть сюда? -->
             <LinearLayout
