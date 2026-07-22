@@ -153,8 +153,12 @@ object TorSyncWatchdog {
             appendLine("  полный стектрейс:")
             append(t.stackTraceToString())
         }
+        // Диагностику пишем в логи (logcat) — как и задумывалось, «чтобы сразу был лог».
+        // НО больше НЕ показываем CrashActivity: это была отладочная мера для поиска проблем
+        // Tor, вылеты по ней больше не нужны (тем более срабатывали и при выключенном Tor,
+        // т.к. watchdog армится по типу чата isTorChat(), а не по факту работы движка).
         println(full)
-        runCatching { CrashHandler.report(context, "Tor-чат: синхронизация не по сценарию ($step)", t) }
+        android.util.Log.w("ATRUM_TOR_SYNC", full)
         session.timeoutJob?.cancel()
         if (current === session) current = null
     }

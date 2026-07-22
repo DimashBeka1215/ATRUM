@@ -211,41 +211,14 @@ class ChatsListActivity : SecureActivity() {
         cleanupExpiredChats()
     }
 
-    /** Обновляет баннер статуса Tor (подключение / подключено / недоступно). */
+    /**
+     * Баннер статуса Tor в списке чатов СКРЫТ во всех состояниях (по просьбе пользователя):
+     * Tor-режим отключён, плашка «Подключение к Tor…»/«Tor недоступен» только зашумляла список.
+     * Держим баннер всегда GONE независимо от статуса движка. Коллектор статуса оставлен, чтобы
+     * поведение легко было вернуть при необходимости (достаточно снова разветвить по [status]).
+     */
     private fun updateTorBanner(status: TorManager.TorStatus) {
-        val banner = binding.torStatusBanner
-        when (status) {
-            TorManager.TorStatus.IDLE -> banner.visibility = View.GONE
-            TorManager.TorStatus.CONNECTING -> {
-                banner.visibility = View.VISIBLE
-                binding.torSpinner.visibility = View.VISIBLE
-                binding.torIcon.visibility = View.GONE
-                binding.torStatusText.setText(R.string.tor_connecting)
-                binding.torStatusText.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
-            }
-            TorManager.TorStatus.READY -> {
-                banner.visibility = View.VISIBLE
-                binding.torSpinner.visibility = View.GONE
-                binding.torIcon.visibility = View.VISIBLE
-                binding.torIcon.setImageResource(R.drawable.ic_shield_check)
-                binding.torIcon.imageTintList =
-                    ColorStateList.valueOf(ContextCompat.getColor(this, R.color.accent))
-                binding.torStatusText.setText(R.string.tor_connected)
-                binding.torStatusText.setTextColor(ContextCompat.getColor(this, R.color.accent))
-                // Авто-скрытие через 1.5 с после готовности.
-                banner.postDelayed({ banner.visibility = View.GONE }, 1500L)
-            }
-            TorManager.TorStatus.FAILED -> {
-                banner.visibility = View.VISIBLE
-                binding.torSpinner.visibility = View.GONE
-                binding.torIcon.visibility = View.VISIBLE
-                binding.torIcon.setImageResource(R.drawable.ic_warning)
-                binding.torIcon.imageTintList =
-                    ColorStateList.valueOf(ContextCompat.getColor(this, R.color.error))
-                binding.torStatusText.setText(R.string.tor_failed)
-                binding.torStatusText.setTextColor(ContextCompat.getColor(this, R.color.error))
-            }
-        }
+        binding.torStatusBanner.visibility = View.GONE
     }
 
     /**

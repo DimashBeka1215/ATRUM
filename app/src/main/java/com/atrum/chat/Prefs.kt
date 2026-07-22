@@ -489,6 +489,15 @@ class Prefs(private val context: Context) {
         prefs.edit().putBoolean("group_welcome_$chatId", true).apply()
     }
 
+    /** Создал ли группу именно я (записывается при создании — надёжнее, чем сравнение с
+     *  adminUserId, который у джойнера до синка ростера может быть неверным). */
+    fun isGroupCreatedByMe(chatId: String): Boolean =
+        prefs.getBoolean("group_created_by_me_$chatId", false)
+
+    fun setGroupCreatedByMe(chatId: String) {
+        prefs.edit().putBoolean("group_created_by_me_$chatId", true).apply()
+    }
+
     // ─── Обучающие подсказки (CoachMark), разово на каждый тур ────────────────────
     /** Показан ли обучающий тур [key] (например «chats_list», «create_chat»). */
     fun isCoachShown(key: String): Boolean = prefs.getBoolean("coach_$key", false)

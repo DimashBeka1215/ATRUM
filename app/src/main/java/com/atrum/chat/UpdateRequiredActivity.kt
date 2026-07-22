@@ -55,12 +55,19 @@ class UpdateRequiredActivity : AppCompatActivity() {
     }
 
     private fun requestUninstall() {
-        try {
-            startActivity(
-                Intent(Intent.ACTION_DELETE, android.net.Uri.parse("package:$packageName"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-        } catch (_: Throwable) {
+        val uri = android.net.Uri.parse("package:$packageName")
+        val chain = listOf(
+            Intent(Intent.ACTION_UNINSTALL_PACKAGE, uri).putExtra(Intent.EXTRA_RETURN_RESULT, false),
+            Intent(Intent.ACTION_DELETE, uri),
+            Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, uri)
+        )
+        for (intent in chain) {
+            try {
+                startActivity(intent)
+                return
+            } catch (_: Throwable) {
+                // пробуем следующий способ
+            }
         }
     }
 

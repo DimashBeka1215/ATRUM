@@ -62,8 +62,12 @@ class OnboardingActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.error_empty_tag, Toast.LENGTH_SHORT).show()
             return
         }
+        val normTag = TagUtils.normalize(tag) ?: run {
+            Toast.makeText(this, R.string.settings_tag_invalid, Toast.LENGTH_SHORT).show()
+            return
+        }
         prefs.myName = name
-        prefs.myTag = tag
+        prefs.myTag = normTag
         prefs.myUserId
         showStep2()
     }

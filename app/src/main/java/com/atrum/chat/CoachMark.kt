@@ -13,6 +13,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -104,6 +105,10 @@ object CoachMark {
 
         // Текущая геометрия (в координатах оверлея)
         private var cardBelow = true   // карточка ниже цели (стрелка сверху) или выше (стрелка снизу)
+
+        // Перепозиционируем карточку при КАЖДОЙ раскладке дерева: цель может появиться/сместиться
+        // позже (insets, входная анимация, первый заход) — иначе карточка «слетает» от подсветки.
+        private val relayoutListener = ViewTreeObserver.OnGlobalLayoutListener { positionCard() }
 
         /** Прямоугольник подсветки цели в координатах оверлея — вычисляется по требованию
          *  (после layout), чтобы getLocationInWindow вернул верные координаты. */
@@ -226,6 +231,12 @@ object CoachMark {
             setOnClickListener { next() }
 
             bindStep()
+            viewTreeObserver.addOnGlobalLayoutListener(relayoutListener)
+        }
+
+        override fun onDetachedFromWindow() {
+            viewTreeObserver.removeOnGlobalLayoutListener(relayoutListener)
+            super.onDetachedFromWindow()
         }
 
         private fun next() {
@@ -290,10 +301,12 @@ object CoachMark {
 
             val lp = card.layoutParams as LayoutParams
             val s = currentSpot()
+            val newLeft: Int
+            val newTop: Int
             if (s == null) {
                 // Обзорный шаг — карточка по центру.
-                lp.leftMargin = ((vw - cardW) / 2f).toInt()
-                lp.topMargin = ((vh - cardH) / 2f).toInt()
+                newLeft = ((vw - cardW) / 2f).toInt()
+                newTop = ((vh - cardH) / 2f).toInt()
                 cardBelow = true
             } else {
                 // По горизонтали центрируем над целью, но держим в пределах экрана.
@@ -304,10 +317,16 @@ object CoachMark {
                 val below = s.bottom + gap + cardH + margin <= vh
                 cardBelow = below
                 val top = if (below) s.bottom + gap else s.top - gap - cardH
-                lp.leftMargin = left.toInt()
-                lp.topMargin = top.coerceIn(margin, vh - margin - cardH).toInt()
+                newLeft = left.toInt()
+                newTop = top.coerceIn(margin, vh - margin - cardH).toInt()
             }
-            card.layoutParams = lp
+            // Применяем только при изменении — иначе setLayoutParams зациклит OnGlobalLayout.
+            if (lp.leftMargin != newLeft || lp.topMargin != newTop) {
+                lp.leftMargin = newLeft
+                lp.topMargin = newTop
+                card.layoutParams = lp
+            }
+            invalidate()
         }
 
         override fun onDraw(canvas: Canvas) {

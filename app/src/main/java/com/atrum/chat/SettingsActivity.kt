@@ -487,16 +487,10 @@ class SettingsActivity : SecureActivity() {
     }
 
     private fun saveTagNow(newTag: String) {
-        // Пробелы → подчёркивания, лишние пробелы по краям убираем
-        val cleaned = newTag.trim().replace(" ", "_")
-
-        // @ обязателен в начале — без него тег не принимается
-        if (!cleaned.startsWith("@")) {
-            Toast.makeText(this, getString(R.string.settings_tag_no_at), Toast.LENGTH_SHORT).show()
+        val formattedTag = TagUtils.normalize(newTag) ?: run {
+            Toast.makeText(this, getString(R.string.settings_tag_invalid), Toast.LENGTH_SHORT).show()
             return
         }
-
-        val formattedTag = cleaned
         if (prefs.myTag == formattedTag) return
 
         prefs.myTag = formattedTag

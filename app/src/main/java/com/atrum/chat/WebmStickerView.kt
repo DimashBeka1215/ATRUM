@@ -213,8 +213,9 @@ class WebmStickerView @JvmOverloads constructor(
             // 1. Настоящий MediaCodec-декод — кадры + родная задержка (длительность/кадры).
             val raw = WebmFrameDecoder.decode(file, TARGET_SIZE, MAX_FRAMES)
             if (raw != null && raw.first.isNotEmpty()) {
+                val doKey = shouldKey(raw.first)
                 val out = ArrayList<Bitmap>(raw.first.size)
-                for (b in raw.first) out.add(keyOut(b))
+                for (b in raw.first) out.add(if (doKey) keyOut(b) else b)
                 // Срезаем почти-прозрачные кадры по краям — это они давали вспышку на стыке петли.
                 val frames = trimBlankEnds(out)
                 val sf = StickerFrames(frames, raw.second)
@@ -229,17 +230,20 @@ class WebmStickerView @JvmOverloads constructor(
                 retriever.setDataSource(file.absolutePath)
                 val durUs = ((retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                     ?.toLongOrNull() ?: 0L) * 1000L).let { if (it > 0L) it else FALLBACK_DUR_US }
-                val out = ArrayList<Bitmap>(MAX_FRAMES)
+                val rawFrames = ArrayList<Bitmap>(MAX_FRAMES)
                 val count = ((durUs / 1_000_000.0) * FPS).toInt().coerceIn(1, MAX_FRAMES)
                 val stepUs = durUs / count
                 var t = 0L; var i = 0
                 while (i < count) {
                     val frame = retriever.getFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST)?.let { scaleDown(it) }
-                    if (frame != null) out.add(keyOut(frame))
+                    if (frame != null) rawFrames.add(frame)
                     t += stepUs; i++
                 }
-                if (out.isEmpty()) null
+                if (rawFrames.isEmpty()) null
                 else {
+                    val doKey = shouldKey(rawFrames)
+                    val out = ArrayList<Bitmap>(rawFrames.size)
+                    for (b in rawFrames) out.add(if (doKey) keyOut(b) else b)
                     val frames = trimBlankEnds(out)
                     StickerFrames(frames, ((durUs / 1000.0) / frames.size).toLong().coerceIn(20L, 400L))
                 }
@@ -294,6 +298,27 @@ class WebmStickerView @JvmOverloads constructor(
                 try { frames[idx].recycle() } catch (_: Exception) {}
             }
             return ArrayList(frames.subList(start, end + 1))
+        }
+
+        /**
+         * Решает, убирать ли чёрный фон (лума-ключ). Настоящий стикер идёт на ЧЁРНОМ фоне →
+         * много почти-чёрных пикселей → кеим. Полнокадровое видео → чёрного мало → НЕ кеим,
+         * иначе тёмные участки продырявятся и сквозь стикер видно фон/обои.
+         */
+        private fun shouldKey(frames: List<Bitmap>): Boolean {
+            val b = frames.firstOrNull { it.width > 0 && it.height > 0 } ?: return true
+            val w = b.width; val h = b.height
+            val px = IntArray(w * h)
+            b.getPixels(px, 0, w, 0, 0, w, h)
+            var black = 0; var sampled = 0; var i = 0
+            while (i < px.size) {
+                val c = px[i]
+                val v = maxOf((c shr 16) and 0xFF, maxOf((c shr 8) and 0xFF, c and 0xFF))
+                if (v <= KEY_LOW) black++
+                sampled++
+                i += 4
+            }
+            return sampled > 0 && black * 100 / sampled >= 30
         }
 
         private fun keyOut(src: Bitmap): Bitmap {

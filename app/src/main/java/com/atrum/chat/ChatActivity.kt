@@ -1590,16 +1590,14 @@ class ChatActivity : SecureActivity() {
                                 "Nostr (прямое подключение)"
                             else -> "Nostr (неизвестный режим)"
                         }
-                        runCatching {
-                            CrashHandler.report(
-                                this@ChatActivity, "ChatActivity: окончательный провал отправки сообщения",
-                                RuntimeException(
-                                    "Сообщение не доставлено после всех ретраев MessageSendManager.\n" +
-                                        "chatId=${chat.chatId.take(8)}…, транспорт=$transportKind\n" +
-                                        "причина: $reason"
-                                )
-                            )
-                        }
+                        // Раньше здесь показывался CrashActivity (отладка окончательного провала
+                        // отправки) — убрано, вылет не нужен. Причину пишем в логи; в ленте
+                        // сообщение уже помечено значком ошибки (failSend выше, «часики → ошибка»).
+                        android.util.Log.w(
+                            "ATRUM_SEND",
+                            "Окончательный провал отправки: chatId=${chat.chatId.take(8)}…, " +
+                                "транспорт=$transportKind, причина: $reason"
+                        )
                     }
 
                     val isNetworkError = reason.contains("Unable to resolve host", ignoreCase = true) ||
@@ -3574,7 +3572,7 @@ class ChatActivity : SecureActivity() {
         // Снимок чата ДО добавления карточки — иначе блюр захватил бы саму карточку.
         val snapshot = ScreenBlur.capture(this, radius = 10)
         val card = layoutInflater.inflate(R.layout.view_group_welcome, contentRoot, false)
-        val amCreator = !chat.adminUserId.isNullOrBlank() && chat.adminUserId == prefs.myUserId
+        val amCreator = prefs.isGroupCreatedByMe(chat.chatId)
         card.findViewById<TextView>(R.id.tv_welcome_title).setText(
             if (amCreator) R.string.group_welcome_title_created else R.string.group_welcome_title_joined
         )

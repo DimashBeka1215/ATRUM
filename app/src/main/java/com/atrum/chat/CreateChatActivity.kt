@@ -635,6 +635,7 @@ class CreateChatActivity : SecureActivity() {
             val pathToken = if (selectedTor) NostrTransport.NOSTR_TOKEN
                             else NostrTransport.NOSTR_DIRECT_TOKEN
             prefs.saveChatSecrets(channelId, pathToken, password)
+            prefs.setGroupCreatedByMe(channelId)
             if (selectedTor) {
                 TorManager.start(applicationContext)
                 TorSyncWatchdog.arm(applicationContext, channelId)

@@ -49,8 +49,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 578
-        versionName = "3.49.34-beta492-starbling-fullphoto"
+        versionCode = 580
+        versionName = "3.49.36-beta494-hide-tor-banner"
 
         // ЛИЧНАЯ СБОРКА: по умолчанию ВЫКЛючена (обычный релиз чист). Включается в build-типе
         // debug (см. buildTypes). Личные «фишки для себя» в коде прячутся за
