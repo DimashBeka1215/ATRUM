@@ -14,6 +14,7 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
+import androidx.core.widget.addTextChangedListener
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -415,6 +416,12 @@ object NeonDialog {
         negativeText: String,
         subtitle: String? = null,
         isPassword: Boolean = false,
+        /**
+         * Если задан — на каждый ввод проверяет текст и ГАСИТ позитивную кнопку (alpha 0.4,
+         * клик игнорируется), пока он невалиден. Нужно, напр., для тега: запретный символ →
+         * «Сохранить» теряет активность. null (по умолчанию) — прежнее поведение без проверки.
+         */
+        validator: ((String) -> Boolean)? = null,
         onPositive: (String) -> Unit
     ): Dialog {
         val dialog = Dialog(ctx, android.R.style.Theme_Translucent_NoTitleBar).also { it.window?.transparentNavBar() }
@@ -484,6 +491,35 @@ object NeonDialog {
 
         root.addView(ctx.hDivider())
 
+        // Позитивная кнопка вынесена в val — чтобы validator мог гасить её вживую.
+        val positiveButton = TextView(ctx).apply {
+            text = positiveText
+            setTextColor(ctx.textPrimary())
+            textSize = 15f
+            setTypeface(typeface, Typeface.BOLD)
+            gravity  = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+            setBackgroundResource(ctx.rippleBg())
+            setOnClickListener {
+                // Невалидный ввод (по validator) — клик игнорируем, кнопка «неактивна».
+                if (validator != null && !validator(input.text.toString())) return@setOnClickListener
+                val newText = input.text.toString().trim()
+                dialog.dismiss()
+                onPositive(newText)
+            }
+        }
+
+        // Живая валидация: если задан validator — тускним и «отключаем» кнопку на невалидном вводе.
+        if (validator != null) {
+            fun refreshPositive() {
+                val ok = validator(input.text.toString())
+                positiveButton.isEnabled = ok
+                positiveButton.alpha = if (ok) 1f else 0.4f
+            }
+            input.addTextChangedListener { refreshPositive() }
+            refreshPositive()
+        }
+
         // Кнопки
         root.addView(LinearLayout(ctx).apply {
             orientation  = LinearLayout.HORIZONTAL
@@ -500,20 +536,7 @@ object NeonDialog {
                 setOnClickListener { dialog.dismiss() }
             })
             addView(ctx.vDivider())
-            addView(TextView(ctx).apply {
-                text = positiveText
-                setTextColor(ctx.textPrimary())
-                textSize = 15f
-                setTypeface(typeface, Typeface.BOLD)
-                gravity  = Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
-                setBackgroundResource(ctx.rippleBg())
-                setOnClickListener {
-                    val newText = input.text.toString().trim()
-                    dialog.dismiss()
-                    onPositive(newText)
-                }
-            })
+            addView(positiveButton)
         })
 
         dialog.setContentWithBlur(ctx, root, cancelOutside = false)

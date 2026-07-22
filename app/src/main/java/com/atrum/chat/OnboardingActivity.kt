@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.widget.addTextChangedListener
 import com.atrum.chat.databinding.ActivityOnboardingBinding
 
 /**
@@ -28,6 +29,21 @@ class OnboardingActivity : AppCompatActivity() {
         showStep1()
         binding.btnNext.setOnClickListener { nextFromNameStep() }
         binding.btnFinish.setOnClickListener { finishOnboarding() }
+
+        // Живое состояние кнопки «Далее»: активна только когда ник не пуст И тег валиден
+        // (без запретных символов). При невалидном вводе — тускнеет и не нажимается.
+        binding.etName.addTextChangedListener { updateNextButtonState() }
+        binding.etTag.addTextChangedListener { updateNextButtonState() }
+        updateNextButtonState()
+    }
+
+    /** Кнопка «Далее» активна только при непустом нике и валидном теге (см. TagUtils.isValid). */
+    private fun updateNextButtonState() {
+        val nameOk = binding.etName.text.toString().trim().isNotEmpty()
+        val tagOk = TagUtils.isValid(binding.etTag.text.toString())
+        val ok = nameOk && tagOk
+        binding.btnNext.isEnabled = ok
+        binding.btnNext.alpha = if (ok) 1f else 0.4f
     }
 
     override fun onBackPressed() {

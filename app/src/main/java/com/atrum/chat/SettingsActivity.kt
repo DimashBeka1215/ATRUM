@@ -423,7 +423,8 @@ class SettingsActivity : SecureActivity() {
             title = getString(R.string.settings_edit_tag_title),
             initialText = prefs.myTag,
             positiveText = getString(R.string.btn_save),
-            negativeText = getString(R.string.btn_cancel)
+            negativeText = getString(R.string.btn_cancel),
+            validator = { TagUtils.isValid(it) }
         ) { newTag ->
             if (newTag.isNotBlank()) {
                 saveTagNow(newTag)
