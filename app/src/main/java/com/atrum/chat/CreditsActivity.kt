@@ -320,13 +320,22 @@ class CreditsActivity : AppCompatActivity() {
             isFocusable = true
         }
 
+        // Фото показываем ЦЕЛИКОМ (FIT_CENTER), не обрезая в круг: вписываем по ширине,
+        // но не выше 85% экрана — вертикальные фото тоже влезают. Скругление 20dp.
+        val maxW = resources.displayMetrics.widthPixels - dp(56)            // поля по 28dp с боков
+        val maxH = (resources.displayMetrics.heightPixels * 0.85f).toInt()  // не выше 85% высоты
+
         val iv = com.google.android.material.imageview.ShapeableImageView(this).apply {
-            layoutParams = android.widget.FrameLayout.LayoutParams(dp(220), dp(220)).apply {
-                gravity = android.view.Gravity.CENTER
-            }
-            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply { gravity = android.view.Gravity.CENTER }
+            adjustViewBounds = true
+            maxWidth = maxW
+            maxHeight = maxH
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
             shapeAppearanceModel = com.google.android.material.shape.ShapeAppearanceModel
-                .builder(context, R.style.ShapeAppearance_AtrumChat_Circle, 0).build()
+                .builder().setAllCornerSizes(dp(20).toFloat()).build()
             strokeColor = android.content.res.ColorStateList.valueOf(
                 androidx.core.content.ContextCompat.getColor(context, R.color.accent_light)
             )
