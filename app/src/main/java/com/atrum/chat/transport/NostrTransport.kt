@@ -307,17 +307,12 @@ class NostrTransport(
                 .sortedByDescending { it.created_at }
                 .map { it.content },
             // Децентрализованный ростер (ADR-001): тот же набор слотов profiles.txt, но с
-            // pubkey подписавшего — по ОДНОМУ новейшему на pubkey. Нужен для привязки
-            // userId↔pubkey в GroupRosterSync (членство/счётчик из самоопубликованных
-            // профилей, без зависимости от админа). Детерминированный порядок по pubkey —
-            // чтобы hashAll не «дрожал» от порядка прихода событий с реле (та же причина,
-            // что у memberSlots.sortedBy).
-            profileSlotsSigned = events
-                .filter { ev -> eventHasFileName(ev, "profiles.txt") }
-                .groupBy { it.pubkey.lowercase() }
-                .mapNotNull { (_, evs) -> evs.maxByOrNull { it.created_at } }
-                .map { ProfileSlotSigned(it.pubkey, it.content) }
-                .sortedBy { it.signerPubkey },
+            // pubkey подписавшего — по ОДНОМУ новейшему на pubkey, С ЛИПКОСТЬЮ (см.
+            // stickyProfileSlots — репорт: «зачисляется только после первого сообщения»).
+            // Нужен для привязки userId↔pubkey в GroupRosterSync (членство/счётчик из
+            // самоопубликованных профилей, без зависимости от админа). Детерминированный
+            // порядок по pubkey — чтобы hashAll не «дрожал» от порядка прихода событий с реле.
+            profileSlotsSigned = stickyProfileSlots(events),
             membersContent = latestVerifiedAdminFile(events, "members.txt"),
             // Мультиподпись (Этап 2): ВСЕ подписанные слоты members.txt — по одному
             // новейшему на подписанта. Доверие/слияние решает слой синхронизации по
@@ -398,6 +393,28 @@ class NostrTransport(
             if (cur == null || ev.created_at >= cur.created_at) sticky[key] = ev
         }
         // Детерминированный порядок по pubkey — чтобы hashAll не «дрожал» от порядка событий.
+        return sticky.values.map { ProfileSlotSigned(it.pubkey, it.content) }.sortedBy { it.signerPubkey }
+    }
+
+    /**
+     * ЛИПКИЙ union-набор слотов profiles.txt (по одному новейшему на pubkey), с липкостью по
+     * каналу (см. [stickyProfileSlotsByChannel]) — тот же приём, что у [stickyReactionSlots]/
+     * [verifiedMemberSlots]. Источник для [GroupRosterSync.applyProfileRoster] (членство/счётчик
+     * беседы): без липкости флаки-тик, не вернувший чей-то слот, просто пропускал его на этом
+     * опросе — участник «не числился», пока какое-то другое событие случайно не пересекалось
+     * с удачным чтением того же реле (репорт: «зачисляется только после первого сообщения»).
+     */
+    private fun stickyProfileSlots(events: List<NostrEvent>): List<ProfileSlotSigned> {
+        val sticky = stickyProfileSlotsByChannel.getOrPut(channelId) { java.util.concurrent.ConcurrentHashMap() }
+        val fresh = events
+            .filter { ev -> eventHasFileName(ev, "profiles.txt") }
+            .groupBy { it.pubkey.lowercase() }
+            .mapNotNull { (_, evs) -> evs.maxByOrNull { it.created_at } }
+        for (ev in fresh) {
+            val key = ev.pubkey.lowercase()
+            val cur = sticky[key]
+            if (cur == null || ev.created_at >= cur.created_at) sticky[key] = ev
+        }
         return sticky.values.map { ProfileSlotSigned(it.pubkey, it.content) }.sortedBy { it.signerPubkey }
     }
 
@@ -1095,6 +1112,23 @@ class NostrTransport(
         /** ЛИПКИЙ кэш слотов reactions.txt по каналу (pubkey → новейшее событие) — тот же приём,
          *  что и у members.txt: флаки-тик не роняет чей-то слот, поэтому реакции не мигают. */
         private val stickyReactionSlotsByChannel =
+            java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<String, com.atrum.chat.nostr.NostrEvent>>()
+        /**
+         * ЛИПКИЙ кэш слотов profiles.txt по каналу (pubkey → новейшее событие) — тот же приём,
+         * что у members.txt/reactions.txt (репорт: «человек начинает числиться в участниках
+         * только после того как напишет первое сообщение»). Раньше [profileSlotsSignedFor]
+         * (тогда — инлайн в splitAll) считался ЗАНОВО на каждый опрос БЕЗ липкости: если реле
+         * на КОНКРЕТНОМ тике не вернуло только что опубликованный слот вошедшего (флаки-Tor —
+         * тот же класс сбоя, что уже чинили для реакций/членства), GroupRosterSync просто не
+         * видел этот тик, а следующий флаки-тик мог снова его не увидеть. Реального «починяющего»
+         * события до сих пор не было — участник совпадал по счётчику только когда СЛУЧАЙНО
+         * происходило что-то ещё (например, чужое сообщение меняло chatContent → hashAll менял
+         * значение → более настойчивый повторный локальный путь у отправителя доходил до тех же
+         * реле). Теперь: раз увидели слот на pubkey — он остаётся в union у ЭТОГО процесса, пока
+         * не придёт более новый (created_at) слот того же pubkey. Симметрично stickyMemberEvents/
+         * stickyReactionSlots.
+         */
+        private val stickyProfileSlotsByChannel =
             java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<String, com.atrum.chat.nostr.NostrEvent>>()
         private const val FILE_KIND = 1063
         /**

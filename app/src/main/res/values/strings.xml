@@ -32,6 +32,14 @@
     <string name="intro_vpn_title">Фото и голосовые не отправляются?</string>
     <string name="intro_vpn_subtitle">В некоторых странах провайдеры блокируют часть сети. Попробуй включить VPN или прокси — на приватность это не влияет: сообщения всё равно шифруются на устройстве до отправки. Это временная мера, пока мы работаем над более надёжной доставкой.</string>
 
+    <string name="intro_official_title">Скачивай только из официальных источников</string>
+    <string name="intro_official_subtitle">Код Atrum открыт — это и есть основа доверия к приложению: любой может проверить, что оно делает на самом деле. Но у открытости есть обратная сторона: кто угодно может собрать изменённую версию и вырезать из неё любую встроенную защиту. Автор не может этому помешать — открытый код работает в обе стороны. Поэтому устанавливай Atrum только по этим ссылкам:</string>
+    <string name="intro_official_link_telegram">Telegram</string>
+    <string name="intro_official_link_github">GitHub</string>
+    <string name="intro_official_confirm_countdown_fmt">Подтвердить (%1$d)</string>
+    <string name="intro_official_confirm_btn">Я подтверждаю, что скачал официальную версию</string>
+    <string name="intro_official_confirmed">Подтверждено</string>
+
     <string name="badge_beta">EXPERIMENTAL BETA</string>
 
     <!-- Onboarding -->

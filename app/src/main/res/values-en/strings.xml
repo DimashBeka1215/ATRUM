@@ -30,6 +30,14 @@
     <string name="intro_vpn_title">Photos and voice messages not sending?</string>
     <string name="intro_vpn_subtitle">In some countries, providers block part of the network. Try turning on a VPN or proxy — it doesn\'t affect your privacy: messages are still encrypted on your device before sending. This is a temporary measure while we work on more reliable delivery.</string>
 
+    <string name="intro_official_title">Only download from official sources</string>
+    <string name="intro_official_subtitle">Atrum\'s code is open — that\'s the whole basis for trusting it: anyone can check what it actually does. But openness cuts both ways: anyone can also build a modified version and cut out any security checks built into it. The developer can\'t prevent that — open code works both ways. So only install Atrum from these links:</string>
+    <string name="intro_official_link_telegram">Telegram</string>
+    <string name="intro_official_link_github">GitHub</string>
+    <string name="intro_official_confirm_countdown_fmt">Confirm (%1$d)</string>
+    <string name="intro_official_confirm_btn">I confirm I downloaded the official version</string>
+    <string name="intro_official_confirmed">Confirmed</string>
+
     <string name="badge_beta">EXPERIMENTAL BETA</string>
 
     <!-- Onboarding -->

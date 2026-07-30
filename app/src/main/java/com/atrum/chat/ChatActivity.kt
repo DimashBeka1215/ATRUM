@@ -172,6 +172,11 @@ class ChatActivity : SecureActivity() {
     private var connectFallbackJob: Job? = null
     private var warmupRetryJob: Job? = null
     private var syncedCollectorJob: Job? = null
+    // «Досинхронизация» после подключения: одного прохода мало, чтобы профиль собеседника
+    // (ава/presence/галочка) догнался до актуального и закрепился — первый прочитанный
+    // профиль бывает частичным/устаревшим (разные реле, Tor-джиттер), а syncProfiles
+    // останавливается на первом найденном. Несколько раундов подряд догоняют и фиксируют.
+    private var settleBurstJob: Job? = null
 
     /**
      * Счётчик последовательных ошибок одного типа.
@@ -2030,6 +2035,9 @@ class ChatActivity : SecureActivity() {
             // Перетягиваем актуальные данные собеседника (вдруг он сменил аватарку/ник
             // пока мы были в Settings или другом чате).
             syncProfiles()
+            // …и догоняем несколькими раундами, чтобы профиль/сообщения гарантированно
+            // закрепились и при возврате в чат — не только на первом синке (см. startSettleBurst).
+            startSettleBurst()
             // Чат «Уведомления»: возврат на экран гасит счётчик непрочитанных —
             // новые записи могли прийти, пока экран был в бэкстеке.
             if (chat.isSystemNotifications) {
@@ -4531,6 +4539,26 @@ class ChatActivity : SecureActivity() {
      * и форсим синк. warmUp идемпотентен и дёшев (no-op если уже тепло); single-flight в
      * SyncEngine не даёт дублей. Только на переднем плане — в фоне polling и так остановлен.
      */
+    /**
+     * Досинхронизация после подключения: [SETTLE_BURST_ROUNDS] раундов подряд гоняем
+     * профиль-синк (ава/ник/presence/галочка) + форс-синк сообщений, чтобы данные догнались
+     * до актуальных и закрепились в Room с ПЕРВОГО открытия — без ручного перезахода. Раунды
+     * последовательные (не пила запросов): doSyncProfilesOnce ждётся, single-flight в
+     * SyncEngine не даёт дублей, sticky-merge в ProfileSync не откатывает уже полученное.
+     */
+    private fun startSettleBurst() {
+        if (chat.isFavorites) return
+        settleBurstJob?.cancel()
+        settleBurstJob = lifecycleScope.launch {
+            repeat(SETTLE_BURST_ROUNDS) {
+                if (!isInForeground) return@launch
+                if (::syncEngine.isInitialized) syncEngine.forceSync(0L)
+                runCatching { doSyncProfilesOnce() }
+                delay(SETTLE_BURST_INTERVAL_MS)
+            }
+        }
+    }
+
     private fun startWarmupRetry() {
         warmupRetryJob?.cancel()
         warmupRetryJob = lifecycleScope.launch {
@@ -4564,6 +4592,8 @@ class ChatActivity : SecureActivity() {
             runCatching { applyPartnerToHeader() }
             runCatching { applyPresence() }
         }
+        // Подключились — догоняем и закрепляем профиль/сообщения (один проход не всё ловит).
+        startSettleBurst()
     }
 
     /**
@@ -6643,6 +6673,11 @@ class ChatActivity : SecureActivity() {
         const val CONNECT_FALLBACK_MS = 10_000L
         /** Период тихого фонового реконнекта (warmUp + forceSync), пока нет живого синка. */
         const val WARMUP_RETRY_MS = 2_500L
+        /** «Досинхронизация» после подключения: сколько раундов профиль+сообщения догоняем,
+         *  чтобы данные собеседника закрепились с первого открытия (без ручного перезахода). */
+        const val SETTLE_BURST_ROUNDS = 4
+        /** Пауза между раундами досинхронизации. */
+        const val SETTLE_BURST_INTERVAL_MS = 2_000L
 
         /** Троттл самопочинки members.txt у админа (см. maybeAdminRepairMembersFile). */
         const val MEMBERS_REPAIR_THROTTLE_MS = 30_000L

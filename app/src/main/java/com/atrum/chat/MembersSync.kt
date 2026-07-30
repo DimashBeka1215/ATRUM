@@ -574,7 +574,16 @@ object MembersSync {
                 )
             }
         )
-        participantDao.pruneRemoved(chat.id, parsed.participants.map { it.userId })
+        // ⛔ НЕ ПРУНИМ по members.txt (ADR-001, обновление 2026-07-14: members.txt — ОВЕРЛЕЙ
+        // модерации, а не источник членства). Раньше здесь стоял
+        // `pruneRemoved(chat.id, parsed.participants.map { it.userId })` — он удалял из ростера
+        // ВСЕХ, кого нет в members.txt админа. Но членство теперь самосуверенно, из
+        // самопубликуемых профилей ([GroupRosterSync.applyProfileRoster]). Любой «сжатый»/
+        // отстающий members.txt (self-heal админа до admin-only, гонка энролла, где джойнер ещё
+        // не кандидат) при бампе версии вычищал легитимного участника у ВСЕХ устройств →
+        // «у автора и у меня разное число участников, я не зачислился». upsertAll выше уже
+        // применил бан/мут/роли к перечисленным; удаление членства — ТОЛЬКО через профиль
+        // left/deleted (GroupRosterSync.removeIfNotBanned). Обкатано в песочнице (sb_roster.js).
         chatDao.updateMembersVersionIfNewer(chat.id, parsed.version)
         // Запоминаем подпись применённого слитого состояния — gate следующего тика
         // (мультиподпись: делегатский мут/бан не двигает версию главного, см. выше).
@@ -598,10 +607,11 @@ object MembersSync {
             val joins = (newIds - oldIds).map {
                 GroupEventEntry(ownerId = chat.id, userId = it, type = GroupEventEntry.TYPE_JOIN, atMs = now)
             }
-            val leaves = (oldIds - newIds).map {
-                GroupEventEntry(ownerId = chat.id, userId = it, type = GroupEventEntry.TYPE_LEAVE, atMs = now)
-            }
-            if (joins.isNotEmpty() || leaves.isNotEmpty()) groupEventDao.insertAll(joins + leaves)
+            // ⛔ Уходы НЕ выводим из отсутствия в members.txt (см. фикс пруна выше): членство
+            // самосуверенно (профили), members.txt легитимно не сжимается. Иначе профиль-участник,
+            // которого админ ещё не внёс в members.txt, журналился бы как «вышел» на каждом бампе
+            // версии — ложное событие. Реальный выход — через профиль left/deleted (GroupRosterSync).
+            if (joins.isNotEmpty()) groupEventDao.insertAll(joins)
         }
         // Имя/описание группы приходят и отсюда; null в parsed = "не менять".
         // ⚠️ Фикс (репорт: «админ поменял аву — у собеседника видно, у меня нет»).

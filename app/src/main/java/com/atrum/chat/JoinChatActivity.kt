@@ -534,10 +534,11 @@ class JoinChatActivity : SecureActivity() {
                     identityPubKey = prefs.myIdentityPubKey,
                     identitySig = myGroupIdentitySig
                 )
-                AppScope.launch {
-                    try {
-                        ProfileSync.pushMyProfile(transport, invite.chatPassword, myGroupProfile, prefs.getOrCreateIdentity().first)
-                    } catch (_: Exception) {}
+                // Догон: пере-публикуем свой профиль несколько раз (см. publishJoinProfileBurst) —
+                // слот расходится по большему числу реле, и все участники зачисляют вошедшего
+                // быстро, без «приказа обновиться» (членство самосуверенно, GroupRosterSync).
+                publishJoinProfileBurst(invite.channelId, isTor, transport) {
+                    ProfileSync.pushMyProfile(transport, invite.chatPassword, myGroupProfile, prefs.getOrCreateIdentity().first)
                 }
 
                 openChat(newGroupChatId)
@@ -569,9 +570,13 @@ class JoinChatActivity : SecureActivity() {
                     }
                 }
                 partnerProfileFound = profilesMap.values.firstOrNull { it.userId != myUserId }
+                // Готово, как только нашли профиль с ИМЕНЕМ. Аву НЕ требуем: у собеседника её
+                // может не быть вовсе (репорт: «если у чата нет авы, после ввода кода приложение
+                // пытается подхватить аву, которой нет» — цикл гонял все 6 попыток ≈ 15с впустую).
+                // Профиль приходит целиком (имя+ава в одном слоте profiles.txt), поэтому имя есть →
+                // ава либо тоже здесь, либо её нет; showFoundInfo корректно показывает инициал без авы.
                 val ready = partnerProfileFound != null &&
-                    partnerProfileFound!!.name.isNotBlank() &&
-                    !partnerProfileFound!!.avatarBase64.isNullOrBlank()
+                    partnerProfileFound!!.name.isNotBlank()
                 if (ready || attempt == JOIN_PROFILE_MAX_ATTEMPTS - 1) break
                 setProgress(getString(R.string.join_status_loading_profile))
                 delay(JOIN_PROFILE_RETRY_DELAY_MS)
@@ -630,21 +635,17 @@ class JoinChatActivity : SecureActivity() {
                 tag = prefs.myTag,
                 avatarBase64 = prefs.myAvatarBase64
             )
-            AppScope.launch {
-                try {
-                    val ok = ProfileSync.pushMyProfile(transport, invite.chatPassword, myProfile)
-                    if (!ok && isTor) {
-                        // ProfileSync.lastError — реальная причина, проглоченная внутри
-                        // pushMyProfile (см. ProfileSync.kt). Читаем сразу после false —
-                        // безопасно, см. doc-comment lastError.
-                        val cause = ProfileSync.lastError
-                            ?: IllegalStateException("pushMyProfile вернул false, но lastError пуст")
-                        TorSyncWatchdog.reportDeviation(applicationContext, invite.channelId, "JoinChatActivity.pushMyProfile", cause)
-                    }
-                } catch (e: Throwable) {
-                    if (isTor) {
-                        TorSyncWatchdog.reportDeviation(applicationContext, invite.channelId, "JoinChatActivity.pushMyProfile", e)
-                    }
+            // Догон: пере-публикуем свой профиль несколько раз (см. publishJoinProfileBurst),
+            // чтобы слот разошёлся по реле и собеседник подхватил ник/аву быстро.
+            publishJoinProfileBurst(invite.channelId, isTor, transport) {
+                val ok = ProfileSync.pushMyProfile(transport, invite.chatPassword, myProfile)
+                if (!ok && isTor) {
+                    // ProfileSync.lastError — реальная причина, проглоченная внутри
+                    // pushMyProfile (см. ProfileSync.kt). Читаем сразу после false —
+                    // безопасно, см. doc-comment lastError.
+                    val cause = ProfileSync.lastError
+                        ?: IllegalStateException("pushMyProfile вернул false, но lastError пуст")
+                    TorSyncWatchdog.reportDeviation(applicationContext, invite.channelId, "JoinChatActivity.pushMyProfile", cause)
                 }
             }
 
@@ -686,6 +687,44 @@ class JoinChatActivity : SecureActivity() {
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
         })
         finish()
+    }
+
+    /**
+     * «Догон» публикации своего профиля после входа. Пере-публикуем свой слот profiles.txt
+     * [JOIN_PUBLISH_BURST_ROUNDS] раз на AppScope (переживает finish() join-экрана): по мере
+     * прогрева соединения слот расходится по большему числу реле, и все участники зачисляют
+     * вошедшего быстро (GroupRosterSync) — даже если он не открыл чат или коннект через Tor
+     * поднимается медленно. Это «впиши себя громко», но через уже доверенный механизм —
+     * СВОЙ подписанный профиль (userId↔pubkey неподделываемо), без «приказа обновиться»,
+     * который был бы новой поверхностью подделки/накрутки. Первая публикация — сразу.
+     *
+     * ⚡ Ускорение (запрос пользователя: «зачисляется правильно, но долго»): [pushMyProfile] —
+     * read-modify-write (сначала читает profiles.txt со всех реле, потом пишет), т.е. КАЖДЫЙ
+     * раунд сам по себе платит полный сетевой раунд-трип. [warmUp] заранее поднимает сокеты к
+     * реле ЭТОГО чата (идемпотентно, no-op если уже тёплые) — первая попытка (самая важная, идёт
+     * СРАЗУ) не платит ещё и за установку соединения поверх Tor-задержки. Пауза между раундами
+     * сокращена: раз каждый раунд и так занимает реальное сетевое время, незачем ждать
+     * ДОПОЛНИТЕЛЬНО поверх него — раунды идут почти встык, а не размазаны на ~9с простоя.
+     */
+    private fun publishJoinProfileBurst(
+        chatIdForLog: String,
+        isTor: Boolean,
+        transport: ChatTransport,
+        push: suspend () -> Unit
+    ) {
+        AppScope.launch {
+            runCatching { transport.warmUp() }
+            repeat(JOIN_PUBLISH_BURST_ROUNDS) { round ->
+                if (round > 0) kotlinx.coroutines.delay(JOIN_PUBLISH_BURST_INTERVAL_MS)
+                try {
+                    push()
+                } catch (e: Throwable) {
+                    if (isTor) TorSyncWatchdog.reportDeviation(
+                        applicationContext, chatIdForLog, "JoinChatActivity.publishJoinProfileBurst", e
+                    )
+                }
+            }
+        }
     }
 
     // ═══ UI states ═══
@@ -920,5 +959,13 @@ class JoinChatActivity : SecureActivity() {
         // окна в проекте (см. GroupStatsActivity/UserStatsActivity.FIRST_LOAD_MAX_ATTEMPTS).
         const val JOIN_PROFILE_MAX_ATTEMPTS = 6
         const val JOIN_PROFILE_RETRY_DELAY_MS = 2_500L
+
+        /** «Догон» публикации своего профиля после входа: сколько раз пере-опубликовать
+         *  (первая — сразу), чтобы слот разошёлся по реле и все зачислили вошедшего. */
+        const val JOIN_PUBLISH_BURST_ROUNDS = 3
+        /** Пауза МЕЖДУ раундами догона — каждый раунд сам по себе read-modify-write (сетевой
+         *  раунд-трип), поэтому пауза короткая (не размазываем всплеск на десяток секунд простоя,
+         *  см. publishJoinProfileBurst). warmUp перед первым раундом ускоряет именно ЕГО. */
+        const val JOIN_PUBLISH_BURST_INTERVAL_MS = 800L
     }
 }

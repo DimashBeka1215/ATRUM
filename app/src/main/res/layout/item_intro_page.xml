@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true"
@@ -63,6 +64,76 @@
             android:gravity="center"
             android:lineSpacingExtra="4dp"
             android:layout_marginHorizontal="8dp"/>
+
+        <!-- Ссылки на официальные источники (только карточка "Официальные источники") -->
+        <LinearLayout
+            android:id="@+id/ll_link_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="20dp"
+            android:visibility="gone">
+
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/btn_link_telegram"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:minHeight="46dp"
+                android:layout_weight="1"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/bg_button_outline"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp"
+                android:textAllCaps="false"
+                android:stateListAnimator="@null"
+                android:drawablePadding="6dp"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="10dp"
+                android:gravity="center"
+                app:drawableStartCompat="@drawable/ic_telegram"
+                app:drawableTint="@color/accent"
+                android:text="@string/intro_official_link_telegram"/>
+
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/btn_link_github"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:minHeight="46dp"
+                android:layout_weight="1"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_button_outline"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp"
+                android:textAllCaps="false"
+                android:stateListAnimator="@null"
+                android:drawablePadding="6dp"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="10dp"
+                android:gravity="center"
+                app:drawableStartCompat="@drawable/ic_github"
+                app:drawableTint="@color/accent"
+                android:text="@string/intro_official_link_github"/>
+        </LinearLayout>
+
+        <!-- Кнопка-гейт: заблокирована таймером, потом требует явного подтверждения.
+             wrap_content + minHeight — текст двустрочный ("Я подтверждаю, что скачал
+             официальную версию") не должен обрезаться фиксированной высотой. -->
+        <androidx.appcompat.widget.AppCompatButton
+            android:id="@+id/btn_confirm_official"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_button"
+            android:textColor="@color/white"
+            android:textSize="13sp"
+            android:textAllCaps="false"
+            android:stateListAnimator="@null"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="12dp"
+            android:lineSpacingExtra="2dp"
+            android:gravity="center"
+            android:visibility="gone"/>
 
         <View
             android:layout_width="0dp"
