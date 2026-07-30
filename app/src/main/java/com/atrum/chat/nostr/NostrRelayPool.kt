@@ -221,6 +221,14 @@ object NostrRelayPool {
     // иметь несколько одновременно, если режим переключался в рантайме — старые просто
     // не переиспользуются и в итоге простаивают, это безопасно).
     private val conns = ConcurrentHashMap<String, RelayConn>()
+
+    /** Причина CLOSED по последнему ПУСТОМУ запросу к реле [url] — телеметрия «ошибка реле»
+     *  на экране «Соединение». null = реле завершило чисто (EOSE) или отдало данные. */
+    private val lastCloseReasons = ConcurrentHashMap<String, String>()
+    fun lastCloseReason(url: String): String? = lastCloseReasons[url]
+    internal fun setLastCloseReason(url: String, reason: String?) {
+        if (reason == null) lastCloseReasons.remove(url) else lastCloseReasons[url] = reason
+    }
     private fun conn(url: String, useTor: Boolean): RelayConn {
         val viaProxy = !useTor && useCustomProxy()
         val key = when {
@@ -294,6 +302,8 @@ private class RelayConn(private val url: String, private val client: OkHttpClien
     private class Sub(val onEvent: ((NostrEvent) -> Unit)? = null) {
         val events = mutableListOf<NostrEvent>()
         val eose = CompletableDeferred<Unit>()
+        /** Причина CLOSED (NIP-01), если реле закрыло эту подписку с сообщением. */
+        @Volatile var closedReason: String? = null
     }
 
     private val subs = ConcurrentHashMap<String, Sub>()
@@ -359,7 +369,12 @@ private class RelayConn(private val url: String, private val client: OkHttpClien
                     }
                 }
                 "EOSE" -> subs[arr.optString(1)]?.eose?.complete(Unit)
-                "CLOSED" -> subs[arr.optString(1)]?.eose?.complete(Unit)
+                "CLOSED" -> subs[arr.optString(1)]?.let { s ->
+                    // Причина закрытия (NIP-01 CLOSED reason: rate-limited/blocked/invalid/error…)
+                    // — для телеметрии «ошибка реле». Данные при этом не теряем.
+                    s.closedReason = arr.optString(2).takeIf { it.isNotBlank() }
+                    s.eose.complete(Unit)
+                }
                 "OK" -> {
                     val waiter = pubs.remove(arr.optString(1)) ?: return
                     val accepted = arr.optBoolean(2, true)
@@ -423,7 +438,13 @@ private class RelayConn(private val url: String, private val client: OkHttpClien
                     throw RuntimeException("relay query timeout (no EOSE): $url")
                 }
                 runCatching { sock.send(JSONArray().apply { put("CLOSE"); put(subId) }.toString()) }
-                synchronized(sub.events) { sub.events.toList() }
+                val evs = synchronized(sub.events) { sub.events.toList() }
+                // Побочный канал телеметрии: реле закрыло подписку с причиной и НЕ отдало
+                // событий → отказ со стороны реле (ERROR на экране «Соединение»). Контракт
+                // query() не меняется — возвращаем тот же список, причину читает только
+                // ConnectionStats через NostrRelayPool.lastCloseReason(url).
+                NostrRelayPool.setLastCloseReason(url, sub.closedReason?.takeIf { evs.isEmpty() })
+                evs
             } catch (ce: CancellationException) {
                 // Внешняя отмена (мягкий дедлайн queryAllRelays). Не сбрасываем сокет
                 // принудительно, т.к. он может быть здоров, просто медленнее конкурентов.

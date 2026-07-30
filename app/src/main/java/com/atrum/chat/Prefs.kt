@@ -94,6 +94,11 @@ class Prefs(private val context: Context) {
         get() = prefs.getBoolean(KEY_SCREENSHOTS_ALLOWED, false)
         set(v) = prefs.edit().putBoolean(KEY_SCREENSHOTS_ALLOWED, v).apply()
 
+    /** Плашка-совет на экране настройки обоев скрыта навсегда («Больше не показывать»). */
+    var wallpaperAdviceDismissed: Boolean
+        get() = prefs.getBoolean(KEY_WP_ADVICE_DISMISSED, false)
+        set(v) = prefs.edit().putBoolean(KEY_WP_ADVICE_DISMISSED, v).apply()
+
     var testerPasswordHash: String?
         get() = prefs.getString(KEY_TESTER_PWD_HASH, null)
         set(v) {
@@ -931,6 +936,7 @@ class Prefs(private val context: Context) {
         private const val KEY_STATUS = "status"
         private const val KEY_AVATAR = "avatar"
         private const val KEY_BANNER = "banner"
+        private const val KEY_WP_ADVICE_DISMISSED = "wp_advice_dismissed"
         private const val KEY_BANNER_CHANGED_AT = "banner_changed_at"
         private const val KEY_LOCAL_PWD_HASH = "local_pwd_hash"
         private const val KEY_ONBOARDED = "onboarded"

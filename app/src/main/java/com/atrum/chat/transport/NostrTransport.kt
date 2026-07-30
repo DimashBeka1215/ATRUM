@@ -3,6 +3,7 @@ package com.atrum.chat.transport
 import kotlinx.coroutines.cancelChildren
 import com.atrum.chat.nostr.NostrEvent
 import android.content.Context
+import com.atrum.chat.nostr.ConnectionStats
 import com.atrum.chat.nostr.NostrRelayPool
 import com.atrum.chat.nostr.toHex
 import kotlinx.coroutines.CompletableDeferred
@@ -295,6 +296,10 @@ class NostrTransport(
         return AllChannelData(
             chatContent = NostrMessageStore.render(channelId),
             reactionsContent = latestFile(events, "reactions.txt"),
+            // UNION-слоты реакций с pubkey подписавшего, С ЛИПКОСТЬЮ по каналу (флаки-тик не
+            // роняет чей-то слот → реакции не мигают). ChatActivity объединяет их
+            // per-user-authoritative (каждый автор авторитетен за свои реакции).
+            reactionSlotsSigned = stickyReactionSlots(events),
             profilesContent = latestFile(events, "profiles.txt"),
             // Все слоты profiles.txt (по одному на участника) — источник union-чтения.
             profileSlots = events
@@ -372,6 +377,31 @@ class NostrTransport(
     }
 
     /**
+     * ЛИПКИЙ union-набор слотов reactions.txt (по одному новейшему на pubkey), с липкостью по
+     * каналу (см. [stickyReactionSlotsByChannel]) — тот же приём, что у [verifiedMemberSlots].
+     * Реле на отдельном тике может НЕ вернуть чей-то слот (флаки-Tor) — раньше это роняло его
+     * реакции из union, и они «мигали» (появлялись/исчезали, просто реже после union-фикса).
+     * Помним новейший слот на pubkey; пустое/частичное чтение его НЕ роняет, слот с большим
+     * created_at заменяет (реальный toggle/снятие доезжает). Кто авторитетен за какие реакции —
+     * решает ChatActivity (pubkeyForUserId(userId) == signerPubkey). Липкость статическая, поэтому
+     * реакции не пропадают и при ПЕРЕЗАХОДЕ в чат (пересоздание транспорта).
+     */
+    private fun stickyReactionSlots(events: List<NostrEvent>): List<ProfileSlotSigned> {
+        val sticky = stickyReactionSlotsByChannel.getOrPut(channelId) { java.util.concurrent.ConcurrentHashMap() }
+        val fresh = events
+            .filter { ev -> eventHasFileName(ev, "reactions.txt") }
+            .groupBy { it.pubkey.lowercase() }
+            .mapNotNull { (_, evs) -> evs.maxByOrNull { it.created_at } }
+        for (ev in fresh) {
+            val key = ev.pubkey.lowercase()
+            val cur = sticky[key]
+            if (cur == null || ev.created_at >= cur.created_at) sticky[key] = ev
+        }
+        // Детерминированный порядок по pubkey — чтобы hashAll не «дрожал» от порядка событий.
+        return sticky.values.map { ProfileSlotSigned(it.pubkey, it.content) }.sortedBy { it.signerPubkey }
+    }
+
+    /**
      * Content файла [name] (members.txt / groupprofile.txt) от САМОГО СВЕЖЕГО события,
      * чей pubkey совпадает с вычисленным [adminPubkeyHex] И чья подпись валидна. Любые
      * копии от других участников (даже валидно зашифрованные — они все знают общий
@@ -427,7 +457,11 @@ class NostrTransport(
             // ⚠️ Мультиподпись (Этапы 2–3): слоты делегатов ОБЯЗАНЫ входить в хеш —
             // иначе мут/бан/пин от делегата (меняющий только его слот, а не members.txt
             // главного) не детектится loadAllIfChanged → «доходит только после перезахода».
-            " : " + d.memberSlots.joinToString("|") { it.signerPubkey + "#" + it.content }).toHex()
+            " : " + d.memberSlots.joinToString("|") { it.signerPubkey + "#" + it.content } +
+            // Слоты реакций ОБЯЗАНЫ входить в хеш: union меняется при правке ЛЮБОГО слота
+            // реакций (не только новейшего). Иначе смену реакции у собеседника
+            // loadAllIfChanged не детектит → «реакция не появилась/мигает до перезахода».
+            " : " + d.reactionSlotsSigned.joinToString("|") { it.signerPubkey + "#" + it.content }).toHex()
 
     // ─── запись ──────────────────────────────────────────────────────────────────
 
@@ -908,12 +942,24 @@ class NostrTransport(
             val jobs = relays.map { url ->
                 launch {
                     val t0 = System.currentTimeMillis()
-                    val r = runCatching { NostrRelayPool.query(url, filter, useTor) }.getOrNull()
+                    val res = runCatching { NostrRelayPool.query(url, filter, useTor) }
+                    val r = res.getOrNull()
                     // Телеметрия для экрана «Соединение» (ConnectionStats) — попутно с уже
                     // идущим опросом, никакого нового polling-цикла (см. CLAUDE.md §1).
-                    com.atrum.chat.nostr.ConnectionStats.record(
-                        url, if (r != null) System.currentTimeMillis() - t0 else null
-                    )
+                    // Различаем сценарии: OK (есть данные) / NO_DATA (ответило пусто) /
+                    // ERROR (CLOSED с причиной) / DOWN (исключение соединения/таймаут).
+                    // Мягкую отмену (дедлайн queryAllRelays) НЕ штрафуем — медленное ≠ упало.
+                    if (res.exceptionOrNull() !is kotlinx.coroutines.CancellationException) {
+                        val outcome = when {
+                            r == null -> ConnectionStats.Outcome.DOWN
+                            r.isEmpty() ->
+                                if (NostrRelayPool.lastCloseReason(url) != null) ConnectionStats.Outcome.ERROR
+                                else ConnectionStats.Outcome.NO_DATA
+                            else -> ConnectionStats.Outcome.OK
+                        }
+                        ConnectionStats.record(url, outcome,
+                            if (outcome == ConnectionStats.Outcome.OK) System.currentTimeMillis() - t0 else null)
+                    }
                     // UNION READ: события собираются со ВСЕХ ответивших реле (у разных реле
                     // разные подмножества из-за retention и публикации на кворум, а не на все
                     // сразу), поэтому терять остальных после первого ответа нельзя.
@@ -1046,6 +1092,10 @@ class NostrTransport(
          */
         private val stickyMemberSlotsByChannel =
             java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<String, com.atrum.chat.nostr.NostrEvent>>()
+        /** ЛИПКИЙ кэш слотов reactions.txt по каналу (pubkey → новейшее событие) — тот же приём,
+         *  что и у members.txt: флаки-тик не роняет чей-то слот, поэтому реакции не мигают. */
+        private val stickyReactionSlotsByChannel =
+            java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<String, com.atrum.chat.nostr.NostrEvent>>()
         private const val FILE_KIND = 1063
         /**
          * Размер ОДНОГО чанка файла (символов зашифрованного контента).
@@ -1131,18 +1181,29 @@ class NostrTransport(
          * Tor-чаты сюда не относятся. Таймаут щедрый и НЕ связан с READ_GRACE_MS —
          * боевой хедж доставки сообщений эта функция не трогает и не может замедлить.
          */
-        suspend fun pingRelayForConnectionScreen(url: String, timeoutMs: Long = 6_000L): Long? {
+        /**
+         * Пинг реле для экрана «Соединение». Возвращает (итог, задержка_мс?). Пробуем лёгкий
+         * REQ с limit:0 — ждём только EOSE, поэтому ПУСТОЙ ответ здесь = УСПЕХ (OK), а не
+         * «нет данных». Различаем: OK (подключились, EOSE) / ERROR (реле закрыло с причиной) /
+         * DOWN (не подключились/таймаут). NO_DATA приходит только из реального опроса сообщений.
+         */
+        suspend fun pingRelayForConnectionScreen(
+            url: String, timeoutMs: Long = 6_000L
+        ): Pair<ConnectionStats.Outcome, Long?> {
             val probe = JSONObject().apply {
                 put("kinds", JSONArray().put(1))
                 put("limit", 0)
             }
             val t0 = System.currentTimeMillis()
-            return runCatching {
+            val res = runCatching {
                 NostrRelayPool.query(url, probe, useTor = false, timeoutMs = timeoutMs)
-            }.fold(
-                onSuccess = { System.currentTimeMillis() - t0 },
-                onFailure = { null }
-            )
+            }
+            res.exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
+            return when {
+                res.isFailure -> ConnectionStats.Outcome.DOWN to null
+                NostrRelayPool.lastCloseReason(url) != null -> ConnectionStats.Outcome.ERROR to null
+                else -> ConnectionStats.Outcome.OK to (System.currentTimeMillis() - t0)
+            }
         }
 
         /**

@@ -72,6 +72,14 @@ class App : Application() {
         val prefs = Prefs(this)
         BatteryUtils.animatePersistOverride = prefs.lowBattAnimate
         ConnectionPrefs.loadFrom(prefs)
+        // Холодный старт: если задан локальный пароль — приложение сразу считается
+        // заблокированным. Иначе после запуска процесса (первый заход/после kill'а системой)
+        // AppLock.locked == false, и SecureActivity.onStart пускает пользователя прямо в
+        // последнее открытое окно БЕЗ запроса пароля. Пароль тогда появлялся только после
+        // ухода в фон и возврата (там locked=true) — это и есть баг «иногда пароль не
+        // спрашивается». backgroundedAt остаётся 0 → льготный период (grace) не сработает,
+        // и LockActivity гарантированно покажется.
+        if (prefs.hasLocalPassword()) AppLock.locked = true
         // Migrate chat secrets from plaintext Room DB to EncryptedSharedPreferences
         // before the DB migration zeroes them out (MIGRATION_9_10).
         migrateChatSecretsToPrefs(prefs)

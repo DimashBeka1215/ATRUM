@@ -49,8 +49,8 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 581
-        versionName = "3.49.37-beta495-tag-validate-button"
+        versionCode = 614
+        versionName = "3.49.69-beta519"
 
         // ЛИЧНАЯ СБОРКА: по умолчанию ВЫКЛючена (обычный релиз чист). Включается в build-типе
         // debug (см. buildTypes). Личные «фишки для себя» в коде прячутся за
@@ -190,7 +190,7 @@ android {
     }
 
     kotlinOptions {
-        jvmTarget = "17"
+            jvmTarget = "17"
     }
 
     buildFeatures {

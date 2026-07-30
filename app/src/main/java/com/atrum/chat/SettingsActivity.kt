@@ -62,8 +62,37 @@ class SettingsActivity : SecureActivity() {
         setupProfile()
         setupBanner()
 
+        // Полный хитбокс аватара (репорт: «хитбокс кривой и наполовину»). Аватар (110dp,
+        // llProfile marginTop=-55dp) верхней половиной наезжает на кликабельный баннер
+        // flBannerSection, и тот перехватывал нажатия по верхней части круга. Прошлый вариант
+        // считал прямоугольник аватара в координатах layout — из-за отрицательного отступа они
+        // разъезжались с реально нарисованным аватаром («криво/наполовину»). Теперь сравниваем в
+        // ЭКРАННЫХ координатах (getLocationOnScreen + rawX/rawY) — они отражают фактическое
+        // положение аватара независимо от отступов/скролла. Тап в область аватара → выбор аватара,
+        // иначе → правка баннера. Нижнюю половину, где выигрывает сам аватар, обрабатывает его
+        // собственный onClick выше — здесь дублирования нет (тач достаётся кому-то одному).
+        var bannerDownRawX = 0f
+        var bannerDownRawY = 0f
+        binding.flBannerSection.setOnTouchListener { _, ev ->
+            if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
+                bannerDownRawX = ev.rawX; bannerDownRawY = ev.rawY
+            }
+            false // не потребляем — обычный клик/ripple работают как прежде
+        }
         binding.flBannerSection.setOnClickListener {
-            startActivity(Intent(this, HeaderSettingsActivity::class.java))
+            val loc = IntArray(2)
+            binding.flAvatarContainer.getLocationOnScreen(loc)
+            val aw = binding.flAvatarContainer.width
+            val ah = binding.flAvatarContainer.height
+            val inAvatar = aw > 0 && ah > 0 &&
+                bannerDownRawX >= loc[0] && bannerDownRawX <= loc[0] + aw &&
+                bannerDownRawY >= loc[1] && bannerDownRawY <= loc[1] + ah
+            if (inAvatar) {
+                AppLock.beginShareGrace()
+                pickAvatar()
+            } else {
+                startActivity(Intent(this, HeaderSettingsActivity::class.java))
+            }
         }
 
         binding.itemPersonalization.setOnClickListener {
@@ -409,7 +438,8 @@ class SettingsActivity : SecureActivity() {
             title = getString(R.string.settings_edit_name_title),
             initialText = prefs.myName,
             positiveText = getString(R.string.btn_save),
-            negativeText = getString(R.string.btn_cancel)
+            negativeText = getString(R.string.btn_cancel),
+            validator = { it.isNotBlank() && !ZalgoFilter.containsZalgo(it) }
         ) { newName ->
             if (newName.isNotBlank()) {
                 saveNameNow(newName)
@@ -438,7 +468,8 @@ class SettingsActivity : SecureActivity() {
             title = getString(R.string.settings_edit_status_title),
             initialText = prefs.myStatus,
             positiveText = getString(R.string.btn_save),
-            negativeText = getString(R.string.btn_cancel)
+            negativeText = getString(R.string.btn_cancel),
+            validator = { !ZalgoFilter.containsZalgo(it) }
         ) { newStatus ->
             saveStatusNow(newStatus)
         }

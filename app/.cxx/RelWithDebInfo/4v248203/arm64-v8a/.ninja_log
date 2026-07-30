@@ -1,3 +1,9 @@
 # ninja log v5
 1	1063	8063988683415574	CMakeFiles/atrumcodec.dir/tamper.c.o	91e56f5c14682ae6
 1065	1259	8063988685386302	C:/Users/Dimash/Desktop/ATRUM/app/build/intermediates/cxx/RelWithDebInfo/4v248203/obj/arm64-v8a/libatrumcodec.so	275df991f3ad9209
+0	110	0	clean	1432e7c4c6c092
+24	1170	8069214002822713	CMakeFiles/atrumcodec.dir/tamper.c.o	91e56f5c14682ae6
+1171	1857	8069214009859395	C:/Users/Dimash/Desktop/ATRUM/app/build/intermediates/cxx/RelWithDebInfo/4v248203/obj/arm64-v8a/libatrumcodec.so	275df991f3ad9209
+0	11	0	clean	1432e7c4c6c092
+21	3330	8069236306882759	CMakeFiles/atrumcodec.dir/tamper.c.o	91e56f5c14682ae6
+3333	6092	8069236337345568	C:/Users/Dimash/Desktop/ATRUM/app/build/intermediates/cxx/RelWithDebInfo/4v248203/obj/arm64-v8a/libatrumcodec.so	275df991f3ad9209

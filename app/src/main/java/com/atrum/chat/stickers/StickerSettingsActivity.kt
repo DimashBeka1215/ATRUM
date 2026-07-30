@@ -12,6 +12,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.atrum.chat.AppLock
 import com.atrum.chat.NeonDialog
+import com.atrum.chat.ZalgoFilter
 import com.atrum.chat.Prefs
 import com.atrum.chat.R
 import com.atrum.chat.transparentNavBar
@@ -331,7 +332,8 @@ class StickerSettingsActivity : AppCompatActivity() {
             initialText = pack.title,
             positiveText = getString(R.string.sticker_rename_save),
             negativeText = getString(R.string.sticker_add_pack_cancel),
-            subtitle = getString(R.string.sticker_rename_hint)
+            subtitle = getString(R.string.sticker_rename_hint),
+            validator = { it.isNotBlank() && !ZalgoFilter.containsZalgo(it) }
         ) { newTitle ->
             if (newTitle.isNotBlank() && newTitle.trim() != pack.title) {
                 scope.launch {

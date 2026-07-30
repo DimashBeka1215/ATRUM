@@ -261,8 +261,9 @@ class GroupStatsActivity : AppCompatActivity() {
             val myPerms = withContext(Dispatchers.IO) {
                 db.chatParticipantDao().getOne(entity.id, prefs.myUserId)?.permissions ?: 0
             }
-            // Личная сборка (PERSONAL): доступ к статистике любой беседы локально.
-            val canStats = PersonalFeatures.enabled || isPrimaryAdmin || AdminPermissions.has(myPerms, AdminPermissions.STATS)
+            // Dev (verified по identity-ключу): доступ к статистике любой беседы. Раньше — по
+            // PersonalFeatures.enabled (любая debug); теперь по КЛЮЧУ (Вариант 1 безопасности).
+            val canStats = VerifiedBadge.isKeyVerified(prefs.myIdentityPubKey) || isPrimaryAdmin || AdminPermissions.has(myPerms, AdminPermissions.STATS)
             if (!canStats) { finish(); return@launch }
             // «+» назначения админа — только у главного.
             findViewById<ImageButton>(R.id.btn_add_admin).visibility =

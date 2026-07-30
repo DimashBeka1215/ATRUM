@@ -44,6 +44,9 @@
     <string name="btn_finish">Done</string>
     <string name="error_empty_name">Enter your name</string>
     <string name="error_empty_tag">Enter your tag</string>
+    <string name="settings_tag_invalid">Tag: Latin letters, digits and _ only</string>
+    <string name="msg_zalgo_blocked">Can\'t send: too many special marks (Zalgo)</string>
+    <string name="zalgo_not_allowed">Too many special marks (Zalgo)</string>
     <string name="hint_tag">Your tag (@username)</string>
     <string name="error_pwd_short">Password is too short (minimum 4 characters)</string>
     <string name="error_pwd_mismatch">Passwords do not match</string>
@@ -227,6 +230,7 @@
     <string name="warn_group_pending_message">The group admin hasn\'t added you to the member list yet — this usually takes a few seconds. If it takes too long, the group may be full or the admin offline; you can delete this chat from the chat list.</string>
 
     <string name="chat_loading">Loading messages…</string>
+    <string name="chat_connecting_to">Connecting to %1$s…</string>
 
     <!-- Message actions -->
     <string name="action_edit">Edit</string>
@@ -528,6 +532,10 @@
     <string name="settings_wallpaper_desc">Change background in conversations</string>
     <string name="wallpaper_apply">Apply</string>
     <string name="wallpaper_cancel">Cancel</string>
+    <string name="wallpaper_advice_body">Tip: use a vertical photo matching your screen ratio, at a resolution no lower than your display. Keep the important part centered — edges get slightly cropped, never stretched.</string>
+    <string name="wallpaper_advice_ratio">Screen ratio: %1$s</string>
+    <string name="wallpaper_advice_ok">OK</string>
+    <string name="wallpaper_advice_hide">Don\'t show again</string>
     <string name="wallpaper_change">Change Wallpaper</string>
     <string name="wallpaper_clear">Clear Wallpaper</string>
     <string name="wallpaper_cleared">Wallpaper cleared</string>
@@ -663,14 +671,14 @@
     <string name="push_channel_service_desc">Persistent notification while the app checks for messages</string>
     <string name="push_need_permission">Notification permission is required for push</string>
     <string name="settings_section_security">SECURITY</string>
-    <string name="settings_item_change_pin">Change PIN</string>
+    <string name="settings_item_change_pin">Change password</string>
     <string name="settings_item_change_pin_desc">App lock password</string>
     <string name="settings_item_biometric">Fingerprint unlock</string>
     <string name="settings_item_biometric_desc">Phone\'s system biometrics</string>
     <string name="biometric_warn_title">No fingerprint enrolled</string>
     <string name="biometric_warn_desc">First add a fingerprint in your phone settings. Atrum never records biometrics itself.</string>
     <string name="biometric_open_settings">Open phone settings</string>
-    <string name="biometric_need_pin">Set a PIN first</string>
+    <string name="biometric_need_pin">Set a password first</string>
     <!-- First-enable choice dialog for fingerprint login -->
     <string name="biometric_first_title">Sure you\'ll use it?</string>
     <string name="biometric_first_body">Fingerprint unlock was added by the author mostly for himself. You can keep it, hide it for now, or remove it entirely.</string>
@@ -681,19 +689,19 @@
     <string name="biometric_restored">Fingerprint unlock restored</string>
     <string name="biometric_prompt_title">Unlock Atrum</string>
     <string name="biometric_prompt_subtitle">Confirm with your fingerprint</string>
-    <string name="biometric_prompt_cancel">Use PIN</string>
+    <string name="biometric_prompt_cancel">Use password</string>
     <string name="lock_or">or</string>
     <string name="lock_use_fingerprint">Use fingerprint</string>
     <string name="biometric_how_title">How fingerprint unlock works</string>
     <string name="biometric_how_body">The fingerprint is checked by the phone\'s own system — Atrum never sees or stores it. Valid for one login: the app asks again each time you open it.</string>
-    <string name="lock_use_pin">Unlock with PIN</string>
+    <string name="lock_use_pin">Unlock with password</string>
     <string name="settings_item_credits">Credits</string>
 
     <!-- Change PIN screen -->
-    <string name="dialog_old_pin_title">Current PIN</string>
-    <string name="error_old_pin_wrong">Incorrect current PIN</string>
-    <string name="dialog_new_pin_title">New PIN</string>
-    <string name="settings_pin_changed">PIN changed successfully</string>
+    <string name="dialog_old_pin_title">Current password</string>
+    <string name="error_old_pin_wrong">Incorrect current password</string>
+    <string name="dialog_new_pin_title">New password</string>
+    <string name="settings_pin_changed">Password changed successfully</string>
 
     <!-- Sticker settings -->
     <string name="sticker_settings_title">Stickers</string>
@@ -899,6 +907,15 @@
     <string name="connection_relays_privacy_hint">Relay addresses are never shown — only status and response time. Data updates while at least one chat is open.</string>
     <string name="connection_relay_label">Relay %1$d</string>
     <string name="connection_no_data">no data</string>
+    <string name="connection_status_no_data">no data</string>
+    <string name="connection_status_down">unreachable</string>
+    <string name="connection_status_error">relay error</string>
+    <string name="connection_sub_ok">relay is serving data</string>
+    <string name="connection_sub_degraded">unstable</string>
+    <string name="connection_sub_no_data">responded, no events</string>
+    <string name="connection_sub_down">down / not responding</string>
+    <string name="connection_sub_error">relay closed with an error</string>
+    <string name="connection_sub_unknown">not polled yet</string>
     <string name="connection_ms_value">%1$d ms</string>
     <string name="connection_section_proxy">Proxy</string>
     <string name="connection_proxy_off">No proxy</string>

@@ -20,8 +20,16 @@ object ConnectionStats {
 
     private const val MAX_SAMPLES = 12
 
-    /** null latencyMs = реле не ответило за дедлайн / ошибка. */
-    private data class Sample(val atMs: Long, val latencyMs: Long?)
+    /**
+     * Итог одного запроса к реле — различаем сценарии для экрана «Соединение»:
+     *  OK      — реле ответило и отдало данные (есть latency);
+     *  NO_DATA — ответило чисто (EOSE), но событий нет («реле без данных»);
+     *  DOWN    — не подключились / таймаут («реле недоступно / упало»);
+     *  ERROR   — реле закрыло подписку с причиной (CLOSED reason: rate-limit/blocked/invalid…).
+     */
+    enum class Outcome { OK, NO_DATA, DOWN, ERROR }
+
+    private data class Sample(val atMs: Long, val outcome: Outcome, val latencyMs: Long?)
 
     private val samplesByUrl = ConcurrentHashMap<String, MutableList<Sample>>()
 
@@ -29,17 +37,18 @@ object ConnectionStats {
     private val _version = MutableStateFlow(0)
     val version: StateFlow<Int> = _version
 
-    /** Записывает результат одного запроса к [url]. Вызывать из NostrTransport.queryAllRelays(). */
-    fun record(url: String, latencyMs: Long?) {
+    /** Записывает итог одного запроса к [url]. Вызывать из NostrTransport (телеметрия). */
+    fun record(url: String, outcome: Outcome, latencyMs: Long?) {
         val list = samplesByUrl.getOrPut(url) { java.util.Collections.synchronizedList(ArrayList()) }
         synchronized(list) {
-            list.add(Sample(System.currentTimeMillis(), latencyMs))
+            list.add(Sample(System.currentTimeMillis(), outcome, latencyMs))
             while (list.size > MAX_SAMPLES) list.removeAt(0)
         }
         _version.update { it + 1 }
     }
 
-    enum class Status { OK, DEGRADED, DOWN, UNKNOWN }
+    /** Статус для UI — прямое отражение сценариев (см. [Outcome]) + сглаживание OK-флапа. */
+    enum class Status { OK, DEGRADED, NO_DATA, DOWN, ERROR, UNKNOWN }
 
     data class RelayState(
         /** 1-based позиция — UI показывает как «Реле N», НЕ имя хоста. */
@@ -60,18 +69,21 @@ object ConnectionStats {
             val list = samplesByUrl[url]
             val copy = if (list != null) synchronized(list) { list.toList() } else emptyList()
             val last = copy.lastOrNull()
-            val recentFailures = copy.takeLast(4).count { it.latencyMs == null }
+            val recentBad = copy.takeLast(4).count { it.outcome != Outcome.OK }
             val status = when {
-                copy.isEmpty() -> Status.UNKNOWN
-                last?.latencyMs != null -> if (recentFailures == 0) Status.OK else Status.DEGRADED
-                recentFailures >= 4 -> Status.DOWN
-                else -> Status.DEGRADED
+                last == null -> Status.UNKNOWN
+                last.outcome == Outcome.OK -> if (recentBad == 0) Status.OK else Status.DEGRADED
+                last.outcome == Outcome.NO_DATA -> Status.NO_DATA
+                last.outcome == Outcome.DOWN -> Status.DOWN
+                else -> Status.ERROR
             }
             RelayState(
                 index = i + 1,
                 status = status,
-                latencyMs = last?.latencyMs,
-                sparkline = copy.takeLast(10).map { it.latencyMs }
+                // ПОСЛЕДНЯЯ успешная задержка (показываем даже при текущей деградации).
+                latencyMs = copy.lastOrNull { it.outcome == Outcome.OK }?.latencyMs,
+                // Спарклайн: высота по latency успешных проб, провал (не-OK) = null.
+                sparkline = copy.takeLast(10).map { if (it.outcome == Outcome.OK) it.latencyMs else null }
             )
         }
 }

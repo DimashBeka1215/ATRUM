@@ -22,7 +22,7 @@ object VerifiedBadge {
      *    аватарке в настройках → ключ копируется в буфер (см. SettingsActivity).
      */
     private val VERIFIED: Set<String> = setOf(
-        "uC/LphU4mzf9kByPTqHH7LxpBaaLX9+T+T8fizVr688=", // Sebastian (владелец)
+        "va4MxU8pVxerGIfNTYGJi9zKwYiVAYR7QeNTHeW0n34=", // Sebastian (владелец)
     )
 
     /** Ключ в списке верифицированных? (только членство, без проверки подлинности). */
@@ -98,8 +98,14 @@ object VerifiedBadge {
         "atrum_idsig_v1_$chatId".toByteArray(Charsets.UTF_8)
 
     /**
-     * Своя галочка (в настройках / у своих сообщений): мой ключ в списке ИЛИ это личная
-     * сборка (чтобы видеть фичу до захардкоживания ключа в релиз). Своя подпись доверенная.
+     * Своя ГАЛОЧКА (только косметика: настройки, свои сообщения) — показываем, если мой
+     * identity-ключ в списке [VERIFIED] ИЛИ это личная (debug) сборка. debug-fallback здесь
+     * БЕЗОПАСЕН: это лишь показ значка на СВОЁМ экране; другие видят галочку только по реальной
+     * подписи ([isVerifiedProfile]), которую debug-сборкой не подделать.
+     *
+     * ⛔ Для ПРАВ и ИММУНИТЕТА (chatIsAdmin, myGroupPermissions, canStats, checkSelfBanned,
+     * мут-иммунитет и т.п.) это использовать НЕЛЬЗЯ — только [isKeyVerified] строго по ключу
+     * (Вариант 1 безопасности): иначе пересборка debug давала бы реальные права/иммунитет.
      */
     fun isVerifiedSelf(myIdentityKeyB64: String?): Boolean =
         isKeyVerified(myIdentityKeyB64) || PersonalFeatures.enabled

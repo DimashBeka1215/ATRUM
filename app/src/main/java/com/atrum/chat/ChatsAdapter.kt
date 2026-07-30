@@ -51,9 +51,39 @@ class ChatsAdapter(
             override fun getOldListSize() = oldList.size
             override fun getNewListSize() = filtered.size
             override fun areItemsTheSame(o: Int, n: Int) = oldList[o].id == filtered[n].id
-            override fun areContentsTheSame(o: Int, n: Int) = oldList[o] == filtered[n] && searchQuery.isBlank()
+            override fun areContentsTheSame(o: Int, n: Int): Boolean {
+                // При активном поиске подсветка совпадений может меняться — перерисовываем всегда.
+                if (searchQuery.isNotBlank()) return false
+                val a = oldList[o]; val b = filtered[n]
+                // Раньше здесь был полный data-class `==`, который char-by-char сравнивал и
+                // тяжёлые base64-аватары (30–50 КБ) — на ГЛАВНОМ потоке при каждом апдейте БД
+                // во время синка. На слабых устройствах это тормозило прокрутку списка и
+                // «съедало» клики/зажатия (репорт: фризы + странные нажатия). Теперь сравниваем
+                // только поля, влияющие на отрисовку строки (см. VH.bind), а аватары — по
+                // дешёвой сигнатуре (длина + hashCode строки кэширован), без char-by-char.
+                return a.isPinned == b.isPinned &&
+                    a.partnerVerified == b.partnerVerified &&
+                    a.isFavorites == b.isFavorites &&
+                    a.partnerDeleted == b.partnerDeleted &&
+                    a.isGroup == b.isGroup &&
+                    a.chatId == b.chatId &&
+                    a.partnerName == b.partnerName &&
+                    a.partnerTag == b.partnerTag &&
+                    a.groupName == b.groupName &&
+                    a.lastMessage == b.lastMessage &&
+                    a.lastTimeMs == b.lastTimeMs &&
+                    a.unreadCount == b.unreadCount &&
+                    a.mentionMsgIds == b.mentionMsgIds &&
+                    avatarSig(a.partnerAvatarBase64) == avatarSig(b.partnerAvatarBase64) &&
+                    avatarSig(a.groupAvatarBase64) == avatarSig(b.groupAvatarBase64)
+            }
         }).dispatchUpdatesTo(this)
     }
+
+    /** Дешёвая сигнатура base64-аватара: длина + кэшированный hashCode строки, без сравнения
+     *  всех 30–50 КБ посимвольно (см. areContentsTheSame). */
+    private fun avatarSig(s: String?): Long =
+        if (s.isNullOrEmpty()) 0L else (s.length.toLong() shl 32) xor (s.hashCode().toLong() and 0xffffffffL)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val view = LayoutInflater.from(parent.context).inflate(R.layout.item_chat, parent, false)

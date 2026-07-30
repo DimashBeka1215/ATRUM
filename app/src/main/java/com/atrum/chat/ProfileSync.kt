@@ -147,8 +147,22 @@ object ProfileSync {
         for ((uid, p) in profiles) {
             if (p.name.isBlank() && p.avatarBase64.isNullOrBlank()) continue // нечего запоминать
             val existing = globalKnownProfiles[uid]
-            if (existing == null || p.updatedAt >= existing.updatedAt) {
+            if (existing == null) {
                 globalKnownProfiles[uid] = p
+            } else if (p.updatedAt >= existing.updatedAt) {
+                // ⚠️ ФИКС (репорт: «ава человека исчезает в чате, и в беседах, и в 1:1»):
+                // раньше более свежий профиль ЦЕЛИКОМ заменял известный. parseProfiles зовёт
+                // rememberGlobal с СЫРЫМ снимком блоба — если блоб пришёл с именем, но БЕЗ
+                // аватара (presence/частичный слот/флаки-Tor) и updatedAt новее, глобальный
+                // кэш терял аватар → getGlobalKnown().avatarBase64 = null → аватарка отправителя
+                // в чате пропадала (default-путь refreshMessageAvatars на onCreate/onResume).
+                // Делаем поля «липкими» на уровне поля, как уже сделано в unionWithKnown: не
+                // понижаем уже известные аватар/имя/тег до пустого, если новый пришёл без них.
+                globalKnownProfiles[uid] = p.copy(
+                    avatarBase64 = p.avatarBase64?.takeIf { it.isNotBlank() } ?: existing.avatarBase64,
+                    name = p.name.ifBlank { existing.name },
+                    tag = p.tag?.takeIf { it.isNotBlank() } ?: existing.tag
+                )
             }
         }
     }
@@ -343,7 +357,10 @@ object ProfileSync {
         myIdentityPubKey: String? = null,
         myEphemeralSig: String? = null,
         myIdentitySig: String? = null,
-        myVerifiedPartnerIdk: String? = null
+        myVerifiedPartnerIdk: String? = null,
+        // Read receipt: если задан — монотонно продвигаем lastReadIndex этим пушем (нужно для
+        // офлайн-флаша «прочитано» при быстром выходе из чата). null = сохранить как в base.
+        lastReadIndex: Int? = null
     ): Boolean = profilesMutex.withLock {
         try {
             val existing = unionWithKnown(api.chatId, pullProfiles(api, password))
@@ -360,6 +377,8 @@ object ProfileSync {
                 typingTs           = typingTs,
                 onlineTs           = onlineTs,
                 recordingTs        = recordingTs,
+                // Read receipt: монотонно (не откатываем назад); null-параметр = как в base.
+                lastReadIndex      = maxOf(base.lastReadIndex, lastReadIndex ?: base.lastReadIndex),
                 ephemeralPubKey    = myEphemeralPubKey ?: base.ephemeralPubKey,
                 // identity-поля всегда заново вставляем — чтобы presence-пуш их не терял
                 identityPubKey     = myIdentityPubKey ?: base.identityPubKey,

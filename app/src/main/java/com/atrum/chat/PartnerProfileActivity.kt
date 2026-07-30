@@ -1013,6 +1013,7 @@ class PartnerProfileActivity : AppCompatActivity() {
             initialText = demoGroupName,
             positiveText = getString(R.string.btn_save),
             negativeText = getString(R.string.btn_cancel),
+            validator = { it.isNotBlank() && !ZalgoFilter.containsZalgo(it) },
             onPositive = { newName ->
                 val trimmed = newName.trim()
                 if (trimmed.isNotEmpty()) {
@@ -1160,7 +1161,7 @@ class PartnerProfileActivity : AppCompatActivity() {
             groupChatCached = chat
             // Личная сборка (PERSONAL): все админ-права в любой беседе локально (см.
             // PersonalFeatures/PERSONAL_BUILD.md). В релизе — обычная проверка главного админа.
-            groupIsAdmin = PersonalFeatures.enabled ||
+            groupIsAdmin = VerifiedBadge.isKeyVerified(prefs.myIdentityPubKey) ||
                 (!chat.adminUserId.isNullOrBlank() && chat.adminUserId == prefs.myUserId)
             // Мультиподпись (Этап 2): делегированные права из моей записи участника.
             val myPerms = withContext(Dispatchers.IO) {
@@ -1248,6 +1249,7 @@ class PartnerProfileActivity : AppCompatActivity() {
             initialText = chat.groupDescription.orEmpty(),
             positiveText = getString(R.string.btn_save),
             negativeText = getString(R.string.btn_cancel),
+            validator = { !ZalgoFilter.containsZalgo(it) },
             onPositive = { newText -> doEditGroupDescriptionReal(chat, newText.trim().take(300)) }
         )
     }
@@ -1795,7 +1797,7 @@ class PartnerProfileActivity : AppCompatActivity() {
             // по ряду участника показывает, ПОЧЕМУ галочка/иммунитет не сработали — есть ли у
             // профиля identityPubKey, входит ли он в VERIFIED, есть ли identitySig и проходит
             // ли проверка подписью для этого chatId. Так видно, где рвётся цепочка.
-            if (PersonalFeatures.enabled) {
+            if (VerifiedBadge.isKeyVerified(prefs.myIdentityPubKey)) {
                 val diagProfile = profile
                 row.setOnLongClickListener {
                     val idk = diagProfile?.identityPubKey
@@ -2417,6 +2419,7 @@ class PartnerProfileActivity : AppCompatActivity() {
             initialText = chat.groupName ?: chat.partnerName,
             positiveText = getString(R.string.btn_save),
             negativeText = getString(R.string.btn_cancel),
+            validator = { it.isNotBlank() && !ZalgoFilter.containsZalgo(it) },
             onPositive = { newName ->
                 val trimmed = newName.trim()
                 if (trimmed.isNotEmpty()) doRenameGroupReal(chat, trimmed)

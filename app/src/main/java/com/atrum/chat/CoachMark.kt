@@ -82,6 +82,10 @@ object CoachMark {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
                 )
             )
+            // Флаг «просмотрено» ставим сразу при первом ПОКАЗЕ, а не только по завершению тура.
+            // Иначе, если пользователь ушёл с экрана (Back/навигация) не долистав до конца,
+            // onDone не вызывался, флаг не сохранялся — и плашки появлялись повторно.
+            prefs.setCoachShown(tourKey)
         }
     }
 

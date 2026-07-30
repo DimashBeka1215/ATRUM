@@ -43,6 +43,7 @@ class WallpaperPreviewActivity : SecureActivity() {
         applyMockChatStyle()
         setupSliders()
         updateMockAlpha()
+        setupAdviceBanner()
 
         binding.btnCancel.setOnClickListener { finish() }
 
@@ -60,6 +61,57 @@ class WallpaperPreviewActivity : SecureActivity() {
             prefs.uiAlpha          = binding.seekUi.progress          + MIN_ALPHA
             setResult(RESULT_OK)
             finish()
+        }
+    }
+
+    // ── Плашка-совет по выбору обоев ──────────────────────────────────────────
+
+    /**
+     * Фиолетовая плашка с рекомендациями, как выбрать обои, чтобы ничего не растягивало.
+     * Показывает реальные разрешение и пропорции экрана устройства. «ОК» — скрыть на этот
+     * раз, «Больше не показывать» — скрыть навсегда (флаг в Prefs).
+     */
+    private fun setupAdviceBanner() {
+        if (prefs.wallpaperAdviceDismissed) {
+            binding.adviceBanner.visibility = android.view.View.GONE
+            return
+        }
+        // Текст совета: префикс до первого «:» («Совет:» / «Tip:») подсвечиваем акцентом.
+        val body = getString(R.string.wallpaper_advice_body)
+        val colon = body.indexOf(':')
+        val spanned = android.text.SpannableString(body)
+        if (colon > 0) {
+            spanned.setSpan(
+                android.text.style.ForegroundColorSpan(
+                    androidx.core.content.ContextCompat.getColor(this, R.color.accent_light)
+                ), 0, colon + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            spanned.setSpan(
+                android.text.style.StyleSpan(android.graphics.Typeface.BOLD),
+                0, colon + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+        }
+        binding.tvAdviceBody.text = spanned
+
+        // Реальные данные экрана устройства: разрешение + пропорция, нормированная к :9
+        // (как принято для телефонов, напр. 9:19.5), считается от текущего дисплея.
+        val dm = resources.displayMetrics
+        val lo = minOf(dm.widthPixels, dm.heightPixels)
+        val hi = maxOf(dm.widthPixels, dm.heightPixels)
+        val ratioStr = if (lo > 0) {
+            val n = Math.round(hi.toDouble() / lo * 9.0 * 10.0) / 10.0
+            val nStr = if (n % 1.0 == 0.0) n.toInt().toString() else n.toString()
+            "9:$nStr"
+        } else "—"
+        binding.tvAdviceRatio.text =
+            getString(R.string.wallpaper_advice_ratio, "$lo × $hi · $ratioStr")
+
+        binding.btnAdviceOk.setOnClickListener {
+            binding.adviceBanner.visibility = android.view.View.GONE
+        }
+        binding.btnAdviceHide.setOnClickListener {
+            prefs.wallpaperAdviceDismissed = true
+            binding.adviceBanner.visibility = android.view.View.GONE
         }
     }
 

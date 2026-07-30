@@ -451,7 +451,11 @@ class MessageAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val msg = effectiveList()[position]
-        val isRead = msg.isSelf && position < partnerLastReadIndex
+        // Галочка «прочитано» — по АБСОЛЮТНОМУ индексу строки (msg.lineIndex), а НЕ позиции в
+        // адаптере: адаптер скрывает нерасшифрованные (mapNotNull) и забаненных (withoutBanned)
+        // и добавляет pending/системные → позиция ≠ номер строки, и галочка вставала не на том
+        // сообщении. partnerLastReadIndex = число строк chat.txt, прочитанных собеседником.
+        val isRead = msg.isSelf && msg.lineIndex in 0 until partnerLastReadIndex
         val isSelected = isSelectionMode && selectedRawIds.contains(msg.msgId)
         val isHighlighted = msg.msgId == highlightedMsgId
         holder.bind(

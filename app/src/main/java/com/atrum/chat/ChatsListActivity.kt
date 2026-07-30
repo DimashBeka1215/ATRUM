@@ -98,6 +98,10 @@ class ChatsListActivity : SecureActivity() {
 
         binding.rvChats.layoutManager = LinearLayoutManager(this)
         binding.rvChats.adapter = adapter
+        // Высота строки чата фиксирована — RecyclerView может не пересчитывать размеры при
+        // каждом обновлении содержимого (меньше work на главном потоке при синке → плавнее
+        // прокрутка на слабых устройствах).
+        binding.rvChats.setHasFixedSize(true)
 
         binding.fabNewChat.setOnClickListener {
             startActivity(Intent(this, CreateChatActivity::class.java))
@@ -336,6 +340,13 @@ class ChatsListActivity : SecureActivity() {
                             avatarToSave != fresh.partnerAvatarBase64) {
                             db.chatDao().updatePartnerProfile(chatId, nameToSave, tagToSave, avatarToSave)
                         }
+                        // Единый dev-щит и в СПИСКЕ (без захода в чат): isVerifiedDev по identity-
+                        // подписи — тот же механизм, что в беседах и ChatActivity. Неподделываемо
+                        // (проверяется подпись); ставим устойчивый флаг, чтобы галочка держалась.
+                        if (!fresh.partnerVerified &&
+                            VerifiedBadge.isVerifiedDev(api.chatId, partner.userId, partner)) {
+                            db.chatDao().updatePartnerVerified(fresh.id, true)
+                        }
                     }
                 }
             } catch (_: Exception) {} finally {
@@ -416,8 +427,14 @@ class ChatsListActivity : SecureActivity() {
                             else -> pm.text
                         }
                         val preview = (if (pm.isSelf) "Вы: $body" else body).take(80)
-                        db.chatDao().updatePreview(chat.id, preview, chat.lastTimeMs)
+                        if (preview != chat.lastMessage) db.chatDao().updatePreview(chat.id, preview, chat.lastTimeMs)
                     }
+                    // lastDec == null (напр. forward secrecy при закрытом чате) — НЕ трогаем превью:
+                    // сообщение существует, просто здесь не читается; оставляем последнее вычисленное.
+                } else if (chat.lastMessage.isNotEmpty()) {
+                    // Сообщений не осталось (очистка/удаление, в т.ч. с другого устройства) — чистим
+                    // застрявший «отпечаток»: раньше превью обновлялось только при непустом списке.
+                    db.chatDao().updatePreview(chat.id, "", chat.lastTimeMs)
                 }
             } catch (_: Exception) {} finally {
                 messageBusy.remove(chatId)
@@ -449,7 +466,7 @@ class ChatsListActivity : SecureActivity() {
                 val myUserId = prefs.myUserId
                 // Верифицированный разработчик неприкосновенен (PERSONAL_BUILD.md §Часть 3):
                 // его беседы не прячутся из списка, даже если members.txt пометил его banned.
-                val meImmune = VerifiedBadge.isVerifiedSelf(prefs.myIdentityPubKey)
+                val meImmune = VerifiedBadge.isKeyVerified(prefs.myIdentityPubKey)
                 val visible = withContext(Dispatchers.IO) {
                     list.filter { c ->
                         !c.isGroup || meImmune || db.chatParticipantDao().getOne(c.id, myUserId)?.banned != true
@@ -940,6 +957,12 @@ class ChatsListActivity : SecureActivity() {
             if (pin.isBlank()) {
                 android.widget.Toast.makeText(
                     this, R.string.invite_pin_empty, android.widget.Toast.LENGTH_SHORT
+                ).show()
+                return@setOnClickListener
+            }
+            if (ZalgoFilter.containsZalgo(pin)) {
+                android.widget.Toast.makeText(
+                    this, R.string.zalgo_not_allowed, android.widget.Toast.LENGTH_SHORT
                 ).show()
                 return@setOnClickListener
             }

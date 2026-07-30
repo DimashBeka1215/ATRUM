@@ -53,3 +53,4 @@ ROADMAP_TODO.md
 
 # Каталог SDK-модов — локальный, не в репозиторий
 mods-sdk/
+app/debug/*.apk

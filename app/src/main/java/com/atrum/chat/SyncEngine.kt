@@ -4,6 +4,7 @@ import com.atrum.chat.transport.AllChannelData
 import com.atrum.chat.transport.ChatTransport
 import com.atrum.chat.transport.NostrTransport
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import java.util.concurrent.atomic.AtomicBoolean
@@ -29,10 +30,28 @@ class SyncEngine(private val transport: ChatTransport) {
      */
     val events: SharedFlow<AllChannelData> = _events
 
+    private val _synced = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+    /**
+     * Горячий поток «реле достигнуто»: эмитится на КАЖДОМ успешном опросе — и при 200
+     * (данные пришли), и при 304 (изменений нет). Отличие от [events]: [events] молчит на
+     * 304, а этот сигнал подтверждает сам факт связи. Нужен экрану «Соединение с {ник}…»,
+     * чтобы снять оверлей/статус подключения даже когда контент совпал с локальным (304).
+     * На сетевой ошибке НЕ эмитится (связи нет).
+     */
+    val synced: SharedFlow<Unit> = _synced
+
     // ── Internal state ────────────────────────────────────────────────────────
 
     private var pollJob: Job? = null
     private val syncRunning      = AtomicBoolean(false)
+
+    /**
+     * Сигнал пробуждения цикла: forceSync(0) шлёт сюда, чтобы ПРЕРВАТЬ текущий `delay`
+     * ожидания и синхронизировать НЕМЕДЛЕННО, а не на следующей итерации. CONFLATED —
+     * лишние сигналы схлопываются в один (не копятся), потерь нет: если сигнал пришёл,
+     * пока цикл не в ожидании, он подхватится на входе в ближайшее ожидание.
+     */
+    private val wakeSignal = Channel<Unit>(Channel.CONFLATED)
 
     @Volatile private var rateLimitUntilMs = 0L
     @Volatile private var forceSyncAtMs    = Long.MAX_VALUE
@@ -60,6 +79,9 @@ class SyncEngine(private val transport: ChatTransport) {
     fun start(scope: CoroutineScope) {
         pollJob?.cancel()
         syncRunning.set(false)
+        // Первый опрос — СРАЗУ при открытии чата (без ожидания целого интервала): собеседник
+        // «ловит» синк мгновенно, а не через ~1с. Интервал опроса при этом не меняется (§1).
+        forceSyncAtMs = 0L
         pollJob = scope.launch {
             while (isActive) {
                 val now = System.currentTimeMillis()
@@ -72,9 +94,12 @@ class SyncEngine(private val transport: ChatTransport) {
                 }
 
                 // ── Вычисляем время до следующего тика ────────────────────────
+                // Ожидание ПРЕРЫВАЕМОЕ: forceSync(0) (событие из стрима watchMessages / после
+                // отправки) будит цикл немедленно через wakeSignal — доставка реалтайм, а не
+                // «до 1с спустя, когда закончится текущий delay». Частота фонового опроса та же.
                 val forceIn = (forceSyncAtMs - now).coerceAtLeast(0L)
                 val waitMs  = minOf(currentIntervalMs, forceIn)
-                if (waitMs > 0L) delay(waitMs)
+                if (waitMs > 0L) withTimeoutOrNull(waitMs) { wakeSignal.receive() }
 
                 // ── Single-flight guard: пропускаем если предыдущий GET не завершён.
                 // ВАЖНО: forceSyncAtMs сбрасываем только ПОСЛЕ успешного compareAndSet.
@@ -107,6 +132,10 @@ class SyncEngine(private val transport: ChatTransport) {
         if (target < forceSyncAtMs) {
             forceSyncAtMs = target
         }
+        // Немедленный форс (delayMs<=0) — будим ожидающий цикл, чтобы не ждать конца текущего
+        // delay. trySend не блокирует; CONFLATED гарантирует, что сигнал не потеряется и не
+        // накопится. Отложенный форс (delayMs>0) цикл подхватит по forceSyncAtMs штатно.
+        if (delayMs <= 0L) wakeSignal.trySend(Unit)
     }
 
     /** Остановить polling. Вызывать в onPause / onDestroy. */
@@ -130,6 +159,7 @@ class SyncEngine(private val transport: ChatTransport) {
                 // 304 Not Modified — канал не изменился
                 // Продлеваем TTL кэша-подсказки appendLine (без GET не протухнет)
                 transport.touchChatContentHint()
+                _synced.tryEmit(Unit)   // связь есть, просто без изменений
                 return
             }
 
@@ -138,6 +168,7 @@ class SyncEngine(private val transport: ChatTransport) {
 
             // Публикуем данные всем подписчикам
             _events.tryEmit(data)
+            _synced.tryEmit(Unit)       // связь есть + пришли данные
 
         } catch (e: RateLimitException) {
             // Relay rate limit — пауза на рекомендованное время (min 30s, max 2min)

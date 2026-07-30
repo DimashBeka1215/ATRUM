@@ -180,6 +180,84 @@
         android:paddingTop="32dp"
         android:paddingBottom="20dp">
 
+        <!-- ── Плашка-совет по выбору обоев (фиолетовая, стиль bg_info_banner) ── -->
+        <LinearLayout
+            android:id="@+id/adviceBanner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="@drawable/bg_info_banner"
+            android:padding="10dp"
+            android:layout_marginBottom="14dp">
+
+            <ImageView
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:src="@drawable/ic_info_outline"
+                app:tint="@color/accent_light"
+                android:layout_marginEnd="8dp"
+                android:layout_marginTop="1dp"
+                android:contentDescription="@null" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvAdviceBody"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp"
+                    android:lineSpacingMultiplier="1.15" />
+
+                <TextView
+                    android:id="@+id/tvAdviceRatio"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11.5sp"
+                    android:layout_marginTop="5dp" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="8dp">
+
+                    <TextView
+                        android:id="@+id/btnAdviceOk"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/wallpaper_advice_ok"
+                        android:textColor="@color/white"
+                        android:textSize="12sp"
+                        android:fontFamily="sans-serif-medium"
+                        android:background="@drawable/bg_button"
+                        android:paddingHorizontal="18dp"
+                        android:paddingVertical="5dp"
+                        android:clickable="true"
+                        android:focusable="true" />
+
+                    <TextView
+                        android:id="@+id/btnAdviceHide"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/wallpaper_advice_hide"
+                        android:textColor="@color/text_tertiary"
+                        android:textSize="12sp"
+                        android:layout_marginStart="14dp"
+                        android:padding="4dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+
         <!-- ── Мои сообщения ─────────────────────────────────────────── -->
         <LinearLayout
             android:layout_width="match_parent"

@@ -159,6 +159,20 @@ class ChatActivity : SecureActivity() {
     // Гейт показа чата: держим loading overlay пока не установится сессия (или таймаут).
     private var contentLoaded = false
 
+    // ── «Соединение с {ник}…» (реконнект-оверлей 1:1) ───────────────────────────
+    // liveSyncArrived — реле хоть раз ответило в этой сессии чата (SyncEngine.synced):
+    // до этого 1:1-чат показывает «Соединение с {ник}…» (в шапке всегда; полноэкранным
+    // оверлеем — только когда локально показывать нечего). Устои: СКОРОСТЬ (§1.5 — история
+    // из локального стора видна сразу) + бесшовность (тихий фоновый реконнект, без ошибок).
+    private var liveSyncArrived = false
+    // Пока true — maybeReveal() НЕ раскрывает чат (держим оверлей «Соединение…»): нужно
+    // потому что processChannelData(пустой снапшот) ставит contentLoaded=true, и коллектор
+    // иначе снял бы оверлей до живого синка. Снимается в onFirstLiveSync/фоллбеке.
+    private var holdConnectingOverlay = false
+    private var connectFallbackJob: Job? = null
+    private var warmupRetryJob: Job? = null
+    private var syncedCollectorJob: Job? = null
+
     /**
      * Счётчик последовательных ошибок одного типа.
      * Баннер показывается только после [FAILURES_BEFORE_WARNING] неудачных попыток —
@@ -198,6 +212,11 @@ class ChatActivity : SecureActivity() {
 
     /** Кэш последнего отправленного в канал значения lastReadIndex — чтобы не пушить впустую. */
     private var lastPushedReadIndex: Int = -1
+
+    /** Последний ЗАПРОШЕННЫЙ индекс прочтения (scheduleMarkAsRead), даже если 500мс-таймер не
+     *  успел отработать. Нужен, чтобы при быстром выходе из чата дослать «прочитано» офлайн-
+     *  пушем в onPause (репорт: галочка «прочитано» не приходит при быстром просмотре). */
+    @Volatile private var lastRequestedReadLines: Int = 0
 
     /** Сообщение, на которое мы сейчас отвечаем (null = обычное сообщение). */
     private var replyingTo: Message? = null
@@ -262,6 +281,10 @@ class ChatActivity : SecureActivity() {
 
     /** Расшифрованный контент reactions.txt — для парсинга и манипуляций в handleReactionToggle. */
     private var lastReactionsContent: String = ""
+
+    /** Нормализованная сигнатура текущего набора реакций (union) — чтобы обновлять адаптер
+     *  ТОЛЬКО при реальном изменении набора, а не на каждый перешифрованный слот (анти-мигание). */
+    private var lastReactionsCanon: String = ""
 
     /**
      * Сырой (зашифрованный, уже проверенный транспортом по подписи админа) контент
@@ -953,6 +976,15 @@ class ChatActivity : SecureActivity() {
                 )
                 applyPartnerToHeader()
             }
+            // ⭐ Единый dev-щит СРАЗУ на начальном синке (не ждём первого сообщения/тика): та же
+            // проверка по identity-подписи (isVerifiedDev), что и в processParsedProfiles.
+            // Персистим partnerVerified → щит появляется в шапке немедленно, держится в списке и
+            // оффлайн, и «закрепляется» с первого же синка (репорт: щит был только после 1-го сообщения).
+            if (VerifiedBadge.isVerifiedDev(chat.chatId, partner.userId, partner) && !chat.partnerVerified) {
+                db.chatDao().updatePartnerVerified(chat.id, true)
+                chat = chat.copy(partnerVerified = true)
+                applyPartnerToHeader()
+            }
             // Флаг удалённого профиля
             if (partner.deleted != chat.partnerDeleted) {
                 db.chatDao().updatePartnerDeleted(chat.id, partner.deleted)
@@ -1136,7 +1168,9 @@ class ChatActivity : SecureActivity() {
         // гаснет, когда собеседник оффлайн — без этого fallback галочка пропадала у меня в
         // шапке, пока партнёр не в сети. partnerVerified ставится только по валидной подписи.
         binding.verifiedBadgeHeader.setVerified(liveVerified || chat.partnerVerified, animate = true)
-        if (!chat.partnerTag.isNullOrBlank()) {
+        if (applyConnectingSubtitleIfNeeded()) {
+            // статус подключения показан — тег/«Зашифрованный чат» не перетираем
+        } else if (!chat.partnerTag.isNullOrBlank()) {
             binding.tvChatSubtitle.text = chat.partnerTag
             binding.tvChatSubtitle.setTextColor(ContextCompat.getColor(this, R.color.text_tertiary))
         } else {
@@ -1698,7 +1732,13 @@ class ChatActivity : SecureActivity() {
 
     private fun applyWallpaper() {
         val isPortrait = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
-        val base64 = if (isPortrait) prefs.wallpaperPortrait else prefs.wallpaperLandscape
+        // Обои для текущей ориентации; если для неё не заданы — берём обои ДРУГОЙ ориентации,
+        // а не дефолт. Иначе при повороте свои обои «слетали» на дефолтные, когда пользователь
+        // задал только вертикальные (репорт). scaleType=centerCrop у iv_chat_wallpaper заполняет
+        // экран без искажения — обои не растягиваются ни в портрете, ни в ландшафте.
+        val portraitWp = prefs.wallpaperPortrait?.takeIf { it.isNotBlank() }
+        val landscapeWp = prefs.wallpaperLandscape?.takeIf { it.isNotBlank() }
+        val base64 = if (isPortrait) (portraitWp ?: landscapeWp) else (landscapeWp ?: portraitWp)
         var hasWallpaper = !base64.isNullOrBlank()
         // Atmospheric Glass доступен в любом режиме — с обоями и без
         val isGlass = prefs.chatUiStyle == Prefs.CHAT_UI_GLASS
@@ -1970,6 +2010,12 @@ class ChatActivity : SecureActivity() {
                 firstLoadComplete = false
                 binding.loadingOverlay.alpha = 1f
                 binding.loadingOverlay.visibility = View.VISIBLE
+                // Метка оверлея: для сетевого 1:1 без живого синка — «Соединение с {ник}…»,
+                // иначе стандартная «Загрузка сообщений…» (группы/локальные).
+                binding.tvLoadingLabel.text =
+                    if (!liveSyncArrived && isConnectingCapable())
+                        getString(R.string.chat_connecting_to, chat.partnerName)
+                    else getString(R.string.chat_loading)
                 // Лента остаётся видимой ПОД непрозрачным оверлеем (alpha=1) — сообщения
                 // рендерятся за экраном загрузки, а не проявляются после него (см. revealMessages).
                 binding.rvMessages.alpha = 1f
@@ -2132,6 +2178,10 @@ class ChatActivity : SecureActivity() {
             val capturedSig        = myEphemeralSig
             val capturedIdentitySig = myIdentitySig
             val capturedConfirmed  = prefs.getConfirmedPartnerIdentity(chat.chatId)
+            // Флаш «прочитано» при выходе: если 500мс-таймер не успел, досылаем индекс этим же
+            // офлайн-пушем (монотонно) — иначе быстрый выход терял read receipt (репорт).
+            val capturedReadIndex  = lastRequestedReadLines.takeIf { it > lastPushedReadIndex && it > 0 }
+            if (capturedReadIndex != null) lastPushedReadIndex = capturedReadIndex
             AppScope.launch {
                 // Уход из приложения → офлайн. Ретрай: по Tor единичный PATCH часто
                 // не доходит, и партнёр видел бы «в сети» ещё долго после ухода.
@@ -2154,7 +2204,8 @@ class ChatActivity : SecureActivity() {
                             myIdentityPubKey     = capturedIdentity,
                             myEphemeralSig       = capturedSig,
                             myIdentitySig        = capturedIdentitySig,
-                            myVerifiedPartnerIdk = capturedConfirmed
+                            myVerifiedPartnerIdk = capturedConfirmed,
+                            lastReadIndex        = capturedReadIndex
                         )
                     } catch (_: Exception) { false }
                     if (ok) return@launch
@@ -2181,11 +2232,16 @@ class ChatActivity : SecureActivity() {
                 val local = withContext(Dispatchers.IO) { runCatching { transport.loadLocalSnapshotOrNull() }.getOrNull() }
                 if (local != null && !firstLoadComplete) {
                     runCatching { processChannelData(local) }
-                    // Пустой локальный контент мог не снять оверлей через коллектор сообщений —
-                    // снимаем явно, чтобы пустой чат открывался мгновенно, а не ждал сеть.
-                    if (!firstLoadComplete) {
-                        firstLoadComplete = true
-                        revealMessages()
+                    val hasLocalContent = chatStore.messages.value.isNotEmpty() || chatStore.hasPending()
+                    when {
+                        // Есть локальная история → показываем СРАЗУ (§1.5), не ждём сеть.
+                        hasLocalContent -> if (!firstLoadComplete) { firstLoadComplete = true; revealMessages() }
+                        // Пусто и это сетевой 1:1 → держим «Соединение с {ник}…» (не раскрываем
+                        // пустой чат мгновенно): реконнект в фоне подтянет историю/сообщения, а
+                        // не поймается за фоллбек — тогда раскроем пустое состояние (см. below).
+                        isConnectingCapable() -> showConnectingOverlay()
+                        // Прочее (пустой не-сетевой) → прежнее поведение: открыть мгновенно.
+                        else -> if (!firstLoadComplete) { firstLoadComplete = true; revealMessages() }
                     }
                 }
             }
@@ -2221,6 +2277,16 @@ class ChatActivity : SecureActivity() {
         syncCollectorJob = lifecycleScope.launch {
             syncEngine.events.collect { data ->
                 processChannelData(data)
+            }
+        }
+
+        // Первый успешный ответ реле (200 или 304) → снимаем «Соединение с {ник}…».
+        // Ловит и случай, когда контент совпал с локальным (304): events на 304 молчит,
+        // а связь уже есть — иначе шапка/оверлей залипли бы на «Соединение…».
+        syncedCollectorJob?.cancel()
+        syncedCollectorJob = lifecycleScope.launch {
+            syncEngine.synced.collect {
+                if (!liveSyncArrived) onFirstLiveSync()
             }
         }
 
@@ -2339,11 +2405,19 @@ class ChatActivity : SecureActivity() {
             val vInfo = IdentityState.get(chat.chatId)
             val liveVerified = vInfo.state == IdentityState.State.VERIFIED &&
                 VerifiedBadge.isKeyVerified(vInfo.partnerIdk)
+            // ⭐ ЕДИНЫЙ dev-щит по identity-подписи — тот же механизм, что в беседах
+            // (VerifiedBadge.isVerifiedDev: dev-ключ в списке VERIFIED + валидная identitySig).
+            // Раньше 1:1 требовал IdentityState.VERIFIED (1:1 identity-хендшейк), поэтому
+            // разработчик со СВОИМ единственным identity-ключом получал щит в беседах, но НЕ в
+            // 1:1 (репорт: «в беседах щит есть, в чатах собеседников нет; у меня один ключ»).
+            // Неподделываемо: isVerifiedDev проверяет подпись, знание пароля чата не помогает.
+            val devVerified = VerifiedBadge.isVerifiedDev(chat.chatId, partner.userId, partner)
+            val verified = liveVerified || devVerified
             // Устойчивый fallback — см. applyPartnerToHeader: оффлайн-сессия не гасит галочку.
-            binding.verifiedBadgeHeader.setVerified(liveVerified || chat.partnerVerified, animate = true)
-            // Персистим неподделываемый флаг при первой живой верификации (партнёр онлайн),
-            // чтобы галочка держалась оффлайн даже если список чатов ещё не синкал профиль.
-            if (liveVerified && !chat.partnerVerified) {
+            binding.verifiedBadgeHeader.setVerified(verified || chat.partnerVerified, animate = true)
+            // Персистим неподделываемый флаг при первой верификации (живой 1:1 ИЛИ dev-подпись),
+            // чтобы галочка держалась оффлайн и в списке чатов даже без свежего синка профиля.
+            if (verified && !chat.partnerVerified) {
                 db.chatDao().updatePartnerVerified(chat.id, true)
                 chat = chat.copy(partnerVerified = true)
             }
@@ -2461,25 +2535,49 @@ class ChatActivity : SecureActivity() {
         // без новых сообщений — chatContent не меняется, но reactions.txt изменился,
         // gist ETag изменился → SyncEngine получает 200 → мы сюда попадаем.
         // Ранний return ниже убил бы эти реакции — партнёр никогда бы их не увидел.
-        val reactionsRaw = data.reactionsContent
-        if (reactionsRaw != lastReactionsRaw) {
-            lastReactionsRaw = reactionsRaw
-            // Расшифровываем и парсим реакции в фоновом потоке (V4/Argon2id тяжелый)
-            val decrypted = withContext(Dispatchers.Default) {
-                if (reactionsRaw.isBlank()) ""
-                else CryptoHelper.decrypt(reactionsRaw, chat.chatPassword, chat.chatId) ?: ""
+        // ── Реакции: UNION всех слотов (по одному на pubkey), каждый автор авторитетен ──
+        // ТОЛЬКО за свои реакции. Раньше latestFile брал ОДИН слот с макс. created_at и
+        // затирал реакции из остальных слотов → «мигание/исчезновение реакций, свои и чужие»
+        // (см. §7). Сравниваем НОРМАЛИЗОВАННЫЙ набор (canon), а не зашифрованные байты —
+        // рандомный nonce/перепубликации больше не вызывают лишних перерисовок.
+        if (data.reactionSlotsSigned.isNotEmpty()) {
+            // Дешёвая ранняя проверка: изменился ли вообще набор слотов (pubkey+шифртекст).
+            val slotsSig = data.reactionSlotsSigned.joinToString("") { it.signerPubkey + "" + it.content }
+            if (slotsSig != lastReactionsRaw) {
+                lastReactionsRaw = slotsSig
+                val (map, fullContent) = withContext(Dispatchers.Default) { unionReactions(data.reactionSlotsSigned) }
+                // fullContent — полный набор ВСЕХ авторов; база для read-modify-write в
+                // handleReactionToggle. Свой слот продолжаем писать полным набором, чтобы
+                // старые клиенты (latestFile, один слот) видели всё (обратная совместимость §17).
+                lastReactionsContent = fullContent
+                val canon = canonReactions(map)
+                if (canon != lastReactionsCanon) {
+                    lastReactionsCanon = canon
+                    currentReactions = map
+                    withContext(Dispatchers.Main) { adapter.setReactions(currentReactions, prefs.myUserId) }
+                }
             }
-            val parsedReactions = withContext(Dispatchers.Default) { parseReactions(decrypted) }
-            currentReactions = parsedReactions
-            // ВАЖНО: храним РАСШИФРОВАННЫЙ текущий набор реакций, а НЕ "".
-            // Раньше сбрасывали в "" → следующий локальный toggle строил новый
-            // reactions.txt с нуля и затирал ВСЕ остальные реакции. Теперь toggle
-            // делает read-modify-write поверх реального актуального набора.
-            lastReactionsContent = decrypted
-            // Обновляем реакции в адаптере ТОЛЬКО при реальном изменении — иначе
-            // notifyDataSetChanged на каждый опрос перерисовывает список и стикеры мигают.
-            withContext(Dispatchers.Main) {
-                adapter.setReactions(currentReactions, prefs.myUserId)
+        } else if (transport !is com.atrum.chat.transport.NostrTransport) {
+            // Fallback ТОЛЬКО для не-Nostr транспортов (LocalTransport «Избранное»): старый
+            // одно-слотовый путь. Для Nostr пустой reactionSlotsSigned означает «реакций ещё
+            // нет» ИЛИ «реле временно не ответили» (loadAll подставляет пустой снимок) — в
+            // обоих случаях НИЧЕГО не трогаем, чтобы не погасить уже показанные реакции
+            // (иначе вернулось бы мигание при отказе реле).
+            val reactionsRaw = data.reactionsContent
+            if (reactionsRaw != lastReactionsRaw) {
+                lastReactionsRaw = reactionsRaw
+                val decrypted = withContext(Dispatchers.Default) {
+                    if (reactionsRaw.isBlank()) ""
+                    else CryptoHelper.decrypt(reactionsRaw, chat.chatPassword, chat.chatId) ?: ""
+                }
+                val parsed = withContext(Dispatchers.Default) { parseReactions(decrypted) }
+                lastReactionsContent = decrypted
+                val canon = canonReactions(parsed)
+                if (canon != lastReactionsCanon) {
+                    lastReactionsCanon = canon
+                    currentReactions = parsed
+                    withContext(Dispatchers.Main) { adapter.setReactions(currentReactions, prefs.myUserId) }
+                }
             }
         }
 
@@ -2731,8 +2829,8 @@ class ChatActivity : SecureActivity() {
         val allLines = chatContent.split("\n").filter { it.isNotEmpty() }
 
         // Декодер строк → сообщения (V5/Argon2id тяжёлый → Dispatchers.Default).
-        suspend fun decodeLines(lines: List<String>): List<Message> = withContext(Dispatchers.Default) {
-            lines.mapNotNull { rawLine ->
+        suspend fun decodeLines(lines: List<String>, baseIndex: Int = 0): List<Message> = withContext(Dispatchers.Default) {
+            lines.mapIndexedNotNull { i, rawLine ->
                 val line = rawLine.trim()
                 CryptoHelper.decrypt(line, pass, chat.chatId)?.let { decrypted ->
                     // Фильтруем мусор: V1 (AES-CBC без аутентификации) может
@@ -2744,7 +2842,7 @@ class ChatActivity : SecureActivity() {
                          c.code !in setOf(0x01, 0x02, 0x11, 0x1E, 0x1F))
                     }
                     if (decrypted.length > 8 && garbage * 100 / decrypted.length > 25) null
-                    else Message.fromDecrypted(decrypted, myUid, me, aliases, raw = line)
+                    else Message.fromDecrypted(decrypted, myUid, me, aliases, raw = line).copy(lineIndex = baseIndex + i)
                 }
             }
         }
@@ -2800,7 +2898,10 @@ class ChatActivity : SecureActivity() {
         // сообщений и показываем сразу (снимая оверлей), остальную историю догружаем
         // следом. Argon2id по сообщению очень тяжёлый — убирает ожидание всей истории.
         if (!firstLoadComplete && allLines.size > TAIL_FIRST) {
-            val tailMsgs = decodeLines(allLines.takeLast(TAIL_FIRST)).withoutBanned()
+            val tailMsgs = decodeLines(
+                allLines.takeLast(TAIL_FIRST),
+                baseIndex = (allLines.size - TAIL_FIRST).coerceAtLeast(0)
+            ).withoutBanned()
             if (tailMsgs.isNotEmpty()) {
                 contentLoaded = true
                 chatStore.reconcile(tailMsgs)   // коллектор покажет хвост и снимет оверлей
@@ -2882,7 +2983,7 @@ class ChatActivity : SecureActivity() {
         // Верифицированный разработчик (PERSONAL_BUILD.md §Часть 3) неприкосновенен: бан в мою
         // сторону игнорируется — не выкидываемся с экрана. Неподделываемо: проверка по моему
         // identity-ключу (VerifiedBadge), чужой её не получит.
-        if (VerifiedBadge.isVerifiedSelf(prefs.myIdentityPubKey)) return false
+        if (VerifiedBadge.isKeyVerified(prefs.myIdentityPubKey)) return false
         if (groupBanHandled) return true
         val me = db.chatParticipantDao().getOne(chat.id, prefs.myUserId) ?: return false
         if (!me.banned) return false
@@ -3164,6 +3265,9 @@ class ChatActivity : SecureActivity() {
      * уйдёт из чата — корутина отменится в onPause(), и lastReadIndex не уедет на gist.
      */
     private fun scheduleMarkAsRead(totalLines: Int) {
+        // Запоминаем запрошенный индекс СРАЗУ (до 500мс-таймера): если пользователь выйдет
+        // раньше и таймер отменится в onPause — «прочитано» всё равно уедет офлайн-пушем.
+        lastRequestedReadLines = maxOf(lastRequestedReadLines, totalLines)
         // Если уже была запланирована пометка с таким же totalLines — пропустим.
         // Иначе перезапускаем таймер с актуальным значением.
         markAsReadJob?.cancel()
@@ -3659,6 +3763,12 @@ class ChatActivity : SecureActivity() {
         val text = binding.etMessage.text.toString().trim()
         if (text.isEmpty()) return
 
+        // Zalgo: в тупую блокируем отправку (текст остаётся в поле, можно поправить).
+        if (ZalgoFilter.containsZalgo(text)) {
+            android.widget.Toast.makeText(this, R.string.msg_zalgo_blocked, android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+
         // Активная блокировка — отдельного уведомления не нужно, обратный отсчёт уже виден
         if (sendManager.isPunished()) return
 
@@ -3720,6 +3830,11 @@ class ChatActivity : SecureActivity() {
      * Только при готовом Tor, чтобы не палить реальный IP отправителя на сайт.
      */
     private fun maybeBuildLinkPreview(text: String) {
+        // В режиме Nostr превью ссылок отключено: og-данные тянутся через Tor (медленно,
+        // до 40с connect + 20с read) и отдельным файлом заливаются на реле, из-за чего
+        // отправка сообщений со ссылками ощущается долгой и грузит батарею. По требованию —
+        // для Nostr загрузку превью не выполняем вовсе.
+        if (transport is com.atrum.chat.transport.NostrTransport) return
         val url = LinkPreview.firstUrl(text) ?: return
         if (com.atrum.chat.TorManager.status.value != com.atrum.chat.TorManager.TorStatus.READY) return
         if (!builtPreviewUrls.add(url)) return
@@ -3773,6 +3888,17 @@ class ChatActivity : SecureActivity() {
         val showSend = hasText || stagedUris.isNotEmpty()
         binding.btnSend.visibility = if (showSend) View.VISIBLE else View.GONE
         binding.btnVoice.visibility = if (showSend) View.GONE else View.VISIBLE
+
+        // Zalgo: самолётик тускнеет и не нажимается, пока в тексте/подписи есть Zalgo
+        // (единый паттерн с кнопками ника/тега). IME-«отправить» подстрахован в sendMessage.
+        // НЕ трогаем состояние, пока активна блокировка лимита/анти-спама — иначе включим
+        // кнопку раньше времени (её гасят transportLimit/countdown отдельно).
+        val locked = (::sendManager.isInitialized && sendManager.isPunished()) || transportLimitJob != null
+        if (!locked) {
+            val zalgoBlocked = showSend && ZalgoFilter.containsZalgo(text)
+            binding.btnSend.isEnabled = !zalgoBlocked
+            binding.btnSend.alpha = if (zalgoBlocked) 0.4f else 1f
+        }
     }
 
     private fun hasAudioPermission(): Boolean =
@@ -4045,17 +4171,17 @@ class ChatActivity : SecureActivity() {
                 val encryptedContent = withContext(Dispatchers.Default) {
                     CryptoHelper.encrypt(b64, chat.chatPassword, chat.chatId)
                 }
-                imageUploadQueue.execute {
-                    withContext(Dispatchers.IO) {
-                        transport.appendLine(
-                            encryptedLine = encryptedMessage,
-                            extraFiles = mapOf(contentRef to encryptedContent)
-                        )
-                    }
-                }
-                chatStore.confirmSent(encryptedMessage)
-                syncEngine.forceSync(delayMs = 0L)
-                runCatching { file.delete() }
+                runCatching { file.delete() } // b64 получен, playDir-копия сделана — файл больше не нужен
+                // Заливка голосового в ФОНЕ на AppScope — переживает выход из чата (репорт:
+                // «выход во время отправки голосового обрывает отправку»). Часики → галочка
+                // делает confirmOnSuccess внутри helper.
+                uploadMediaInBackground(
+                    encryptedMessage = encryptedMessage,
+                    extraFiles = mapOf(contentRef to encryptedContent),
+                    progressFileNames = null,
+                    confirmOnSuccess = true,
+                    dropOnFailure = true
+                )
             } catch (e: Exception) {
                 pendingRaw?.let { chatStore.dropPending(it) }
                 Toast.makeText(this@ChatActivity,
@@ -4327,6 +4453,10 @@ class ChatActivity : SecureActivity() {
             binding.tvChatSubtitle.setTextColor(ContextCompat.getColor(this, R.color.error))
             return
         }
+        // Пока реле не ответило ни разу (нет живого синка) — статус «Соединение с {ник}…».
+        // presence-тикер зовёт updateSubtitle раз в секунду, поэтому статус держится сам,
+        // а как только synced придёт (onFirstLiveSync) — вернётся тег/«Зашифрованный чат».
+        if (applyConnectingSubtitleIfNeeded()) return
 
         if (!chat.partnerTag.isNullOrBlank()) {
             binding.tvChatSubtitle.text = chat.partnerTag
@@ -4337,6 +4467,103 @@ class ChatActivity : SecureActivity() {
             ContextCompat.getColor(this, R.color.text_tertiary)
         )
         binding.tvChatSubtitle.setOnClickListener(null)
+    }
+
+    /**
+     * Сетевой 1:1-чат, у которого реле ещё ни разу не ответило в этой сессии → тихий статус
+     * «Соединение с {ник}…» в шапке. Возвращает true, если статус применён (вызывающему
+     * дальше подзаголовок трогать не нужно). Цвет — text_secondary (нейтральный, не ошибка).
+     */
+    private fun applyConnectingSubtitleIfNeeded(): Boolean {
+        if (liveSyncArrived || !isConnectingCapable()) return false
+        val nm = chat.partnerName.takeIf { it.isNotBlank() } ?: return false
+        binding.tvChatSubtitle.text = getString(R.string.chat_connecting_to, nm)
+        binding.tvChatSubtitle.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
+        binding.tvChatSubtitle.setOnClickListener(null)
+        return true
+    }
+
+    /**
+     * Сетевой 1:1-чат (не группа, не Избранное, не системный, собеседник не удалён) — только
+     * для таких показываем «Соединение с {ник}…». Для групп/локальных — прежнее поведение.
+     */
+    private fun isConnectingCapable(): Boolean =
+        ::chat.isInitialized && !chat.isGroup && !chat.isFavorites &&
+            !chat.isSystemNotifications && !chat.partnerDeleted
+
+    /**
+     * Показать полноэкранный оверлей «Соединение с {ник}…» (когда локально показывать нечего)
+     * и запустить тихий фоновый реконнект + мягкий фоллбек. Идемпотентно.
+     */
+    private fun showConnectingOverlay() {
+        holdConnectingOverlay = true
+        val nm = chat.partnerName.takeIf { it.isNotBlank() }
+        binding.tvLoadingLabel.text =
+            if (nm != null) getString(R.string.chat_connecting_to, nm)
+            else getString(R.string.chat_loading)
+        binding.loadingOverlay.alpha = 1f
+        binding.loadingOverlay.visibility = View.VISIBLE
+        binding.rvMessages.alpha = 1f
+        startConnectFallback()
+        startWarmupRetry()
+    }
+
+    /**
+     * Мягкий фоллбек: если за [CONNECT_FALLBACK_MS] реле так и не ответило — раскрываем
+     * что есть (пустое состояние), чтобы человек не упирался в бесконечный спиннер. Тихий
+     * реконнект при этом продолжается: как только synced придёт — onFirstLiveSync вернёт
+     * нормальную шапку, а events подтянет пришедшие сообщения (§1.5, всё на месте).
+     */
+    private fun startConnectFallback() {
+        connectFallbackJob?.cancel()
+        connectFallbackJob = lifecycleScope.launch {
+            delay(CONNECT_FALLBACK_MS)
+            if (!liveSyncArrived && !firstLoadComplete) {
+                holdConnectingOverlay = false
+                firstLoadComplete = true
+                revealMessages()
+            }
+        }
+    }
+
+    /**
+     * Тихий фоновый реконнект: пока реле не ответило — периодически прогреваем соединение
+     * и форсим синк. warmUp идемпотентен и дёшев (no-op если уже тепло); single-flight в
+     * SyncEngine не даёт дублей. Только на переднем плане — в фоне polling и так остановлен.
+     */
+    private fun startWarmupRetry() {
+        warmupRetryJob?.cancel()
+        warmupRetryJob = lifecycleScope.launch {
+            while (isActive && !liveSyncArrived) {
+                if (isInForeground && ::transport.isInitialized) {
+                    runCatching { transport.warmUp() }
+                    if (::syncEngine.isInitialized) syncEngine.forceSync(0L)
+                }
+                delay(WARMUP_RETRY_MS)
+            }
+        }
+    }
+
+    /**
+     * Реле ответило впервые в этой сессии чата: снимаем «Соединение с {ник}…» — раскрываем
+     * ленту (если ещё под оверлеем) и возвращаем нормальную шапку (presence/тег). Однократно.
+     */
+    private fun onFirstLiveSync() {
+        if (liveSyncArrived) return
+        liveSyncArrived = true
+        holdConnectingOverlay = false
+        connectFallbackJob?.cancel()
+        warmupRetryJob?.cancel()
+        if (!firstLoadComplete) {
+            firstLoadComplete = true
+            revealMessages()
+        }
+        // Восстановление шапки/статуса — только для 1:1, где показывали «Соединение…».
+        // Группы/избранное/системные шапку не меняли — их фикс-подзаголовок не трогаем.
+        if (isConnectingCapable()) {
+            runCatching { applyPartnerToHeader() }
+            runCatching { applyPresence() }
+        }
     }
 
     /**
@@ -4614,7 +4841,7 @@ class ChatActivity : SecureActivity() {
         // Верифицированный разработчик (PERSONAL_BUILD.md §Часть 3) неприкосновенен: мут в мою
         // сторону игнорируется — ввод не блокируется. Неподделываемо (VerifiedBadge, мой ключ).
         @Suppress("NAME_SHADOWING")
-        val muted = muted && !VerifiedBadge.isVerifiedSelf(prefs.myIdentityPubKey)
+        val muted = muted && !VerifiedBadge.isKeyVerified(prefs.myIdentityPubKey)
         isSelfMuted = muted
         currentMuteEvidenceIds = evidenceIds
         if (!muted || untilMs == null) {
@@ -4854,8 +5081,109 @@ class ChatActivity : SecureActivity() {
 
     // ====== ОТПРАВКА КАРТИНКИ ======
 
+    /**
+     * Фоновая заливка УЖЕ ЗАШИФРОВАННОГО медиа-контента на [AppScope] — переживает выход из
+     * чата (репорт: «вышел во время отправки фото/голоса → заливка прервалась и не
+     * возобновилась»). Раньше заливка крутилась в lifecycleScope и отменялась при onDestroy.
+     *
+     * Безопасность (§13): контент шифруется ВЫЗЫВАЮЩИМ до этого метода, ключ чата удерживается
+     * 30 мин после выхода (CryptoHelper.WARM_RETENTION_MS), поэтому шифрование/доставка успевают.
+     * Сеть идёт через транспорт (пул реле — синглтон), transportWatch.close() в onDestroy рвёт
+     * только подписку-чтение, не публикацию. UI-обновления (прогресс/успех/ошибка/тост/forceSync)
+     * — только пока экран жив ([isDestroyed]-гард). Возвращается сразу (fire-and-forget).
+     *
+     * @param progressFileNames имена файлов для покадрового прогресса (коллаж); null — без
+     *        прогресса (голос).
+     * @param confirmOnSuccess true → сразу chatStore.confirmSent (голос); иначе часики снимет
+     *        reconcile после forceSync (фото).
+     * @param dropOnFailure при сбое: true → dropPending (голос — у него нет чистого failed-
+     *        состояния, bindVoice рисует спиннер по isPending); false → failSend (фото, крест).
+     */
+    private fun uploadMediaInBackground(
+        encryptedMessage: String,
+        extraFiles: Map<String, String>,
+        progressFileNames: List<String>?,
+        confirmOnSuccess: Boolean,
+        dropOnFailure: Boolean
+    ) {
+        val queue = imageUploadQueue
+        val tr = transport
+        AppScope.launch {
+            var lastPct = 0
+            // Сторож зависания — тоже на AppScope, чтобы жил вместе с заливкой.
+            val watchdog = AppScope.launch {
+                delay(UPLOAD_HANG_CRASH_MS)
+                android.util.Log.e("AtrumUpload",
+                    "UPLOAD_HANG files=${extraFiles.size} lastPct=$lastPct useTor=${tr.useTor} " +
+                    "relays=${com.atrum.chat.transport.NostrTransport.relayCount()} elapsed=$UPLOAD_HANG_CRASH_MS")
+                withContext(Dispatchers.Main) {
+                    if (!isDestroyed) {
+                        // Голос: dropPending (у голосового нет чистого «failed»-состояния — bindVoice
+                        // рисует спиннер по isPending, не по isFailed → failSend оставил бы вечный
+                        // спиннер). Фото: failSend (кольцо гаснет по imageUploadIndex=-1, виден крест).
+                        if (dropOnFailure) chatStore.dropPending(encryptedMessage)
+                        else chatStore.failSend(encryptedMessage)
+                        Toast.makeText(this@ChatActivity,
+                            getString(R.string.error_send) + "\n" + getString(R.string.error_upload_timeout),
+                            Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+            try {
+                queue.execute {
+                    withContext(Dispatchers.IO) {
+                        tr.appendLine(
+                            encryptedLine = encryptedMessage,
+                            extraFiles = extraFiles,
+                            onFileProgress = { name, cur, tot ->
+                                if (progressFileNames != null) {
+                                    val idx = progressFileNames.indexOf(name)
+                                    if (idx >= 0) {
+                                        val pct = if (tot > 0) (cur * 100 / tot).coerceIn(0, 99) else 0
+                                        lastPct = pct
+                                        // Мутации ChatStore — на ГЛАВНОМ потоке (как reconcile):
+                                        // ChatStore не потокобезопасен (обычные LinkedHashMap/Set),
+                                        // поэтому нельзя менять его из IO параллельно с опросом.
+                                        runOnUiThread {
+                                            if (!isDestroyed) chatStore.updateImageProgress(encryptedMessage, idx, pct)
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                    }
+                }
+                watchdog.cancel()   // заливка завершилась — сторож не нужен
+                withContext(Dispatchers.Main) {
+                    if (!isDestroyed) {
+                        if (confirmOnSuccess) chatStore.confirmSent(encryptedMessage)
+                        lastContent = ""
+                        if (::syncEngine.isInitialized) syncEngine.forceSync(delayMs = 0L)
+                    }
+                }
+            } catch (e: Exception) {
+                watchdog.cancel()
+                val reason = e.message?.take(120) ?: "unknown"
+                withContext(Dispatchers.Main) {
+                    if (!isDestroyed) {
+                        // Голос → dropPending, фото → failSend (см. комментарий в стороже выше).
+                        if (dropOnFailure) chatStore.dropPending(encryptedMessage)
+                        else chatStore.failSend(encryptedMessage)   // часики → ошибка (не «вечная обработка»)
+                        Toast.makeText(this@ChatActivity,
+                            getString(R.string.error_send) + "\n" + reason, Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+    }
+
     private fun sendImage(uri: Uri) {
         val caption = binding.etMessage.text.toString().trim()
+        // Zalgo в подписи — в тупую блокируем отправку (подпись остаётся в поле).
+        if (ZalgoFilter.containsZalgo(caption)) {
+            android.widget.Toast.makeText(this, R.string.msg_zalgo_blocked, android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         val now = System.currentTimeMillis()
 
         // Мгновенно очищаем UI
@@ -4905,65 +5233,19 @@ class ChatActivity : SecureActivity() {
                 )
                 chatStore.addOptimistic(pendingMsg)
 
-                // 3. Контент фото (шифрование + заливка чанков по Tor) — в ФОНЕ. НЕ держим
-                //    ввод заблокированным на всё время заливки: иначе при чанковом фото через
-                //    медленный Tor сообщение «зависает в обработке». Оптимистичное сообщение
-                //    уже показано; часики снимутся при reconcile, как только опубликуется
-                //    чат-строка (это происходит в начале appendLine, до заливки чанков).
-                lifecycleScope.launch {
-                    // ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА: сторож — ОТДЕЛЬНАЯ корутина в том же
-                    // lifecycleScope (НЕ внутри try/catch ниже — иначе её краш тихо
-                    // превратился бы в обычный failSend). Если заливка не завершится
-                    // (ни успех, ни ошибка) за UPLOAD_HANG_CRASH_MS — роняем с диагностикой:
-                    // какой % успел долиться, useTor, сколько реле.
-                    var lastPctSeen = 0
-                    val uploadWatchdog = lifecycleScope.launch {
-                        delay(UPLOAD_HANG_CRASH_MS)
-                        // Зависла — переводим в ошибку МЯГКО (часики → крестик), не крашим
-                        // приложение (краш при сбое отправки запрещён, см. CLAUDE.md).
-                        android.util.Log.e("AtrumUpload",
-                            "UPLOAD_HANG file=$imageFileName lastPct=$lastPctSeen " +
-                            "useTor=${transport.useTor} relays=${com.atrum.chat.transport.NostrTransport.relayCount()} " +
-                            "elapsedMs=$UPLOAD_HANG_CRASH_MS — заливка одиночного фото зависла")
-                        chatStore.failSend(encryptedMessage)
-                        Toast.makeText(this@ChatActivity,
-                            getString(R.string.error_send) + "\n" + getString(R.string.error_upload_timeout),
-                            Toast.LENGTH_LONG).show()
-                    }
-                    try {
-                        val encryptedImage = withContext(Dispatchers.Default) {
-                            CryptoHelper.encrypt(base64, chat.chatPassword, chat.chatId)
-                        }
-                        imageUploadQueue.execute {
-                            withContext(Dispatchers.IO) {
-                                transport.appendLine(
-                                    encryptedLine = encryptedMessage,
-                                    extraFiles = mapOf(imageFileName to encryptedImage),
-                                    onFileProgress = { _, cur, tot ->
-                                        val pct = if (tot > 0) (cur * 100 / tot).coerceIn(0, 99) else 0
-                                        lastPctSeen = pct
-                                        chatStore.updateImageProgress(encryptedMessage, 0, pct)
-                                    }
-                                )
-                            }
-                        }
-                        uploadWatchdog.cancel()   // заливка завершилась — сторож больше не нужен
-                        // Cache-bust и форс-синк для быстрого скрытия часиков
-                        lastContent = ""
-                        syncEngine.forceSync(delayMs = 0L)
-                    } catch (e: Exception) {
-                        uploadWatchdog.cancel()   // и при ошибке тоже гасим сторож
-                        // Заливка контента не удалась — помечаем сообщение как несработавшее
-                        // (часики → ошибка), а не оставляем его «в обработке» навсегда.
-                        chatStore.failSend(encryptedMessage)
-                        val reason = e.message?.take(120) ?: "unknown"
-                        runOnUiThread {
-                            Toast.makeText(this@ChatActivity,
-                                getString(R.string.error_send) + "\n" + reason,
-                                Toast.LENGTH_LONG).show()
-                        }
-                    }
+                // 3. Контент фото — шифруем СЕЙЧАС (ключ валиден), заливаем в ФОНЕ на AppScope,
+                //    чтобы выход из чата НЕ оборвал отправку (репорт). Ввод уже разблокирован;
+                //    часики снимутся при reconcile после forceSync (в конце заливки).
+                val encryptedImage = withContext(Dispatchers.Default) {
+                    CryptoHelper.encrypt(base64, chat.chatPassword, chat.chatId)
                 }
+                uploadMediaInBackground(
+                    encryptedMessage = encryptedMessage,
+                    extraFiles = mapOf(imageFileName to encryptedImage),
+                    progressFileNames = listOf(imageFileName),
+                    confirmOnSuccess = false,
+                    dropOnFailure = false
+                )
 
             } catch (e: Exception) {
                 tempEncrypted?.let { chatStore.failSend(it) }
@@ -4980,6 +5262,11 @@ class ChatActivity : SecureActivity() {
 
     private fun sendImages(uris: List<Uri>) {
         val caption = binding.etMessage.text.toString().trim()
+        // Zalgo в подписи — в тупую блокируем отправку (подпись остаётся в поле).
+        if (ZalgoFilter.containsZalgo(caption)) {
+            android.widget.Toast.makeText(this, R.string.msg_zalgo_blocked, android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         val now = System.currentTimeMillis()
 
         // Мгновенно очищаем UI
@@ -4993,11 +5280,6 @@ class ChatActivity : SecureActivity() {
 
         lifecycleScope.launch {
             var tempEncrypted: String? = null
-            // ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА (см. TODO_REMOVE_EMPTY_MEDIA_CRASH): сторож заливки
-            // коллажа — та же идея, что и в sendImage(). Хостится ВНЕ try ниже, поэтому её
-            // краш не проглатывается общим catch(Exception).
-            var uploadWatchdog: kotlinx.coroutines.Job? = null
-            var lastPctSeen = 0
             try {
                 val imageFileNames = List(total) { Message.newImageFileName() }
                 val ratios   = arrayOfNulls<Float>(total)
@@ -5085,47 +5367,18 @@ class ChatActivity : SecureActivity() {
                 val orderedExtraFiles = LinkedHashMap<String, String>()
                 imageFileNames.forEach { name -> extraFiles[name]?.let { orderedExtraFiles[name] = it } }
 
-                // ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА: сторож на UPLOAD_HANG_CRASH_MS — отдельная
-                // корутина в lifecycleScope, не дочерняя для текущего try, чтобы её краш
-                // не был проглочен catch(Exception) ниже.
-                uploadWatchdog = lifecycleScope.launch {
-                    delay(UPLOAD_HANG_CRASH_MS)
-                    // Зависла — переводим в ошибку МЯГКО (часики → крестик), не крашим
-                    // приложение (краш при сбое отправки запрещён, см. CLAUDE.md).
-                    android.util.Log.e("AtrumUpload",
-                        "UPLOAD_HANG collage=${imageFileNames.size} lastPct=$lastPctSeen " +
-                        "useTor=${transport.useTor} relays=${com.atrum.chat.transport.NostrTransport.relayCount()} " +
-                        "elapsedMs=$UPLOAD_HANG_CRASH_MS — заливка коллажа зависла")
-                    tempEncrypted?.let { chatStore.failSend(it) }
-                    Toast.makeText(this@ChatActivity,
-                        getString(R.string.error_send) + "\n" + getString(R.string.error_upload_timeout),
-                        Toast.LENGTH_LONG).show()
-                }
-
-                // 4. Отправляем сообщение и все изображения ОДНИМ запросом (Batch PATCH)
-                imageUploadQueue.execute {
-                    withContext(Dispatchers.IO) {
-                        transport.appendLine(
-                            encryptedLine = encryptedMessage,
-                            extraFiles = orderedExtraFiles,
-                            onFileProgress = { name, cur, tot ->
-                                val idx = imageFileNames.indexOf(name)
-                                if (idx >= 0) {
-                                    val pct = if (tot > 0) (cur * 100 / tot).coerceIn(0, 99) else 0
-                                    lastPctSeen = pct
-                                    chatStore.updateImageProgress(encryptedMessage, idx, pct)
-                                }
-                            }
-                        )
-                    }
-                }
-                uploadWatchdog?.cancel()   // заливка завершилась — сторож больше не нужен
-
-                lastContent = ""
-                syncEngine.forceSync(delayMs = 0L)
+                // 4. Заливаем сообщение и все изображения ОДНИМ запросом в ФОНЕ на AppScope —
+                //    выход из чата не оборвёт отправку коллажа (репорт). Контент уже зашифрован,
+                //    ключ удерживается 30 мин; часики снимутся при reconcile после forceSync.
+                uploadMediaInBackground(
+                    encryptedMessage = encryptedMessage,
+                    extraFiles = orderedExtraFiles,
+                    progressFileNames = imageFileNames,
+                    confirmOnSuccess = false,
+                    dropOnFailure = false
+                )
 
             } catch (e: Exception) {
-                uploadWatchdog?.cancel()   // и при ошибке тоже гасим сторож
                 tempEncrypted?.let { chatStore.failSend(it) }
                 val reason = e.message?.take(120) ?: "unknown"
                 Toast.makeText(this@ChatActivity,
@@ -5331,9 +5584,10 @@ class ChatActivity : SecureActivity() {
      */
     private val chatIsAdmin: Boolean
         get() = ::chat.isInitialized && chat.isGroup &&
-            // Личная сборка (PERSONAL): все админ-права в любой беседе локально (см.
-            // PersonalFeatures/PERSONAL_BUILD.md). В релизе — обычная проверка главного админа.
-            (PersonalFeatures.enabled ||
+            // Dev (verified по identity-ключу): все админ-права в любой беседе локально. Раньше
+            // было PersonalFeatures.enabled (любая debug-сборка) — теперь по КЛЮЧУ (Вариант 1
+            // безопасности): пересборка debug прав не даёт. Иначе — обычный главный админ.
+            (VerifiedBadge.isKeyVerified(prefs.myIdentityPubKey) ||
                 (!chat.adminUserId.isNullOrBlank() && chat.adminUserId == prefs.myUserId))
 
     /**
@@ -5395,8 +5649,9 @@ class ChatActivity : SecureActivity() {
         }
         pinnedIds = fresh.pinnedMsgIds?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
         myPinnedIds = fresh.myPinnedMsgIds?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
-        // Личная сборка (PERSONAL): полный набор прав локально (см. §Часть 2 PERSONAL_BUILD.md).
-        myGroupPermissions = if (PersonalFeatures.enabled) AdminPermissions.ALL else perms
+        // Dev (verified по identity-ключу): полный набор прав локально. Раньше — PersonalFeatures.
+        // enabled (любая debug); теперь по КЛЮЧУ (Вариант 1), чтобы debug-пересборка не давала прав.
+        myGroupPermissions = if (VerifiedBadge.isKeyVerified(prefs.myIdentityPubKey)) AdminPermissions.ALL else perms
         withContext(Dispatchers.Main) { renderPinnedBar() }
     }
 
@@ -5774,6 +6029,44 @@ class ChatActivity : SecureActivity() {
     }
 
     /**
+     * UNION реакций из всех слотов reactions.txt (по одному на pubkey). Каждый участник
+     * авторитетен ТОЛЬКО за свои реакции: строку "msgId|emoji|userId" принимаем из слота,
+     * лишь если слот подписан pubkeyForUserId(userId) — нельзя подделать чужую реакцию и
+     * нельзя затереть её устаревшим/чужим слотом. Возвращает (карта для показа, полный
+     * набор строк ВСЕХ авторов для read-modify-write своего слота). Чинит мигание (§7).
+     */
+    private fun unionReactions(
+        slots: List<com.atrum.chat.transport.ProfileSlotSigned>
+    ): Pair<Map<String, Map<String, Set<String>>>, String> {
+        val accepted = LinkedHashSet<String>()
+        for (slot in slots) {
+            val dec = CryptoHelper.decrypt(slot.content, chat.chatPassword, chat.chatId) ?: continue
+            val signer = slot.signerPubkey.lowercase(Locale.ROOT)
+            for (raw in dec.split("\n")) {
+                val parts = raw.trim().split("|")
+                if (parts.size == 3) {
+                    val (msgId, emoji, userId) = parts
+                    if (msgId.isNotBlank() && emoji.isNotBlank() && userId.isNotBlank() &&
+                        transport.pubkeyForUserId(userId).lowercase(Locale.ROOT) == signer) {
+                        accepted.add("$msgId|$emoji|$userId")
+                    }
+                }
+            }
+        }
+        val content = accepted.joinToString("\n")
+        return parseReactions(content) to content
+    }
+
+    /** Стабильная нормализованная сигнатура набора реакций (порядок/дубликаты не важны) —
+     *  для анти-мигающего сравнения «изменился ли реально набор» перед перерисовкой. */
+    private fun canonReactions(m: Map<String, Map<String, Set<String>>>): String =
+        m.entries.sortedBy { it.key }.joinToString("\n") { (msgId, byEmoji) ->
+            msgId + "=" + byEmoji.entries.sortedBy { it.key }.joinToString(",") { (emoji, users) ->
+                emoji + ":" + users.sorted().joinToString("+")
+            }
+        }
+
+    /**
      * Обрабатывает нажатие на реакцию (из TelegramMenu или из чипа под сообщением).
      * Оптимистично обновляет UI сразу, затем сохраняет на сервер.
      * После записи — сбрасывает кеш реакций чтобы следующий poll принёс реальное состояние.
@@ -5798,6 +6091,9 @@ class ChatActivity : SecureActivity() {
         currentReactions     = parseReactions(newReactionsContent)
         lastReactionsContent = newReactionsContent
         adapter.setReactions(currentReactions, userId)
+        // Фиксируем нормализованную сигнатуру: следующий опрос пересоберёт union и получит
+        // тот же набор → адаптер НЕ будет перерисован зря (анти-мигание своей реакции).
+        lastReactionsCanon = canonReactions(currentReactions)
 
         // ── Шифруем перед записью (V4/Argon2id, как profiles.txt) ─────────────
         val encryptedReactions = CryptoHelper.encryptMetadata(
@@ -5836,7 +6132,8 @@ class ChatActivity : SecureActivity() {
             title = getString(R.string.dialog_edit_title),
             initialText = msg.text,
             positiveText = getString(R.string.btn_save),
-            negativeText = getString(R.string.btn_cancel)
+            negativeText = getString(R.string.btn_cancel),
+            validator = { it.isNotBlank() && !ZalgoFilter.containsZalgo(it) }
         ) { newText ->
             if (newText.isNotEmpty() && newText != msg.text) performEdit(msg, newText)
         }
@@ -6244,7 +6541,10 @@ class ChatActivity : SecureActivity() {
      */
     private fun maybeReveal() {
         if (firstLoadComplete) return
-        
+        // Держим оверлей «Соединение с {ник}…» до живого синка/фоллбека (см. holdConnectingOverlay):
+        // без этого пустой локальный снапшот (contentLoaded=true) снял бы его раньше времени.
+        if (holdConnectingOverlay) return
+
         val storeHasData = chatStore.hasPending() || chatStore.messages.value.isNotEmpty()
         if (contentLoaded || adapter.itemCount > 0 || storeHasData) {
             firstLoadComplete = true
@@ -6337,6 +6637,12 @@ class ChatActivity : SecureActivity() {
         const val TYPING_EXPIRY_MS = 14_000L
         /** Задержка после последнего нажатия клавиши до отправки «перестал печатать». */
         const val TYPING_STOP_DELAY_MS = 3_000L
+
+        /** Мягкий фоллбек «Соединение с {ник}…»: через сколько раскрыть пустое состояние,
+         *  если реле так и не ответило (тихий реконнект продолжается в фоне). */
+        const val CONNECT_FALLBACK_MS = 10_000L
+        /** Период тихого фонового реконнекта (warmUp + forceSync), пока нет живого синка. */
+        const val WARMUP_RETRY_MS = 2_500L
 
         /** Троттл самопочинки members.txt у админа (см. maybeAdminRepairMembersFile). */
         const val MEMBERS_REPAIR_THROTTLE_MS = 30_000L

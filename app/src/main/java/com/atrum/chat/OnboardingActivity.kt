@@ -39,7 +39,8 @@ class OnboardingActivity : AppCompatActivity() {
 
     /** Кнопка «Далее» активна только при непустом нике и валидном теге (см. TagUtils.isValid). */
     private fun updateNextButtonState() {
-        val nameOk = binding.etName.text.toString().trim().isNotEmpty()
+        val nameRaw = binding.etName.text.toString()
+        val nameOk = nameRaw.trim().isNotEmpty() && !ZalgoFilter.containsZalgo(nameRaw)
         val tagOk = TagUtils.isValid(binding.etTag.text.toString())
         val ok = nameOk && tagOk
         binding.btnNext.isEnabled = ok
@@ -92,6 +93,10 @@ class OnboardingActivity : AppCompatActivity() {
         // Пароль обязателен: без него нельзя завершить регистрацию (защита данных на устройстве).
         val pwd = binding.etPwd.text.toString()
         val pwdRepeat = binding.etPwdRepeat.text.toString()
+        if (ZalgoFilter.containsZalgo(pwd)) {
+            Toast.makeText(this, R.string.zalgo_not_allowed, Toast.LENGTH_SHORT).show()
+            return
+        }
         if (pwd.length < 4) {
             Toast.makeText(this, R.string.error_pwd_short, Toast.LENGTH_SHORT).show()
             return

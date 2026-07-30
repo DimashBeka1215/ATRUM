@@ -19,28 +19,47 @@
         android:layout_marginEnd="12dp"
         android:src="@drawable/bg_dot" />
 
-    <TextView
-        android:id="@+id/tvRelayLabel"
-        android:layout_width="72dp"
-        android:layout_height="wrap_content"
-        android:textColor="@color/text_primary"
-        android:textSize="14sp" />
-
     <LinearLayout
-        android:id="@+id/sparklineContainer"
         android:layout_width="0dp"
-        android:layout_height="20dp"
+        android:layout_height="wrap_content"
         android:layout_weight="1"
-        android:layout_marginHorizontal="10dp"
-        android:orientation="horizontal"
-        android:gravity="bottom" />
+        android:layout_marginEnd="10dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tvRelayLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/tvRelaySub"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="@color/text_secondary"
+            android:textSize="11sp" />
+
+    </LinearLayout>
 
     <TextView
         android:id="@+id/tvRelayLatency"
-        android:layout_width="52dp"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_marginEnd="10dp"
         android:gravity="end"
+        android:maxLines="1"
         android:textColor="@color/text_secondary"
         android:textSize="12sp" />
+
+    <LinearLayout
+        android:id="@+id/sparklineContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="20dp"
+        android:orientation="horizontal"
+        android:gravity="bottom" />
 
 </LinearLayout>

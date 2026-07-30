@@ -65,7 +65,17 @@ data class AllChannelData(
      * (обратная совместимость, §1 CLAUDE.md); новые клиенты предпочитают этот файл.
      * Пусто — не группа / админ ещё не публиковал (старая версия приложения у админа).
      */
-    val groupProfileContent: String = ""
+    val groupProfileContent: String = "",
+    /**
+     * Слоты reactions.txt вместе с pubkey подписавшего — по ОДНОМУ новейшему на pubkey
+     * (аналог [profileSlotsSigned]). Нужны для UNION-чтения реакций: каждый участник
+     * авторитетен ТОЛЬКО за свои реакции (строку msgId|emoji|userId принимаем из слота,
+     * лишь если он подписан pubkeyForUserId(userId)). Чинит «мигание/исчезновение
+     * реакций»: раньше latestFile брал лишь ОДИН слот с макс. created_at, затирая реакции
+     * из остальных слотов. Пусто — не Nostr-транспорт (тогда работает старый одно-слотовый
+     * путь через [reactionsContent], обратная совместимость §17).
+     */
+    val reactionSlotsSigned: List<ProfileSlotSigned> = emptyList()
 )
 
 /**

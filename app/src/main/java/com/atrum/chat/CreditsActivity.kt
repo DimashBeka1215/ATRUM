@@ -88,8 +88,8 @@ class CreditsActivity : AppCompatActivity() {
             quoteRu = "«За то реакции есть!!!»",
             quoteEn = "«But hey, at least there are reactions!!!»",
             avatarColor = "#1A1030",
-            // Фото НЕ в APK — грузится из сети (postimg) при открытии экрана, фолбэк — инициал «S».
-            avatarUrl = "https://i.postimg.cc/qq3kbVhz/IMG-20260722-160528-718.jpg",
+            // Фото НЕ в APK — грузится из сети (ImgBB) при открытии экрана, фолбэк — инициал «S».
+            avatarUrl = "https://i.ibb.co.com/gMG48wkd/IMG-20260729-163839-362.jpg",
             zoomAvatarOnTap = true
         ),
     )

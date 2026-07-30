@@ -603,6 +603,10 @@ class CreateChatActivity : SecureActivity() {
     private fun createGroupChat() {
         val groupName = binding.etGroupName.text?.toString()?.trim().orEmpty()
             .ifBlank { getString(R.string.cc_group_default_name) }
+        if (ZalgoFilter.containsZalgo(groupName)) {
+            android.widget.Toast.makeText(this, R.string.zalgo_not_allowed, android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         val channelId = generateChannelId()
         val password = generatedPassword
         val expiresAt = if (selectedDuration.days < 0) null

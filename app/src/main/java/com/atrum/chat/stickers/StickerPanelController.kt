@@ -9,6 +9,7 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.GridLayoutManager
 import com.atrum.chat.NeonDialog
+import com.atrum.chat.ZalgoFilter
 import com.atrum.chat.Prefs
 import com.atrum.chat.R
 import com.atrum.chat.databinding.ActivityChatBinding
@@ -373,7 +374,8 @@ class StickerPanelController(
             initialText = pack.title,
             positiveText = context.getString(R.string.sticker_rename_save),
             negativeText = context.getString(R.string.sticker_add_pack_cancel),
-            subtitle = context.getString(R.string.sticker_rename_hint)
+            subtitle = context.getString(R.string.sticker_rename_hint),
+            validator = { it.isNotBlank() && !ZalgoFilter.containsZalgo(it) }
         ) { newTitle ->
             val clean = newTitle.trim()
             if (clean.isNotBlank() && clean != pack.title) {

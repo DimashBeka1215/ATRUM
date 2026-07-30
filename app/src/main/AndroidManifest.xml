@@ -11,6 +11,7 @@
     <!-- Чтобы Service мог открыть Activity поверх Custom Tabs после успеха OAuth -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <!-- Системная биометрия (отпечаток). Приложение не хранит биометрию,
@@ -147,6 +148,7 @@
         <activity
             android:name=".ChatActivity"
             android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:windowSoftInputMode="adjustResize" />
 
         <activity

@@ -413,6 +413,10 @@
     <string name="settings_wallpaper_title">Обои чатов</string>
     <string name="settings_wallpaper_desc">Изменить фон чата</string>
     <string name="wallpaper_apply">Применить</string>
+    <string name="wallpaper_advice_body">Совет: вертикальное фото под пропорции экрана, разрешение не ниже дисплея. Главное держите по центру — края слегка обрежутся без растяжения.</string>
+    <string name="wallpaper_advice_ratio">Соотношение экрана: %1$s</string>
+    <string name="wallpaper_advice_ok">ОК</string>
+    <string name="wallpaper_advice_hide">Больше не показывать</string>
     <string name="wallpaper_cancel">Отмена</string>
     <string name="wallpaper_change">Выбрать обои</string>
     <string name="wallpaper_clear">Удалить обои</string>
@@ -580,14 +584,14 @@
     <string name="push_channel_service_desc">Постоянное уведомление, пока приложение проверяет сообщения</string>
     <string name="push_need_permission">Для пушей нужно разрешение на уведомления</string>
     <string name="settings_section_security">БЕЗОПАСНОСТЬ</string>
-    <string name="settings_item_change_pin">Изменить PIN-код</string>
+    <string name="settings_item_change_pin">Изменить пароль</string>
     <string name="settings_item_change_pin_desc">Пароль для входа в приложение</string>
     <string name="settings_item_biometric">Вход по отпечатку</string>
     <string name="settings_item_biometric_desc">Системная биометрия телефона</string>
     <string name="biometric_warn_title">Отпечаток не добавлен</string>
     <string name="biometric_warn_desc">Сначала зарегистрируйте отпечаток в настройках телефона. Atrum не записывает биометрию сам.</string>
     <string name="biometric_open_settings">Открыть настройки телефона</string>
-    <string name="biometric_need_pin">Сначала установите PIN-код</string>
+    <string name="biometric_need_pin">Сначала установите пароль</string>
     <string name="biometric_first_title">Точно будете пользоваться?</string>
     <string name="biometric_first_body">Вход по отпечатку автор добавил, по сути, для себя. Можно оставить, временно скрыть или убрать совсем.</string>
     <string name="biometric_first_keep">Буду пользоваться</string>
@@ -597,19 +601,19 @@
     <string name="biometric_restored">Вход по отпечатку возвращён</string>
     <string name="biometric_prompt_title">Вход в Atrum</string>
     <string name="biometric_prompt_subtitle">Подтвердите отпечатком пальца</string>
-    <string name="biometric_prompt_cancel">Использовать PIN</string>
+    <string name="biometric_prompt_cancel">Использовать пароль</string>
     <string name="lock_or">или</string>
     <string name="lock_use_fingerprint">Войти по отпечатку</string>
     <string name="biometric_how_title">Как работает вход по отпечатку</string>
     <string name="biometric_how_body">Отпечаток проверяет сама система телефона — Atrum его не видит и не хранит. Действует на один вход: при каждом открытии приложение спрашивает заново.</string>
-    <string name="lock_use_pin">Войти по PIN</string>
+    <string name="lock_use_pin">Войти по паролю</string>
     <string name="settings_item_credits">Благодарности</string>
 
     <!-- Change PIN screen -->
-    <string name="dialog_old_pin_title">Текущий PIN-код</string>
-    <string name="error_old_pin_wrong">Неверный текущий PIN-код</string>
-    <string name="dialog_new_pin_title">Новый PIN-код</string>
-    <string name="settings_pin_changed">PIN-код успешно изменен</string>
+    <string name="dialog_old_pin_title">Текущий пароль</string>
+    <string name="error_old_pin_wrong">Неверный текущий пароль</string>
+    <string name="dialog_new_pin_title">Новый пароль</string>
+    <string name="settings_pin_changed">Пароль успешно изменён</string>
 
     <!-- Sticker settings -->
     <string name="sticker_settings_title">Стикеры</string>

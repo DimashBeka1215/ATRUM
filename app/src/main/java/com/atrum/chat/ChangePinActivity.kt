@@ -60,6 +60,10 @@ class ChangePinActivity : SecureActivity() {
             Toast.makeText(this, R.string.error_pwd_mismatch, Toast.LENGTH_SHORT).show()
             return
         }
+        if (ZalgoFilter.containsZalgo(newPin)) {
+            Toast.makeText(this, R.string.zalgo_not_allowed, Toast.LENGTH_SHORT).show()
+            return
+        }
 
         prefs.setLocalPassword(newPin)
         Toast.makeText(this, R.string.settings_pin_changed, Toast.LENGTH_SHORT).show()

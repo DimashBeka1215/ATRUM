@@ -87,7 +87,7 @@
                         android:id="@+id/flAvatarContainer"
                         android:layout_width="110dp"
                         android:layout_height="110dp"
-                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:foreground="@drawable/bg_avatar_ripple"
                         android:clickable="true"
                         android:focusable="true">
 

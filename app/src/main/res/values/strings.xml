@@ -46,6 +46,9 @@
     <string name="btn_finish">Готово</string>
     <string name="error_empty_name">Введите имя</string>
     <string name="error_empty_tag">Введите тег</string>
+    <string name="settings_tag_invalid">Тег: только латинские буквы, цифры и _</string>
+    <string name="msg_zalgo_blocked">Нельзя отправить: слишком много спецсимволов (Zalgo)</string>
+    <string name="zalgo_not_allowed">Слишком много спецсимволов (Zalgo)</string>
     <string name="hint_tag">Ваш тег (@username)</string>
     <string name="error_pwd_short">Пароль слишком короткий (минимум 4 символа)</string>
     <string name="error_pwd_mismatch">Пароли не совпадают</string>
@@ -232,6 +235,7 @@
     <string name="warn_group_pending_message">Администратор группы ещё не добавил вас в список участников — это обычно занимает несколько секунд. Если это не проходит долго, возможно группа заполнена или администратор офлайн; чат можно удалить из списка чатов.</string>
 
     <string name="chat_loading">Загрузка сообщений…</string>
+    <string name="chat_connecting_to">Соединение с %1$s…</string>
 
     <!-- Меню действий над сообщением -->
     <string name="action_edit">Редактировать</string>
@@ -554,6 +558,10 @@
     <string name="settings_wallpaper_desc">Change chat background</string>
     <string name="wallpaper_apply">Apply</string>
     <string name="wallpaper_cancel">Cancel</string>
+    <string name="wallpaper_advice_body">Tip: use a vertical photo matching your screen ratio, at a resolution no lower than your display. Keep the important part centered — edges get slightly cropped, never stretched.</string>
+    <string name="wallpaper_advice_ratio">Screen ratio: %1$s</string>
+    <string name="wallpaper_advice_ok">OK</string>
+    <string name="wallpaper_advice_hide">Don\'t show again</string>
     <string name="wallpaper_change">Choose Wallpaper</string>
     <string name="wallpaper_clear">Remove Wallpaper</string>
     <string name="wallpaper_cleared">Wallpaper removed</string>
@@ -724,14 +732,14 @@
     <string name="push_channel_service_desc">Постоянное уведомление, пока приложение проверяет сообщения</string>
     <string name="push_need_permission">Для пушей нужно разрешение на уведомления</string>
     <string name="settings_section_security">БЕЗОПАСНОСТЬ</string>
-    <string name="settings_item_change_pin">Изменить PIN-код</string>
+    <string name="settings_item_change_pin">Изменить пароль</string>
     <string name="settings_item_change_pin_desc">Пароль для входа в приложение</string>
     <string name="settings_item_biometric">Вход по отпечатку</string>
     <string name="settings_item_biometric_desc">Системная биометрия телефона</string>
     <string name="biometric_warn_title">Отпечаток не добавлен</string>
     <string name="biometric_warn_desc">Сначала зарегистрируйте отпечаток в настройках телефона. Atrum не записывает биометрию сам.</string>
     <string name="biometric_open_settings">Открыть настройки телефона</string>
-    <string name="biometric_need_pin">Сначала установите PIN-код</string>
+    <string name="biometric_need_pin">Сначала установите пароль</string>
     <!-- Диалог-выбор при первом включении входа по отпечатку -->
     <string name="biometric_first_title">Точно будете пользоваться?</string>
     <string name="biometric_first_body">Вход по отпечатку автор добавил, по сути, для себя. Можно оставить, временно скрыть или убрать совсем.</string>
@@ -742,19 +750,19 @@
     <string name="biometric_restored">Вход по отпечатку возвращён</string>
     <string name="biometric_prompt_title">Вход в Atrum</string>
     <string name="biometric_prompt_subtitle">Подтвердите отпечатком пальца</string>
-    <string name="biometric_prompt_cancel">Использовать PIN</string>
+    <string name="biometric_prompt_cancel">Использовать пароль</string>
     <string name="lock_or">или</string>
     <string name="lock_use_fingerprint">Войти по отпечатку</string>
     <string name="biometric_how_title">Как работает вход по отпечатку</string>
     <string name="biometric_how_body">Отпечаток проверяет сама система телефона — Atrum его не видит и не хранит. Действует на один вход: при каждом открытии приложение спрашивает заново.</string>
-    <string name="lock_use_pin">Войти по PIN</string>
+    <string name="lock_use_pin">Войти по паролю</string>
     <string name="settings_item_credits">Благодарности</string>
 
     <!-- Change PIN screen -->
-    <string name="dialog_old_pin_title">Текущий PIN-код</string>
-    <string name="error_old_pin_wrong">Неверный текущий PIN-код</string>
-    <string name="dialog_new_pin_title">Новый PIN-код</string>
-    <string name="settings_pin_changed">PIN-код успешно изменен</string>
+    <string name="dialog_old_pin_title">Текущий пароль</string>
+    <string name="error_old_pin_wrong">Неверный текущий пароль</string>
+    <string name="dialog_new_pin_title">Новый пароль</string>
+    <string name="settings_pin_changed">Пароль успешно изменён</string>
 
     <!-- Sticker settings -->
     <string name="sticker_settings_title">Стикеры</string>
@@ -934,6 +942,15 @@
     <string name="connection_relays_privacy_hint">Адреса реле не показываются — только статус и задержка ответа. Данные обновляются, пока открыт хотя бы один чат.</string>
     <string name="connection_relay_label">Реле %1$d</string>
     <string name="connection_no_data">нет данных</string>
+    <string name="connection_status_no_data">без данных</string>
+    <string name="connection_status_down">недоступно</string>
+    <string name="connection_status_error">ошибка реле</string>
+    <string name="connection_sub_ok">реле отдаёт данные</string>
+    <string name="connection_sub_degraded">нестабильно</string>
+    <string name="connection_sub_no_data">ответило, но событий нет</string>
+    <string name="connection_sub_down">упало / не отвечает</string>
+    <string name="connection_sub_error">реле закрыло с ошибкой</string>
+    <string name="connection_sub_unknown">ещё не опрашивали</string>
     <string name="connection_ms_value">%1$d мс</string>
     <string name="connection_section_proxy">Прокси</string>
     <string name="connection_proxy_off">Без прокси</string>

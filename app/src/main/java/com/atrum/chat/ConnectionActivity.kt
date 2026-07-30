@@ -136,8 +136,8 @@ class ConnectionActivity : SecureActivity() {
                 val urls = NostrTransport.activeRelays()
                 urls.map { url ->
                     async(Dispatchers.IO) {
-                        val latencyMs = NostrTransport.pingRelayForConnectionScreen(url)
-                        ConnectionStats.record(url, latencyMs)
+                        val (outcome, latencyMs) = NostrTransport.pingRelayForConnectionScreen(url)
+                        ConnectionStats.record(url, outcome, latencyMs)
                     }
                 }.awaitAll()
                 delay(livePingIntervalMs)
@@ -187,15 +187,16 @@ class ConnectionActivity : SecureActivity() {
         states.forEach { st ->
             val row = layoutInflater.inflate(R.layout.item_connection_relay, binding.relayListContainer, false)
             val tvLabel = row.findViewById<TextView>(R.id.tvRelayLabel)
+            val tvSub = row.findViewById<TextView>(R.id.tvRelaySub)
             val tvLatency = row.findViewById<TextView>(R.id.tvRelayLatency)
             val dot = row.findViewById<ImageView>(R.id.dotStatus)
             val sparkContainer = row.findViewById<LinearLayout>(R.id.sparklineContainer)
 
             val color = colorForStatus(st.status)
             tvLabel.text = getString(R.string.connection_relay_label, st.index)
+            tvSub.text = getString(statusSubRes(st.status))
             dot.setColorFilter(color)
-            tvLatency.text = st.latencyMs?.let { getString(R.string.connection_ms_value, it.toInt()) }
-                ?: getString(R.string.connection_no_data)
+            tvLatency.text = statusLabel(st)
             tvLatency.setTextColor(color)
 
             sparkContainer.removeAllViews()
@@ -237,9 +238,32 @@ class ConnectionActivity : SecureActivity() {
     private fun colorForStatus(status: ConnectionStats.Status): Int = when (status) {
         ConnectionStats.Status.OK -> ContextCompat.getColor(this, R.color.accent_light)
         ConnectionStats.Status.DEGRADED -> ContextCompat.getColor(this, R.color.accent)
+        ConnectionStats.Status.NO_DATA -> ContextCompat.getColor(this, R.color.warning)
+        ConnectionStats.Status.ERROR -> ContextCompat.getColor(this, R.color.error)
         ConnectionStats.Status.DOWN, ConnectionStats.Status.UNKNOWN ->
             androidx.core.graphics.ColorUtils.setAlphaComponent(
                 ContextCompat.getColor(this, R.color.accent_dark), 140
             )
+    }
+
+    /** Правая подпись строки реле — задержка для OK/деградации, иначе текст сценария. */
+    private fun statusLabel(st: ConnectionStats.RelayState): String = when (st.status) {
+        ConnectionStats.Status.OK, ConnectionStats.Status.DEGRADED ->
+            st.latencyMs?.let { getString(R.string.connection_ms_value, it.toInt()) }
+                ?: getString(R.string.connection_no_data)
+        ConnectionStats.Status.NO_DATA -> getString(R.string.connection_status_no_data)
+        ConnectionStats.Status.DOWN -> getString(R.string.connection_status_down)
+        ConnectionStats.Status.ERROR -> getString(R.string.connection_status_error)
+        ConnectionStats.Status.UNKNOWN -> getString(R.string.connection_no_data)
+    }
+
+    /** Строка-пояснение под «Реле N» — короткое описание сценария. */
+    private fun statusSubRes(status: ConnectionStats.Status): Int = when (status) {
+        ConnectionStats.Status.OK -> R.string.connection_sub_ok
+        ConnectionStats.Status.DEGRADED -> R.string.connection_sub_degraded
+        ConnectionStats.Status.NO_DATA -> R.string.connection_sub_no_data
+        ConnectionStats.Status.DOWN -> R.string.connection_sub_down
+        ConnectionStats.Status.ERROR -> R.string.connection_sub_error
+        ConnectionStats.Status.UNKNOWN -> R.string.connection_sub_unknown
     }
 }
