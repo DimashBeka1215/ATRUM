@@ -89,14 +89,25 @@ class ChatActivity : SecureActivity() {
      */
     private val imageUploadQueue = ImageUploadQueue()
 
-    // Сторож долгой заливки фото/коллажа: если заливка не завершится (ни успехом, ни
-    // ошибкой) за это время — считаем её зависшей и переводим сообщение в failSend с
-    // диагностикой в логе (а НЕ роняем приложение — краш при сбое отправки запрещён,
-    // см. CLAUDE.md "ATRUM — мессенджер на каждый день"). 90с — с учётом того, что
-    // прямой путь через кастомный SOCKS5-прокси и Tor теперь ждут кворум до 20с НА
-    // КАЖДЫЙ чанк (см. NostrTransport.viaCustomProxy), а фото может состоять из
-    // нескольких чанков + манифест + одна повторная попытка на каждый.
-    private val UPLOAD_HANG_CRASH_MS = 90_000L
+    // Сторож долгой заливки фото/коллажа/голоса: если заливка не завершится (ни успехом,
+    // ни ошибкой) — считаем её зависшей и переводим сообщение в failSend с диагностикой в
+    // логе (а НЕ роняем приложение — краш при сбое отправки запрещён, см. CLAUDE.md "ATRUM —
+    // мессенджер на каждый день").
+    //
+    // ⚠️ ПО ПРОСЬБЕ ПОЛЬЗОВАТЕЛЯ (маленькие чанки + пауза между ними против DPI/ТСПУ, см.
+    // NostrTransport.NOSTR_CHUNK_CHARS/CHUNK_JITTER_*): раньше был ЖЁСТКИЙ таймер 90с от
+    // старта заливки целиком — с более мелкими чанками и паузами между ними крупное фото
+    // легко идёт дольше 90с, будучи ЖИВЫМ и успешно продвигающимся, и старый таймер убивал
+    // бы его ложно (пустой/битый пузырь у собеседника — ровно то, чего просили избежать).
+    // Теперь сторож смотрит НЕ на общее время, а на ПРОСТОЙ БЕЗ ПРОГРЕССА: пока onFileProgress
+    // тикает (хотя бы раз в UPLOAD_HANG_IDLE_MS) — заливка живая, сколько бы она ни длилась.
+    // Если прогресс не появляется UPLOAD_HANG_IDLE_MS подряд — реально зависла (сеть мертва
+    // целиком) → failSend, как и раньше. ABSOLUTE_UPLOAD_CEILING_MS — отдельный, очень
+    // щедрый потолок на весь процесс (защита от гипотетической вечной накрутки прогресса
+    // без реальной доставки) — на практике почти никогда не сработает раньше idle-порога.
+    private val UPLOAD_HANG_IDLE_MS = 75_000L
+    private val UPLOAD_HANG_POLL_MS = 5_000L
+    private val ABSOLUTE_UPLOAD_CEILING_MS = 20 * 60_000L
 
     /**
      * Счётчик активных загрузок изображений. При count > 0 поле ввода и кнопки
@@ -5140,23 +5151,38 @@ class ChatActivity : SecureActivity() {
         val tr = transport
         AppScope.launch {
             var lastPct = 0
-            // Сторож зависания — тоже на AppScope, чтобы жил вместе с заливкой.
+            val uploadStartedAtMs = System.currentTimeMillis()
+            // lastProgressAtMs — время последнего тика onFileProgress (или старта, если тиков
+            // ещё не было). AtomicLong: пишется из IO-колбэка транспорта, читается из
+            // отдельной корутины сторожа — нужна потокобезопасная точка синхронизации.
+            val lastProgressAtMs = java.util.concurrent.atomic.AtomicLong(uploadStartedAtMs)
+            // Сторож простоя — тоже на AppScope, чтобы жил вместе с заливкой. В отличие от
+            // старого фикс-таймера, не убивает живую (пусть и медленную) заливку — только
+            // реальное отсутствие прогресса. См. комментарий у UPLOAD_HANG_IDLE_MS выше.
             val watchdog = AppScope.launch {
-                delay(UPLOAD_HANG_CRASH_MS)
-                android.util.Log.e("AtrumUpload",
-                    "UPLOAD_HANG files=${extraFiles.size} lastPct=$lastPct useTor=${tr.useTor} " +
-                    "relays=${com.atrum.chat.transport.NostrTransport.relayCount()} elapsed=$UPLOAD_HANG_CRASH_MS")
-                withContext(Dispatchers.Main) {
-                    if (!isDestroyed) {
-                        // Голос: dropPending (у голосового нет чистого «failed»-состояния — bindVoice
-                        // рисует спиннер по isPending, не по isFailed → failSend оставил бы вечный
-                        // спиннер). Фото: failSend (кольцо гаснет по imageUploadIndex=-1, виден крест).
-                        if (dropOnFailure) chatStore.dropPending(encryptedMessage)
-                        else chatStore.failSend(encryptedMessage)
-                        Toast.makeText(this@ChatActivity,
-                            getString(R.string.error_send) + "\n" + getString(R.string.error_upload_timeout),
-                            Toast.LENGTH_LONG).show()
+                while (isActive) {
+                    delay(UPLOAD_HANG_POLL_MS)
+                    val now = System.currentTimeMillis()
+                    val idleMs = now - lastProgressAtMs.get()
+                    val totalMs = now - uploadStartedAtMs
+                    if (idleMs < UPLOAD_HANG_IDLE_MS && totalMs < ABSOLUTE_UPLOAD_CEILING_MS) continue
+                    android.util.Log.e("AtrumUpload",
+                        "UPLOAD_HANG files=${extraFiles.size} lastPct=$lastPct useTor=${tr.useTor} " +
+                        "relays=${com.atrum.chat.transport.NostrTransport.relayCount()} " +
+                        "idleMs=$idleMs totalMs=$totalMs")
+                    withContext(Dispatchers.Main) {
+                        if (!isDestroyed) {
+                            // Голос: dropPending (у голосового нет чистого «failed»-состояния — bindVoice
+                            // рисует спиннер по isPending, не по isFailed → failSend оставил бы вечный
+                            // спиннер). Фото: failSend (кольцо гаснет по imageUploadIndex=-1, виден крест).
+                            if (dropOnFailure) chatStore.dropPending(encryptedMessage)
+                            else chatStore.failSend(encryptedMessage)
+                            Toast.makeText(this@ChatActivity,
+                                getString(R.string.error_send) + "\n" + getString(R.string.error_upload_timeout),
+                                Toast.LENGTH_LONG).show()
+                        }
                     }
+                    break
                 }
             }
             try {
@@ -5166,6 +5192,7 @@ class ChatActivity : SecureActivity() {
                             encryptedLine = encryptedMessage,
                             extraFiles = extraFiles,
                             onFileProgress = { name, cur, tot ->
+                                lastProgressAtMs.set(System.currentTimeMillis())
                                 if (progressFileNames != null) {
                                     val idx = progressFileNames.indexOf(name)
                                     if (idx >= 0) {
