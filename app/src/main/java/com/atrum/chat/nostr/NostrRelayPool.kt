@@ -262,6 +262,10 @@ object NostrRelayPool {
     suspend fun query(url: String, filter: org.json.JSONObject, useTor: Boolean, timeoutMs: Long = 20_000L): List<NostrEvent> =
         conn(url, useTor).query(filter, timeoutMs)
 
+    /** Тот же запрос, но НЕСКОЛЬКИМИ фильтрами в одном REQ — см. doc-comment Conn.query(List). */
+    suspend fun query(url: String, filters: List<org.json.JSONObject>, useTor: Boolean, timeoutMs: Long = 20_000L): List<NostrEvent> =
+        conn(url, useTor).query(filters, timeoutMs)
+
     /** Публикует событие; бросает исключение при отказе реле / таймауте. */
     suspend fun publish(url: String, event: NostrEvent, useTor: Boolean, timeoutMs: Long = 20_000L) {
         // ⚠️ Только для DEBUG-сборки (BuildConfig.DEBUG) — в release R8 вырезает эту ветку
@@ -416,14 +420,30 @@ private class RelayConn(private val url: String, private val client: OkHttpClien
         pubs.clear()
     }
 
+    /** Совместимость: один фильтр — частный случай списка. */
     suspend fun query(filter: org.json.JSONObject, timeoutMs: Long): List<NostrEvent> =
+        query(listOf(filter), timeoutMs)
+
+    /**
+     * REQ с ОДНИМ ИЛИ НЕСКОЛЬКИМИ фильтрами — `["REQ", subId, f1, f2, …]` (NIP-01).
+     *
+     * ⚠️ Зачем несколько: реле применяет `limit` к КАЖДОМУ фильтру ОТДЕЛЬНО и отдаёт
+     * объединение. Это единственный способ не дать одному типу событий вытеснить другой
+     * из общего окна выдачи. Ради этого разделены сообщения и файлы (см.
+     * NostrTransport.chatFilters): чанки медиа больше не съедают окно текстовой истории.
+     * Фильтры обязаны НЕ ПЕРЕСЕКАТЬСЯ по kind, иначе события задвоятся (дедуп по id ниже
+     * это переживёт, но окно будет расходоваться впустую).
+     */
+    suspend fun query(filters: List<org.json.JSONObject>, timeoutMs: Long): List<NostrEvent> =
         withContext(Dispatchers.IO) {
             val sock = socket()
             val subId = "atrum_${seq.incrementAndGet()}"
             val sub = Sub()
             subs[subId] = sub
             try {
-                val req = JSONArray().apply { put("REQ"); put(subId); put(filter) }.toString()
+                val req = JSONArray().apply {
+                    put("REQ"); put(subId); filters.forEach { put(it) }
+                }.toString()
                 if (!sock.send(req)) throw RuntimeException("ws send failed")
                 try {
                     withTimeout(timeoutMs) { sub.eose.await() }

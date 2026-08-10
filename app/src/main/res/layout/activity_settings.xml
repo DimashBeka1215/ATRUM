@@ -314,14 +314,12 @@
                         android:gravity="center_vertical"
                         android:paddingHorizontal="16dp"
                         android:background="?attr/selectableItemBackground"
-                        android:clickable="false"
-                        android:focusable="false"
-                        android:enabled="false"
-                        android:alpha="0.4">
+                        android:clickable="true"
+                        android:focusable="true">
                         <ImageView android:layout_width="22dp" android:layout_height="22dp"
                             android:src="@drawable/ic_chat_bubble" android:tint="@color/accent" android:layout_marginEnd="14dp" />
                         <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                            android:text="@string/chats_title" android:textColor="@color/text_primary" android:textSize="15sp" />
+                            android:text="@string/settings_item_chats" android:textColor="@color/text_primary" android:textSize="15sp" />
                         <ImageView android:layout_width="18dp" android:layout_height="18dp"
                             android:src="@drawable/ic_chevron_right" android:tint="@color/text_tertiary" />
                     </LinearLayout>

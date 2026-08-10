@@ -533,6 +533,13 @@
     <string name="settings_item_main">General</string>
     <string name="settings_item_personalization">Personalization</string>
     <string name="settings_item_notifications">Notifications</string>
+    <!-- Настройки → Чаты (ChatsSettingsActivity): устойчивая доставка медиа по чатам -->
+    <string name="settings_item_chats">Chats</string>
+    <string name="chats_settings_section">Resilient media delivery</string>
+    <string name="chats_settings_hint">Photos and voice messages are sent in small parts with pauses. Turn this on for a chat where the other person\'s provider throttles media and it does not get through. Sending in that chat will become noticeably slower.</string>
+    <string name="chats_settings_empty_title">No chats yet</string>
+    <string name="chats_settings_empty_sub">The setting will appear here once you create or open your first chat.</string>
+    <string name="chats_settings_save_error">Failed to save the setting</string>
     <string name="settings_item_about">About</string>
     <string name="settings_item_support">Support</string>
     <!-- Settings - personalization -->
@@ -666,6 +673,11 @@
     <!-- Push notifications -->
     <string name="settings_item_push">Push notifications</string>
     <string name="settings_item_push_desc">Background check for new messages</string>
+    <string name="settings_item_autostart">Start with the system</string>
+    <string name="settings_item_autostart_desc">Bring the background service up after the phone reboots. Without this, delivery resumes when you open the app.</string>
+    <string name="settings_item_revive">Restore after closing</string>
+    <string name="settings_item_revive_desc">Bring the service back if the system killed it or you swiped the app away from recents. The app becomes harder to close completely.</string>
+    <string name="settings_push_required">Turn on push notifications first</string>
     <string name="push_new_message">You have a new message.</string>
     <string name="push_messages_overflow">You have 90+ messages</string>
     <plurals name="push_new_messages">
@@ -837,7 +849,7 @@
     <string name="mock_chat_status">online</string>
     <string name="mock_msg_other">Hey, how\'s it going?</string>
     <string name="mock_msg_self">All good, thanks! 👍</string>
-    <string name="mock_msg_time">14:32 ✓✓</string>
+    <string name="mock_msg_time">14:32</string>
     <string name="settings_display_name_label">Your name</string>
     <string name="settings_item_chat_ui_style">Chat Interface</string>
     <string name="settings_item_theme">Theme</string>

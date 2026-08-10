@@ -68,6 +68,15 @@ interface ChatDao {
     @Query("UPDATE chats SET adminUserId = :adminUserId WHERE id = :id")
     suspend fun updateAdminUserId(id: Long, adminUserId: String)
 
+    /**
+     * Флаг «устойчивая доставка медиа» для одного чата (см. [Chat.resilientMedia]).
+     * Точечный UPDATE, а не update(chat) целиком — экран настроек мог прочитать запись
+     * раньше, и перезапись всей строки затёрла бы поля, изменённые тем временем синком
+     * (профиль собеседника, счётчики непрочитанного и т.п.).
+     */
+    @Query("UPDATE chats SET resilientMedia = :enabled WHERE id = :id")
+    suspend fun updateResilientMedia(id: Long, enabled: Boolean)
+
     @Query("UPDATE chats SET isPinned = :pinned WHERE id = :id")
     suspend fun updatePinned(id: Long, pinned: Boolean)
 

@@ -48,8 +48,26 @@ class NostrTransport(
      * тот же способ, каким получается pubkey ЛЮБОГО участника (см. [privkey] ниже),
      * отдельный ключ для админа хранить не нужно.
      */
-    private val adminUserId: String? = null
+    private val adminUserId: String? = null,
+    /**
+     * «Устойчивая доставка медиа» этого чата (см. Chat.resilientMedia). true → медиа
+     * режется на заметно более мелкие части (обход DPI/ТСПУ ценой скорости),
+     * false (дефолт) → прежний быстрый размер. См. [chunkChars].
+     */
+    private val resilientMedia: Boolean = false
 ) : ChatTransport {
+
+    /**
+     * Размер одной части медиа для ЭТОГО чата. Выбирается по флагу чата, а не глобально:
+     * мелкие части вчетверо увеличивают число событий и заметно замедляют отправку,
+     * поэтому платить этим стоит только там, где иначе медиа не доходит.
+     *
+     * На совместимость не влияет ни в одну сторону: манифест перечисляет части по именам,
+     * поэтому получатель (в том числе на старой версии) собирает медиа при ЛЮБОМ размере
+     * части, а уже отправленные медиа читаются как раньше (§17).
+     */
+    private val chunkChars: Int
+        get() = if (resilientMedia) RESILIENT_CHUNK_CHARS else NOSTR_CHUNK_CHARS
 
     /**
      * ФАКТИЧЕСКИЙ режим подключения к реле.
@@ -138,7 +156,7 @@ class NostrTransport(
     // ─── чтение чата ────────────────────────────────────────────────────────────
 
     override suspend fun loadContent(): String {
-        val events = queryAllRelays(chatFilter())
+        val events = queryAllRelays(chatFilters())
             ?: return NostrMessageStore.render(channelId).ifEmpty { lastGoodContent ?: "" }
         NostrMessageStore.merge(channelId, events)
         cacheMediaFrom(events)
@@ -149,7 +167,7 @@ class NostrTransport(
     }
 
     override suspend fun loadContentIfChanged(): String? {
-        val events = queryAllRelays(chatFilter()) ?: return null // реле не ответили — без изменений
+        val events = queryAllRelays(chatFilters()) ?: return null // реле не ответили — без изменений
         NostrMessageStore.merge(channelId, events)
         cacheMediaFrom(events)
         val content = NostrMessageStore.render(channelId)
@@ -171,7 +189,7 @@ class NostrTransport(
         AllChannelData(NostrMessageStore.render(channelId), "", "")
 
     override suspend fun loadAll(): AllChannelData {
-        val events = queryAllRelays(chatFilter())
+        val events = queryAllRelays(chatFilters())
             ?: return lastGoodAll ?: AllChannelData(NostrMessageStore.render(channelId), "", "")
         val data = splitAll(events)
         lastAllHash = hashAll(data)
@@ -181,7 +199,7 @@ class NostrTransport(
     }
 
     override suspend fun loadAllIfChanged(): AllChannelData? {
-        val events = queryAllRelays(chatFilter()) ?: return null // реле не ответили — без изменений
+        val events = queryAllRelays(chatFilters()) ?: return null // реле не ответили — без изменений
         val data = splitAll(events)
         val h = hashAll(data)
         if (h == lastAllHash) return null
@@ -195,7 +213,7 @@ class NostrTransport(
      *  реально есть: [loadAll] намеренно подставляет lastGoodAll/общий стор при отказе
      *  реле (анти-мерцание истории в ChatActivity), а этот метод — нет. */
     override suspend fun loadAllFresh(): AllChannelData? {
-        val events = queryAllRelays(chatFilter()) ?: return null
+        val events = queryAllRelays(chatFilters()) ?: return null
         val data = splitAll(events)
         lastAllHash = hashAll(data)
         lastContentHash = sha256(data.chatContent).toHex()
@@ -496,7 +514,7 @@ class NostrTransport(
         // Контент-события (kind FILE_KIND) подтянутся тем же опросом, что и строка,
         // и сразу осядут в mediaCache. Касается и фото, и голосовых (один и тот же путь).
         for ((name, content) in extraFiles) {
-            if (content.length > NOSTR_CHUNK_CHARS) {
+            if (content.length > chunkChars) {
                 saveFileChunked(name, content, chatPassword) { cur, tot -> onFileProgress?.invoke(name, cur, tot) }
             } else {
                 // Прямой вызов вместо saveFile(): размер уже проверен условием выше, а так
@@ -601,7 +619,7 @@ class NostrTransport(
      * отдельными событиями; ImageLoader собирает их обратно по манифесту.
      */
     override suspend fun saveFile(name: String, content: String) {
-        if (content.length > NOSTR_CHUNK_CHARS) saveFileChunked(name, content, chatPassword, null)
+        if (content.length > chunkChars) saveFileChunked(name, content, chatPassword, null)
         else publishFileWithRetry(name, content)
     }
 
@@ -616,11 +634,11 @@ class NostrTransport(
         password: String,
         onProgress: ((current: Int, total: Int) -> Unit)?
     ) {
-        if (encryptedContent.length <= NOSTR_CHUNK_CHARS) {
+        if (encryptedContent.length <= chunkChars) {
             publishFileWithRetry(name, encryptedContent)
             return
         }
-        val chunks = encryptedContent.chunked(NOSTR_CHUNK_CHARS)
+        val chunks = encryptedContent.chunked(chunkChars)
         val chunkNames = chunks.indices.map { ImageChunker.chunkName(name, it) }
         chunks.forEachIndexed { i, chunk ->
             // onAttempt переотправляет ТЕКУЩИЙ (уже достигнутый) прогресс — визуально это
@@ -651,7 +669,7 @@ class NostrTransport(
         // всё равно даёт AES-GCM при расшифровке.
         delay(kotlin.random.Random.nextLong(CHUNK_JITTER_MIN_MS, CHUNK_JITTER_MAX_MS))
         val hashesEnc = CryptoHelper.encrypt(ImageChunker.makeChunkHashesPlain(chunks), password, sourceId)
-        if (hashesEnc.length <= NOSTR_CHUNK_CHARS) {
+        if (hashesEnc.length <= chunkChars) {
             runCatching {
                 publishFileWithRetry(ImageChunker.chunkHashesFileName(name), hashesEnc) {
                     onProgress?.invoke(chunks.size, chunks.size)
@@ -774,7 +792,7 @@ class NostrTransport(
         )
         publishToAnyRelay(marker)
         NostrMessageStore.merge(channelId, listOf(marker)) // cutoff сразу локально
-        val ids = (queryAllRelays(chatFilter()) ?: emptyList())
+        val ids = (queryAllRelays(chatFilters()) ?: emptyList())
             .filter { ev -> ev.tags.none { t -> t.firstOrNull() == "file" || t.firstOrNull() == "clear" || t.firstOrNull() == "del" } }
             .map { it.id }
         if (ids.isNotEmpty()) {
@@ -789,7 +807,7 @@ class NostrTransport(
     // ─── internal ─────────────────────────────────────────────────────────────
 
     private suspend fun findMessageEvent(content: String): NostrEvent? =
-        (queryAllRelays(chatFilter()) ?: emptyList())
+        (queryAllRelays(chatFilters()) ?: emptyList())
             .filter { ev -> ev.tags.none { t -> t.firstOrNull() == "file" } }
             .firstOrNull { it.content.trim() == content.trim() }
 
@@ -983,12 +1001,39 @@ class NostrTransport(
         }
     }
 
-    private fun chatFilter(): JSONObject = JSONObject().apply {
-        // kind:1 — сообщения, kind:5 — удаления, kind FILE_KIND — файлы.
-        put("kinds", JSONArray().put(1).put(5).put(FILE_KIND))
-        put("#t", JSONArray().put(channelId))
-        put("limit", 1000)
-    }
+    /**
+     * Фильтры основного опроса чата — ДВА непересекающихся фильтра в одном REQ.
+     *
+     * ⚠️ РАНЬШЕ ЭТО БЫЛ ОДИН ФИЛЬТР `kinds=[1,5,FILE_KIND] limit=1000`, и чанки медиа
+     * конкурировали с текстом за общее окно выдачи. Реле отдаёт последние `limit` событий,
+     * подходящих под фильтр, поэтому свежее медиа ВЫТЕСНЯЛО текстовую историю: одно
+     * десятиминутное голосовое — это сотни FILE_KIND-событий, а три таких забивали окно
+     * целиком (проверено на модели: возвращалось 0 из 300 текстовых сообщений). Симптом —
+     * «часть переписки пропала» при холодном старте (новое устройство / переустановка,
+     * когда локальный NostrMessageStore ещё пуст и историю неоткуда взять).
+     *
+     * Реле применяет `limit` к КАЖДОМУ фильтру ОТДЕЛЬНО (NIP-01) и отдаёт объединение,
+     * поэтому у сообщений и у файлов теперь СВОЁ окно на 1000 событий каждое.
+     *
+     * ⛔ Фильтры не должны пересекаться по kind — иначе события задвоятся и окно будет
+     * расходоваться впустую. Сейчас: {1, 5} и {1063}, пересечения нет.
+     * Легаси-файлы, публиковавшиеся как kind:1, попадают в фильтр сообщений и продолжают
+     * приходить как раньше (§17).
+     */
+    private fun chatFilters(): List<JSONObject> = listOf(
+        // Сообщения (kind:1) и удаления (kind:5) — своё окно.
+        JSONObject().apply {
+            put("kinds", JSONArray().put(1).put(5))
+            put("#t", JSONArray().put(channelId))
+            put("limit", 1000)
+        },
+        // Файлы/чанки медиа (FILE_KIND) — отдельное окно, не отнимает место у текста.
+        JSONObject().apply {
+            put("kinds", JSONArray().put(FILE_KIND))
+            put("#t", JSONArray().put(channelId))
+            put("limit", 1000)
+        }
+    )
 
     private fun fileFilter(name: String): JSONObject = JSONObject().apply {
         put("kinds", JSONArray().put(1).put(FILE_KIND))
@@ -1008,7 +1053,11 @@ class NostrTransport(
      * "чат пуст" и не стирали уже показанную историю. Если ответило хотя бы одно
      * реле (пусть и пустым множеством) — возвращаем дедуплицированный список.
      */
-    private suspend fun queryAllRelays(filter: JSONObject): List<NostrEvent>? {
+    /** Совместимость: один фильтр — частный случай списка (точечные запросы вроде fileFilter). */
+    private suspend fun queryAllRelays(filter: JSONObject): List<NostrEvent>? =
+        queryAllRelays(listOf(filter))
+
+    private suspend fun queryAllRelays(filters: List<JSONObject>): List<NostrEvent>? {
         val collected = ConcurrentLinkedQueue<NostrEvent>()
         val responded = AtomicInteger(0)
         val firstResponse = CompletableDeferred<Unit>()
@@ -1024,7 +1073,7 @@ class NostrTransport(
             val jobs = relays.map { url ->
                 launch {
                     val t0 = System.currentTimeMillis()
-                    val res = runCatching { NostrRelayPool.query(url, filter, useTor) }
+                    val res = runCatching { NostrRelayPool.query(url, filters, useTor) }
                     val r = res.getOrNull()
                     // Телеметрия для экрана «Соединение» (ConnectionStats) — попутно с уже
                     // идущим опросом, никакого нового polling-цикла (см. CLAUDE.md §1).
@@ -1207,19 +1256,26 @@ class NostrTransport(
          * у собеседника фото/файл НЕ СОБИРАЕТСЯ. Не поднимать к 64*1024 — это как раз и
          * ломало доставку картинок.
          *
-         * ⚠️ ПО ПРОСЬБЕ ПОЛЬЗОВАТЕЛЯ (обход провайдерского DPI/ТСПУ, режущего пакеты с фото
-         * и голосовыми в некоторых сетях): значение уменьшено с 48000 до 12000 — заливка
-         * идёт заметно бОльшим числом более мелких событий, каждое публикуется с паузой
-         * (см. CHUNK_JITTER_MIN_MS/MAX_MS в saveFileChunked) — так исходящий трафик не
-         * выглядит одной крупной пачкой данных, характерной для фото/голоса. Публикация
-         * из-за этого дольше — это осознанный компромисс (надёжность важнее скорости, см.
-         * publishFileWithRetry — там же усилен ретрай под тот же сценарий). Формат
-         * манифеста/чанков от размера НЕ зависит (см. ImageChunker.parseManifest — список
-         * имён чанков самоописывающийся), поэтому старые сообщения с чанками по 48000
-         * продолжают собираться этой же логикой без изменений — обратная совместимость
-         * (CLAUDE.md §17) не затронута.
+         * Это ОБЫЧНЫЙ (быстрый) размер части — применяется, пока у чата не включена
+         * «устойчивая доставка медиа» (см. [RESILIENT_CHUNK_CHARS] и Chat.resilientMedia).
          */
-        private const val NOSTR_CHUNK_CHARS = 12_000
+        private const val NOSTR_CHUNK_CHARS = 48_000
+
+        /**
+         * Размер части в режиме «устойчивая доставка медиа» (флаг чата).
+         *
+         * ⚠️ ПО ПРОСЬБЕ ПОЛЬЗОВАТЕЛЯ (обход провайдерского DPI/ТСПУ, режущего пакеты с фото
+         * и голосовыми в некоторых сетях): вчетверо меньше обычного — отправка идёт заметно
+         * бОльшим числом мелких событий, каждое с паузой (см. CHUNK_JITTER_MIN_MS/MAX_MS),
+         * поэтому исходящий трафик не выглядит одной крупной пачкой, характерной для медиа.
+         * Отправка из-за этого ощутимо дольше — осознанный компромисс, поэтому режим
+         * включается ТОЧЕЧНО для нужного чата, а не глобально.
+         *
+         * Формат от размера части НЕ зависит (манифест перечисляет части по именам, см.
+         * ImageChunker.parseManifest), поэтому медиа, отправленное в любом режиме, читается
+         * и старыми версиями приложения, и наоборот (CLAUDE.md §17).
+         */
+        private const val RESILIENT_CHUNK_CHARS = 12_000
 
         /** Пауза между публикацией соседних чанков — разбивает заливку на видимо
          *  независимые события вместо одной пачки. Случайная, а не фиксированная —

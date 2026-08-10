@@ -8,6 +8,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Автозапуск службы пушей после перезагрузки. Само разрешение ничего не включает:
+         BootReceiver поднимает службу ТОЛЬКО при включённом тумблере «Автозапуск вместе
+         с системой» (Prefs.autoStartOnBoot, по умолчанию выкл). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Чтобы Service мог открыть Activity поверх Custom Tabs после успеха OAuth -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -107,6 +111,10 @@
             android:name=".NotificationsActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".ChatsSettingsActivity"
+            android:exported="false" />
 
         <activity
             android:name=".ConnectionActivity"
@@ -308,9 +316,21 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <!-- Автозапуск после перезагрузки телефона УБРАН (репорт: «сам себя перезапускает,
-             не могу закрыть»). Фоновый сервис пушей теперь стартует только когда пользователь
-             сам открыл приложение (при включённом тумблере пушей). См. BootReceiver (no-op). -->
+        <!-- Автозапуск после перезагрузки. НЕ безусловный: раньше он был вшит всегда и его
+             пришлось убрать по репорту «сам себя перезапускает, не могу закрыть». Теперь это
+             тумблер «Автозапуск вместе с системой» (Prefs.autoStartOnBoot), ВЫКЛЮЧЕННЫЙ по
+             умолчанию — при выключенном тумблере BootReceiver ничего не делает, поведение
+             ровно такое же, как когда автозапуска не было вовсе. Не включать по умолчанию. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="false"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
 
         <!-- Шеринг картинки QR-приглашения через content:// -->
         <provider

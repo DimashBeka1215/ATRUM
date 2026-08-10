@@ -26,7 +26,13 @@ class TransportFactory(
      * открытом чате/списке чатов (баг: счётчик участников и имя/аватар группы не
      * обновляются после джойна собеседника).
      */
-    private val adminUserId: String? = null
+    private val adminUserId: String? = null,
+    /**
+     * «Устойчивая доставка медиа» этого чата (Chat.resilientMedia) — мелкие части медиа
+     * с паузами для сетей, где провайдер режет крупные пакеты. Дефолт false: чаты, где
+     * флаг не выставлен (в том числе все существующие), работают в прежнем быстром режиме.
+     */
+    private val resilientMedia: Boolean = false
 ) {
     @Volatile
     private var cached: ChatTransport? = null
@@ -60,7 +66,12 @@ class TransportFactory(
         // Tor-чаты автоматически идут напрямую (см. NostrTransport.useTor).
         if (preferTor && !com.atrum.chat.TorManager.TOR_DISABLED)
             context?.let { com.atrum.chat.TorManager.start(it) }
-        return NostrTransport(chatId, chatPassword, myUserId, preferTor = preferTor, adminUserId = adminUserId)
+        return NostrTransport(
+            chatId, chatPassword, myUserId,
+            preferTor = preferTor,
+            adminUserId = adminUserId,
+            resilientMedia = resilientMedia
+        )
     }
 
     private fun resolve(): ChatTransport = instant()
@@ -70,6 +81,14 @@ class TransportFactory(
          * Быстрый транспорт для разовых операций экранов (профиль, верификация и т.п.).
          * [adminUserId] — передавать chat.adminUserId, если известно, что чат групповой
          * и нужно читать members.txt (по умолчанию null — как было раньше, 1:1 не тронуты).
+         *
+         * ⚠️ resilientMedia сюда НАМЕРЕННО не проброшен (остаётся дефолтный быстрый режим):
+         * все вызыватели этого помощника — операции ЧТЕНИЯ (профиль, список медиа, статистика,
+         * служба уведомлений), а размер частей влияет только на ОТПРАВКУ. Приём от размера не
+         * зависит вовсе — получатель идёт по манифесту с именами частей. Фото и голосовые
+         * отправляются только из ChatActivity, а он создаёт транспорт через обычный
+         * конструктор фабрики и флаг чата передаёт. Если когда-нибудь появится отправка медиа
+         * через forChat — параметр нужно будет добавить и сюда.
          */
         fun forChat(
             context: Context,

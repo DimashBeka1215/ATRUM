@@ -117,6 +117,12 @@ class SettingsActivity : SecureActivity() {
             startActivity(Intent(this, NotificationsActivity::class.java))
         }
 
+        // Настройки → Чаты: устойчивая доставка медиа отдельно по каждому чату.
+        // Раньше пункт был выключен и приглушён (заготовка без экрана).
+        binding.itemChats.setOnClickListener {
+            startActivity(Intent(this, ChatsSettingsActivity::class.java))
+        }
+
         /* CLAUDE_HINT: Mods section entry point. To restore, uncomment this block.
         binding.itemStickers.setOnClickListener {
             startActivity(Intent(this, StickerSettingsActivity::class.java))
@@ -692,7 +698,7 @@ class SettingsActivity : SecureActivity() {
                 binding.ivBanner.visibility = View.VISIBLE
                 binding.vBannerGradient.visibility = View.VISIBLE
                 binding.vBannerDimOverlay.visibility = View.VISIBLE
-                applyHeroGradient()
+                applyHeroGradient(hasPhoto = true)
                 animateBannerIn()
                 return
             }
@@ -700,15 +706,10 @@ class SettingsActivity : SecureActivity() {
         // No banner photo — but keep gradient to dissolve hero bg into page
         binding.ivBanner.visibility = View.GONE
         binding.vBannerDimOverlay.visibility = View.GONE
-        applyHeroGradient()
+        applyHeroGradient(hasPhoto = false)
         binding.vBannerGradient.visibility = View.VISIBLE
     }
 
-    /**
-     * Premium multi-stop gradient overlay to smoothly dissolve the banner into the page background.
-     * Starts from the middle of the banner to ensure a natural transition without harsh edges.
-     * Automatically adapts to Light/Dark themes using @color/bg.
-     */
     /**
      * Плавное появление баннера (фото профиля в шапке) — fade-in за 300мс.
      * Утрачен при рефакторинге v2.6.5 (вызов в setupBanner остался), восстановлен из истории.
@@ -723,18 +724,40 @@ class SettingsActivity : SecureActivity() {
         binding.vBannerGradient.animate().alpha(1f).setDuration(300).start()
     }
 
-    private fun applyHeroGradient() {
+    /**
+     * Оверлей-растворение шапки. Раскладка стопов зависит от того, есть ли фото.
+     *
+     * [hasPhoto] = true — «чёткий срез»: фото читается на ВСЮ высоту `vHeroBg`
+     * (до центра аватара) и гасится только у самого нижнего края лёгкой подложкой
+     * ~25 %, чтобы граница не резала глаз. Раньше нижние 25 % шапки заливались
+     * непрозрачным `@color/bg` — фото туда не доходило и баннер выглядел узким.
+     *
+     * [hasPhoto] = false — прежнее мягкое растворение: декоративный
+     * `bg_hero_settings` плавно уходит в фон страницы, чтобы не было резкой
+     * фиолетовой плашки под именем профиля.
+     *
+     * Цвет берётся из `@color/bg`, поэтому обе темы отрабатывают автоматически.
+     */
+    private fun applyHeroGradient(hasPhoto: Boolean) {
         val bgColor = ContextCompat.getColor(this, R.color.bg)
         val rgb = bgColor and 0x00FFFFFF
-        
+
         val a0   = Color.TRANSPARENT
         val a15  = (15  shl 24) or rgb
         val a60  = (60  shl 24) or rgb
+        val a64  = (64  shl 24) or rgb
         val a130 = (130 shl 24) or rgb
         val a210 = (210 shl 24) or rgb
 
-        // 9 stops for maximum smoothness: прозрачный → сплошной фон страницы
-        val colors = intArrayOf(a0, a0, a15, a60, a130, a210, bgColor, bgColor, bgColor)
+        // 9 стопов, разложенных равномерно по высоте шапки.
+        val colors = if (hasPhoto) {
+            // прозрачно до ~87 %, дальше короткий уход в 25 % фона
+            intArrayOf(a0, a0, a0, a0, a0, a0, a0, a0, a64)
+        } else {
+            // прозрачный → сплошной фон страницы (плавное растворение hero bg)
+            intArrayOf(a0, a0, a15, a60, a130, a210, bgColor, bgColor, bgColor)
+        }
+
         val gradient = android.graphics.drawable.GradientDrawable(
             android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
             colors

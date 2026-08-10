@@ -13,6 +13,29 @@ import android.os.Build
 import java.io.File
 
 /**
+ * Битрейт AAC для голосовых (моно, все три пути записи).
+ *
+ * ⚠️ ПО ПРОСЬБЕ ПОЛЬЗОВАТЕЛЯ снижен с 48/64 кбит/с до 24. Причина: чанк отправки уменьшен
+ * вчетверо ради обхода DPI/ТСПУ (см. NostrTransport.NOSTR_CHUNK_CHARS), поэтому объём
+ * голосового стал определять время доставки — длинное ГС давало сотни чанков. 24 кбит/с
+ * для моно-речи звучит чисто; теряется только «воздух» на музыке и шумном фоне.
+ *
+ * ⛔ ЧАСТОТУ ДИСКРЕТИЗАЦИИ (48 кГц) НЕ СНИЖАТЬ — на неё завязана ВСЯ цепочка обработки,
+ * идущая ДО кодирования: нейронный шумодав (GtcrnDenoiser / DeepFilterNet полнополосный),
+ * Dereverb, AudioPolish, applyAirShelf — все вызываются с 48_000. Битрейт влияет ТОЛЬКО
+ * на финальное кодирование, когда обработка уже завершена, поэтому качество
+ * шумоподавления он не затрагивает.
+ *
+ * Совместимость (§17): кодек и контейнер не менялись (AAC-LC / MPEG-4), параметры потока
+ * декодер читает из заголовка самого файла — старые голосовые играют как играли, новые
+ * играются и на старых версиях приложения.
+ *
+ * ⚠️ Раньше значение было РАЗНЫМ в трёх путях записи (48 / 64 / 48) — размер и качество
+ * зависели от того, какой путь сработал на конкретном устройстве. Держать одной константой.
+ */
+private const val VOICE_BITRATE = 24_000
+
+/**
  * Запись голосового. Три пути по приоритету:
  *  1. DeepFilterNet (нейросеть, sherpa-onnx) — давит крик/ТВ. Офлайн: буфер PCM 48к → чистка → кодек.
  *  2. AudioRecord 48к + аппаратные эффекты + спектральное вычитание (потоковый AAC).
@@ -451,7 +474,7 @@ class VoiceRecorder(context: Context) {
         // Opus/OGG убран — OGG-муксер на части устройств падает (OggWriter: failed to
         // read next buffer) и портит файл, из-за чего голосовые не воспроизводятся.
         return encodeClip(samples, sampleRate, file, MediaFormat.MIMETYPE_AUDIO_AAC,
-            MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4, 48_000)
+            MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4, VOICE_BITRATE)
     }
 
     private fun encodeClip(
@@ -570,7 +593,7 @@ class VoiceRecorder(context: Context) {
 
             val fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelCount).apply {
                 setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                setInteger(MediaFormat.KEY_BIT_RATE, 64_000)
+                setInteger(MediaFormat.KEY_BIT_RATE, VOICE_BITRATE)
                 setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, bufSize)
             }
             val enc = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
@@ -750,7 +773,7 @@ class VoiceRecorder(context: Context) {
                 rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
                 rec.setAudioChannels(1)
                 rec.setAudioSamplingRate(48_000)
-                rec.setAudioEncodingBitRate(48_000)
+                rec.setAudioEncodingBitRate(VOICE_BITRATE)
                 rec.setOutputFile(f.absolutePath)
                 rec.prepare()
                 rec.start()

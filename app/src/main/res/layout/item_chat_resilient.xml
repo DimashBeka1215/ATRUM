@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Одна строка списка «Настройки → Чаты»: аватар + имя чата + тумблер устойчивой доставки
+  медиа (Chat.resilientMedia). Наполняется в ChatsSettingsActivity.
+
+  Аватар собран ТЕМ ЖЕ приёмом, что и в item_chat.xml (список чатов): FrameLayout, внутри
+  заглушка bg_avatar_placeholder, поверх — инициал, поверх — ShapeableImageView с фото.
+  Белый текст инициала допустим: фон заглушки всегда тёмный (accent_dark), см. CLAUDE.md §5.
+
+  Высота 56dp, боковой padding 16dp, зазор иконка↔текст 14dp (DESIGN.md §6). Имя чата в одну
+  строку с многоточием — при длинном имени НЕ наезжает на тумблер (§0). Тумблер сам по себе
+  некликабелен: тап обрабатывается на всей строке, как в activity_notifications.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="56dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingHorizontal="16dp"
+    android:background="?attr/selectableItemBackground"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- Аватарка -->
+    <FrameLayout
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:layout_marginEnd="14dp">
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_avatar_placeholder" />
+
+        <TextView
+            android:id="@+id/tv_avatar_initial"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:textColor="@color/white"
+            android:textSize="15sp"
+            android:fontFamily="sans-serif-medium" />
+
+        <com.google.android.material.imageview.ShapeableImageView
+            android:id="@+id/iv_avatar"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:contentDescription="@null"
+            android:visibility="gone"
+            app:shapeAppearanceOverlay="@style/ShapeAppearance.AtrumChat.Circle" />
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/tv_chat_name"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginEnd="12dp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textColor="@color/text_primary"
+        android:textSize="15sp" />
+
+    <androidx.appcompat.widget.SwitchCompat
+        android:id="@+id/switch_resilient"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:clickable="false"
+        android:focusable="false" />
+</LinearLayout>

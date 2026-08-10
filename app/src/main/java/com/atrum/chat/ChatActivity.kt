@@ -1362,7 +1362,10 @@ class ChatActivity : SecureActivity() {
             // Групповой чат: без этого members.txt никогда не проходит проверку подписи
             // в NostrTransport (adminPubkeyHex был бы всегда null) — участники/имя/аватар
             // группы не обновлялись даже в открытом чате. 1:1 не тронуты (adminUserId = null).
-            adminUserId = chat.adminUserId
+            adminUserId = chat.adminUserId,
+            // Мелкие части медиа с паузами — только если у ЭТОГО чата включён режим
+            // устойчивой доставки (сеть собеседника режет крупные пакеты). См. Chat.resilientMedia.
+            resilientMedia = chat.resilientMedia
         )
         // Стартуем с Nostr напрямую (без проверки) — UI не ждёт
         transport = transportFactory.instant()
@@ -6570,7 +6573,8 @@ class ChatActivity : SecureActivity() {
                     chatPassword = chat.chatPassword,
                     myUserId   = prefs.myUserId,
                     context    = applicationContext,
-                    adminUserId = chat.adminUserId
+                    adminUserId = chat.adminUserId,
+                    resilientMedia = chat.resilientMedia
                 )
                 transport = transportFactory.instant()
                 // В фоне проверяем доступность и, если нужно, переключаемся на Nostr

@@ -543,6 +543,13 @@
     <string name="settings_item_personalization">Personalization</string>
     <string name="settings_item_theme">Theme</string>
     <string name="settings_item_notifications">Notifications</string>
+    <!-- Настройки → Чаты (ChatsSettingsActivity): устойчивая доставка медиа по чатам -->
+    <string name="settings_item_chats">Chats</string>
+    <string name="chats_settings_section">Resilient media delivery</string>
+    <string name="chats_settings_hint">Photos and voice messages are sent in small parts with pauses. Turn this on for a chat where the other person\'s provider throttles media and it does not get through. Sending in that chat will become noticeably slower.</string>
+    <string name="chats_settings_empty_title">No chats yet</string>
+    <string name="chats_settings_empty_sub">The setting will appear here once you create or open your first chat.</string>
+    <string name="chats_settings_save_error">Failed to save the setting</string>
     <string name="settings_item_about">About</string>
     <string name="settings_item_support">Support</string>
 
@@ -602,7 +609,7 @@
     <string name="mock_chat_status">online</string>
     <string name="mock_msg_other">Hey, how\'s it going?</string>
     <string name="mock_msg_self">All good, thanks! 👍</string>
-    <string name="mock_msg_time">14:32 ✓✓</string>
+    <string name="mock_msg_time">14:32</string>
 
     <!-- About screen -->
     <string name="about_title">О приложении</string>
@@ -725,6 +732,11 @@
     <!-- Push-уведомления -->
     <string name="settings_item_push">Push-уведомления</string>
     <string name="settings_item_push_desc">Фоновая проверка новых сообщений</string>
+    <string name="settings_item_autostart">Автозапуск вместе с системой</string>
+    <string name="settings_item_autostart_desc">Поднимать фоновую службу после перезагрузки телефона. Без этого доставка возобновится, когда вы откроете приложение.</string>
+    <string name="settings_item_revive">Восстанавливать после закрытия</string>
+    <string name="settings_item_revive_desc">Возвращать службу, если её убила система или вы смахнули приложение из «недавних». Приложение станет труднее закрыть полностью.</string>
+    <string name="settings_push_required">Сначала включите push-уведомления</string>
     <string name="push_new_message">У вас новое сообщение.</string>
     <string name="push_messages_overflow">У вас 90+ сообщений</string>
     <plurals name="push_new_messages">
