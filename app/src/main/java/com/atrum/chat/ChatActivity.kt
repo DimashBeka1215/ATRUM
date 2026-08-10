@@ -96,18 +96,26 @@ class ChatActivity : SecureActivity() {
     //
     // ⚠️ ПО ПРОСЬБЕ ПОЛЬЗОВАТЕЛЯ (маленькие чанки + пауза между ними против DPI/ТСПУ, см.
     // NostrTransport.NOSTR_CHUNK_CHARS/CHUNK_JITTER_*): раньше был ЖЁСТКИЙ таймер 90с от
-    // старта заливки целиком — с более мелкими чанками и паузами между ними крупное фото
+    // старта заливки целиком — с более мелкими чанками и паузами между ними крупное медиа
     // легко идёт дольше 90с, будучи ЖИВЫМ и успешно продвигающимся, и старый таймер убивал
     // бы его ложно (пустой/битый пузырь у собеседника — ровно то, чего просили избежать).
-    // Теперь сторож смотрит НЕ на общее время, а на ПРОСТОЙ БЕЗ ПРОГРЕССА: пока onFileProgress
-    // тикает (хотя бы раз в UPLOAD_HANG_IDLE_MS) — заливка живая, сколько бы она ни длилась.
-    // Если прогресс не появляется UPLOAD_HANG_IDLE_MS подряд — реально зависла (сеть мертва
-    // целиком) → failSend, как и раньше. ABSOLUTE_UPLOAD_CEILING_MS — отдельный, очень
-    // щедрый потолок на весь процесс (защита от гипотетической вечной накрутки прогресса
-    // без реальной доставки) — на практике почти никогда не сработает раньше idle-порога.
-    private val UPLOAD_HANG_IDLE_MS = 75_000L
+    // Теперь сторож смотрит НЕ на общее время, а на ПРОСТОЙ БЕЗ ПРОГРЕССА: пока приходят
+    // тики (хотя бы раз в UPLOAD_HANG_IDLE_MS) — заливка живая, сколько бы она ни длилась.
+    //
+    // ⚠️ ПОРОГ СОГЛАСОВАН С БЮДЖЕТОМ РЕТРАЕВ ТРАНСПОРТА (найдено аудитом). Транспорт тикает
+    // живость перед КАЖДОЙ попыткой публикации (NostrTransport.publishFileWithRetry), поэтому
+    // максимальный ЗАКОННЫЙ разрыв между тиками = одно ожидание кворума (20с на Tor/SOCKS5)
+    // + худшая пауза бэкоффа (8с) = 28с. Порог 90с даёт больше чем трёхкратный запас и при
+    // этом ловит настоящее зависание за полторы минуты. Менять порог только вместе с
+    // FILE_PUBLISH_MAX_ATTEMPTS/FILE_PUBLISH_BACKOFF_MS и таймаутом кворума — они связаны.
+    //
+    // ⛔ АБСОЛЮТНОГО ПОТОЛКА НА ВСЮ ЗАЛИВКУ СОЗНАТЕЛЬНО НЕТ (был, убран по итогам аудита):
+    // длинное голосовое — это сотни чанков с паузами, штатно десятки минут. Любой потолок
+    // здесь означает ложное убийство ЖИВОЙ заливки, а защиты не добавляет — настоящее
+    // зависание всё равно видно как простой без тиков. Приоритет пользователя явный:
+    // «пусть дольше, но чтобы дошло и собралось».
+    private val UPLOAD_HANG_IDLE_MS = 90_000L
     private val UPLOAD_HANG_POLL_MS = 5_000L
-    private val ABSOLUTE_UPLOAD_CEILING_MS = 20 * 60_000L
 
     /**
      * Счётчик активных загрузок изображений. При count > 0 поле ввода и кнопки
@@ -5152,26 +5160,34 @@ class ChatActivity : SecureActivity() {
         AppScope.launch {
             var lastPct = 0
             val uploadStartedAtMs = System.currentTimeMillis()
-            // lastProgressAtMs — время последнего тика onFileProgress (или старта, если тиков
-            // ещё не было). AtomicLong: пишется из IO-колбэка транспорта, читается из
-            // отдельной корутины сторожа — нужна потокобезопасная точка синхронизации.
+            // lastProgressAtMs — время последнего тика живости от транспорта (или старта,
+            // если тиков ещё не было). AtomicLong: пишется из IO-колбэка транспорта, читается
+            // из отдельной корутины сторожа — нужна потокобезопасная точка синхронизации.
             val lastProgressAtMs = java.util.concurrent.atomic.AtomicLong(uploadStartedAtMs)
+            // Заливка завершилась (успехом или явной ошибкой). ⚠️ Закрывает гонку, найденную
+            // аудитом: сторож мог пройти проверку простоя ровно в тот момент, когда заливка
+            // успешно завершилась, и пометить УЖЕ ДОСТАВЛЕННОЕ сообщение как ошибку —
+            // watchdog.cancel() не успевает прервать уже начатый переход на главный поток.
+            // Пользователь увидел бы крест на дошедшем сообщении и отправил повторно (дубль).
+            val uploadFinished = java.util.concurrent.atomic.AtomicBoolean(false)
             // Сторож простоя — тоже на AppScope, чтобы жил вместе с заливкой. В отличие от
             // старого фикс-таймера, не убивает живую (пусть и медленную) заливку — только
-            // реальное отсутствие прогресса. См. комментарий у UPLOAD_HANG_IDLE_MS выше.
+            // реальное отсутствие тиков. См. комментарий у UPLOAD_HANG_IDLE_MS выше.
             val watchdog = AppScope.launch {
                 while (isActive) {
                     delay(UPLOAD_HANG_POLL_MS)
+                    if (uploadFinished.get()) break
                     val now = System.currentTimeMillis()
                     val idleMs = now - lastProgressAtMs.get()
-                    val totalMs = now - uploadStartedAtMs
-                    if (idleMs < UPLOAD_HANG_IDLE_MS && totalMs < ABSOLUTE_UPLOAD_CEILING_MS) continue
+                    if (idleMs < UPLOAD_HANG_IDLE_MS) continue
                     android.util.Log.e("AtrumUpload",
                         "UPLOAD_HANG files=${extraFiles.size} lastPct=$lastPct useTor=${tr.useTor} " +
                         "relays=${com.atrum.chat.transport.NostrTransport.relayCount()} " +
-                        "idleMs=$idleMs totalMs=$totalMs")
+                        "idleMs=$idleMs totalMs=${now - uploadStartedAtMs}")
                     withContext(Dispatchers.Main) {
-                        if (!isDestroyed) {
+                        // Повторная проверка уже на главном потоке — заливка могла успеть
+                        // завершиться, пока сторож переключал контекст (см. uploadFinished).
+                        if (!isDestroyed && !uploadFinished.get()) {
                             // Голос: dropPending (у голосового нет чистого «failed»-состояния — bindVoice
                             // рисует спиннер по isPending, не по isFailed → failSend оставил бы вечный
                             // спиннер). Фото: failSend (кольцо гаснет по imageUploadIndex=-1, виден крест).
@@ -5210,6 +5226,7 @@ class ChatActivity : SecureActivity() {
                         )
                     }
                 }
+                uploadFinished.set(true) // ДО cancel(): закрывает гонку со сторожем
                 watchdog.cancel()   // заливка завершилась — сторож не нужен
                 withContext(Dispatchers.Main) {
                     if (!isDestroyed) {
@@ -5219,6 +5236,7 @@ class ChatActivity : SecureActivity() {
                     }
                 }
             } catch (e: Exception) {
+                uploadFinished.set(true) // ДО cancel(): закрывает гонку со сторожем
                 watchdog.cancel()
                 val reason = e.message?.take(120) ?: "unknown"
                 withContext(Dispatchers.Main) {

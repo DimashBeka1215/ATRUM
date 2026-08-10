@@ -499,7 +499,10 @@ class NostrTransport(
             if (content.length > NOSTR_CHUNK_CHARS) {
                 saveFileChunked(name, content, chatPassword) { cur, tot -> onFileProgress?.invoke(name, cur, tot) }
             } else {
-                saveFile(name, content)
+                // Прямой вызов вместо saveFile(): размер уже проверен условием выше, а так
+                // мы можем передать тик живости (см. publishFileWithRetry) — даже одиночный
+                // мелкий файл может ретраиться до ~135с, что дольше порога сторожа.
+                publishFileWithRetry(name, content) { onFileProgress?.invoke(name, 0, 1) }
                 onFileProgress?.invoke(name, 1, 1)
             }
         }
@@ -563,9 +566,21 @@ class NostrTransport(
      * уровне ChatActivity, а страховка на КОНКРЕТНОМ событии. Если и все попытки падают —
      * исключение уходит наружу как раньше (failSend в ChatActivity).
      */
-    private suspend fun publishFileWithRetry(name: String, content: String) {
+    private suspend fun publishFileWithRetry(
+        name: String,
+        content: String,
+        onAttempt: (() -> Unit)? = null
+    ) {
         var lastError: Exception? = null
         for (attempt in 0 until FILE_PUBLISH_MAX_ATTEMPTS) {
+            // ⚠️ ТИК ЖИВОСТИ (найдено аудитом, критично). Прогресс раньше сообщался только
+            // ПОСЛЕ успешной публикации чанка целиком, поэтому во время ретраев одного чанка
+            // сторож зависания в ChatActivity не получал НИ ОДНОГО сигнала. Полный бюджет
+            // ретраев здесь — до 6 попыток × 20с ожидания кворума (Tor/SOCKS5) + паузы ≈ 135с,
+            // что БОЛЬШЕ порога простоя сторожа → сторож убивал бы заливку прямо посреди
+            // ретраев, делая их бессмысленными (и давая собеседнику пустой пузырь — ровно то,
+            // что просили исключить). Тик перед каждой попыткой показывает «я жив, ретраю».
+            onAttempt?.invoke()
             try {
                 publishFile(name, content)
                 return
@@ -608,7 +623,9 @@ class NostrTransport(
         val chunks = encryptedContent.chunked(NOSTR_CHUNK_CHARS)
         val chunkNames = chunks.indices.map { ImageChunker.chunkName(name, it) }
         chunks.forEachIndexed { i, chunk ->
-            publishFileWithRetry(chunkNames[i], chunk)
+            // onAttempt переотправляет ТЕКУЩИЙ (уже достигнутый) прогресс — визуально это
+            // no-op, но сторож зависания видит, что заливка жива даже во время ретраев.
+            publishFileWithRetry(chunkNames[i], chunk) { onProgress?.invoke(i, chunks.size) }
             onProgress?.invoke(i + 1, chunks.size)
             // ⚠️ ПО ПРОСЬБЕ ПОЛЬЗОВАТЕЛЯ: пауза между чанками (обход DPI/ТСПУ, режущего
             // пакеты с фото/голосом — см. NOSTR_CHUNK_CHARS выше). Не после последнего
@@ -620,17 +637,43 @@ class NostrTransport(
         // Проверка целостности (по просьбе пользователя): список SHA-256 каждого чанка —
         // ОТДЕЛЬНЫЙ файл, публикуется ДО манифеста. Старые версии приложения о нём не
         // знают и никогда не запрашивают — обратная совместимость не страдает (см.
-        // ImageChunker.kt, раздел "Проверка целостности чанков"). Best-effort: если это
-        // само не долетит — получатель просто не проверяет, как и раньше.
+        // ImageChunker.kt, раздел "Проверка целостности чанков").
+        //
+        // ⚠️ ГАРД РАЗМЕРА + НЕ ФАТАЛЬНО (найдено аудитом, критично). Файл хешей — это
+        // 65 символов на КАЖДЫЙ чанк, а после уменьшения NOSTR_CHUNK_CHARS чанков стало
+        // вчетверо больше. Для длинного голосового (≈15 мин) он перерастает лимит события
+        // публичного реле (~64 КБ) → реле отклоняет → исключение → МАНИФЕСТ НЕ ПУБЛИКУЕТСЯ
+        // → у собеседника пустой пузырь. Поэтому: (1) если файл хешей сам не влезает в
+        // чанк-лимит — просто не публикуем его (получатель не проверит целостность, ровно
+        // как при отправителе на старой версии — штатная деградация, не ошибка);
+        // (2) любой сбой публикации хешей ГЛОТАЕМ — проверка целостности вспомогательна,
+        // она не имеет права ронять доставку самого медиа. Финальную гарантию целостности
+        // всё равно даёт AES-GCM при расшифровке.
         delay(kotlin.random.Random.nextLong(CHUNK_JITTER_MIN_MS, CHUNK_JITTER_MAX_MS))
         val hashesEnc = CryptoHelper.encrypt(ImageChunker.makeChunkHashesPlain(chunks), password, sourceId)
-        publishFileWithRetry(ImageChunker.chunkHashesFileName(name), hashesEnc)
+        if (hashesEnc.length <= NOSTR_CHUNK_CHARS) {
+            runCatching {
+                publishFileWithRetry(ImageChunker.chunkHashesFileName(name), hashesEnc) {
+                    onProgress?.invoke(chunks.size, chunks.size)
+                }
+            }.onFailure {
+                android.util.Log.w("AtrumNostr",
+                    "Файл хешей целостности не опубликован (${it.message?.take(80)}) — " +
+                        "заливка продолжается, получатель просто не будет сверять чанки")
+            }
+        } else {
+            android.util.Log.w("AtrumNostr",
+                "Файл хешей целостности пропущен: ${hashesEnc.length} символов на ${chunks.size} чанков " +
+                    "не влезает в лимит события реле — получатель не будет сверять чанки")
+        }
         // Манифест шифруем под sourceId (chat.chatId) через encrypt() — тем же ключом/
         // сессией, что и контент и текст. Иначе домены не совпадут и манифест не
         // расшифруется у получателя (cryptoChatId = chat.chatId).
+        // ⛔ В отличие от хешей, манифест КРИТИЧЕН — без него медиа не собрать, поэтому
+        // здесь сбой обязан уходить наружу (failSend), а не глотаться.
         delay(kotlin.random.Random.nextLong(CHUNK_JITTER_MIN_MS, CHUNK_JITTER_MAX_MS))
         val manifestEnc = CryptoHelper.encrypt(ImageChunker.makeManifestPlain(chunkNames), password, sourceId)
-        publishFileWithRetry(name, manifestEnc)
+        publishFileWithRetry(name, manifestEnc) { onProgress?.invoke(chunks.size, chunks.size) }
     }
 
     override suspend fun loadFileOrNull(name: String): String? = try {
