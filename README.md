@@ -6,8 +6,8 @@
 [![Поддержать](https://img.shields.io/badge/❤-Поддержать-9D4EDD)](#поддержать--support)
 
 Сквозно-зашифрованный мессенджер для двоих и для групп, который не использует
-собственные серверы. Сообщения ходят через **публичные Nostr-реле поверх встроенного
-Tor** и шифруются **прямо на устройстве** — в сеть уходит только зашифрованный текст.
+собственные серверы. Сообщения ходят через **публичные Nostr-реле** и шифруются
+**прямо на устройстве** — в сеть уходит только зашифрованный текст.
 Нет аккаунтов, нет номеров телефона, нет центрального сервера, который можно изъять
 или заставить выдать переписку.
 
@@ -19,7 +19,7 @@ Tor** и шифруются **прямо на устройстве** — в се
 > ⛔ **Скачивайте Atrum только из официальных источников** — [Telegram-канал](https://t.me/Atrum_Chat)
 > или [GitHub Releases](https://github.com/DimashBeka1215/ATRUM/releases) этого репозитория.
 > Код проекта открыт: это плюс для проверки шифрования, но это же значит, что кто угодно
-> может собрать модифицированную версию и вырезать из неё любую защиту (шифрование, Tor,
+> может собрать модифицированную версию и вырезать из неё любую защиту (шифрование,
 > проверку подписи реле) — внешне такая сборка не будет отличаться от настоящей. Мы не можем
 > гарантировать безопасность сборок из сторонних источников.
 
@@ -46,10 +46,6 @@ Tor** и шифруются **прямо на устройстве** — в се
 участниками. Реле видят лишь поток шифртекста; содержимое не может прочитать ни реле, ни
 провайдер, ни сам Atrum.
 
-Весь трафик в этом режиме идёт СТРОГО через **встроенный Tor** (никаких отдельных приложений
-ставить не надо), что скрывает IP и факт использования Nostr. Политика «Tor or nothing»
-исключает утечку IP-адреса даже при нестабильном соединении.
-
 ## Что такое реле (Nostr relays)?
 
 Atrum не хранит переписку сам и не арендует для этого сервер. Вместо этого зашифрованные
@@ -68,8 +64,6 @@ Atrum не хранит переписку сам и не арендует дл�
 - **Список реле подписан и обновляем.** Встроенный набор реле можно дополнять новым,
   подписанным издателем списком (`RelayListStore`, BIP-340 Schnorr) — но только
   дополнять, никогда не заменять исподтишка (защита от отката/подмены).
-- **Реле не знает, кто вы.** Подключение к реле идёт через встроенный Tor — само реле
-  видит лишь Tor-узел, а не ваш реальный IP-адрес.
 
 Иными словами: реле — это просто «труба» для доставки шифртекста, а не хранилище данных
 в смысле облака компании. Заменить любой сервер Nostr — не проблема; заменить
@@ -79,7 +73,7 @@ Atrum не хранит переписку сам и не арендует дл�
 ## Как это работает
 
 ```
-Ваш телефон  ──шифр──►  Nostr-реле (через Tor)  ──►  телефон собеседника  ──дешифр──►
+Ваш телефон  ──шифр──►  Nostr-реле  ──►  телефон собеседника  ──дешифр──►
 ```
 
 1. **Создание чата.** Генерируется приглашение (`InviteCodec`) — короткий код или QR.
@@ -114,9 +108,6 @@ Atrum не хранит переписку сам и не арендует дл�
 - **Сквозное шифрование:** AES-256-GCM, ключ через Argon2. Реле получают только шифртекст.
 - **Forward secrecy:** сессионный эфемерный ключ живёт только в памяти и стирается при
   закрытии чата — компрометация устройства позже не раскрывает прошлую переписку.
-- **Анонимность транспорта:** весь трафик через встроенный Tor (kmp-tor). СТРОГОЕ
-  использование Tor для защищённых чатов («Tor or nothing») предотвращает утечки IP.
-  Поддержка мостов / pluggable transports (IPtProxy) для обхода блокировок Tor.
 - **Защита от тайминг-анализа:** рандомные задержки (jitter) при отправке и требование
   кворума подтверждений от нескольких реле (3/5+).
 - **Подписанный список реле:** обновляемый перечень реле (`RelayListStore`) подписан
@@ -127,13 +118,12 @@ Atrum не хранит переписку сам и не арендует дл�
   описано выше — но см. предупреждение выше про сборки из неофициальных источников.
 
 Чего Atrum **не** скрывает: на уровне самого Nostr видно, что какое-то событие
-опубликовано, — это видят реле, но без связи с вашим IP (Tor) и без открытого содержимого.
+опубликовано, — это видят реле, но без открытого содержимого.
 
 ## Технологии
 
 - **Язык/платформа:** Kotlin, Android (minSdk 24, targetSdk 34, compileSdk 35)
-- **Сеть:** Nostr (NIP-01) + OkHttp WebSocket, встроенный Tor (`io.matthewnelson.kmp-tor`),
-  IPtProxy для мостов
+- **Сеть:** Nostr (NIP-01) + OkHttp WebSocket
 - **Крипто:** AES-GCM, Argon2 и BIP-340 Schnorr (BouncyCastle)
 - **Хранилище:** Room DB + EncryptedSharedPreferences
 - **UI:** Android Views (XML), Material, CameraX, Lottie, ZXing (QR), uCrop (аватары)
@@ -146,7 +136,6 @@ app/src/main/java/com/atrum/chat/
 ├── transport/                 ChatTransport (интерфейс) + NostrTransport / LocalTransport
 ├── nostr/                     NostrEvent, NostrRelayPool, Schnorr (подписи)
 ├── RelayListStore.kt          подписанный обновляемый список реле
-├── TorManager.kt              встроенный Tor
 ├── CryptoHelper.kt            шифрование/дешифрование
 ├── ProfileSync.kt             синхронизация профилей
 ├── ChatActivity.kt            экран чата
@@ -184,8 +173,8 @@ app/src/main/java/com/atrum/chat/
 # Atrum Chat (English)
 
 An end-to-end encrypted messenger for private and group chats that runs **without any
-servers of its own**. Messages travel over **public Nostr relays through embedded Tor**
-and are encrypted **on-device** — only ciphertext ever leaves your phone. No accounts, no
+servers of its own**. Messages travel over **public Nostr relays** and are encrypted
+**on-device** — only ciphertext ever leaves your phone. No accounts, no
 phone numbers, no central server that can be seized or compelled to hand over your chats.
 
 > ⚠️ **Status:** under active development. Experimental — the protocol and storage format
@@ -196,7 +185,7 @@ phone numbers, no central server that can be seized or compelled to hand over yo
 > ⛔ **Only download Atrum from official sources** — the [Telegram channel](https://t.me/Atrum_Chat)
 > or [GitHub Releases](https://github.com/DimashBeka1215/ATRUM/releases) of this repository.
 > The source code is open, which is great for verifying the crypto — but it also means
-> anyone can rebuild a modified version and strip out any protection (encryption, Tor,
+> anyone can rebuild a modified version and strip out any protection (encryption,
 > relay-list signature checks). Such a build would look identical from the outside. We
 > cannot vouch for the safety of builds from third-party sources.
 
@@ -215,9 +204,7 @@ Conventional messengers keep your history on a company server. Atrum has none. E
 (1:1 or group) is a secret known only to its participants. Encrypted messages are
 published as events to the decentralized Nostr network and pulled by the rest of the
 participants. Relays only see a stream of ciphertext — neither the relay, the ISP, nor
-Atrum itself can read it. All traffic in this mode goes STRICTLY through **built-in Tor**
-(no separate app needed), hiding your IP; the "Tor or nothing" policy prevents IP leaks
-even on unstable networks.
+Atrum itself can read it.
 
 ## What are relays?
 
@@ -238,8 +225,6 @@ Key properties:
 - **The relay list is signed and updatable.** The built-in relay set can be extended with
   a new, publisher-signed list (`RelayListStore`, BIP-340 Schnorr) — but only extended,
   never silently replaced (protection against downgrade/substitution).
-- **A relay doesn't know who you are.** Connections go through embedded Tor — the relay
-  only sees a Tor exit node, not your real IP address.
 
 In short: a relay is just a "pipe" for delivering ciphertext, not a company-cloud style
 data store. Swapping out any Nostr server is trivial; breaking the encryption is not,
@@ -272,9 +257,6 @@ exchange.
 - **E2E encryption:** AES-256-GCM with an Argon2-derived key; relays see ciphertext only.
 - **Forward secrecy:** the ephemeral session key lives in memory only and is wiped when
   the chat closes — a later device compromise doesn't reveal past messages.
-- **Transport anonymity:** all traffic via embedded Tor (kmp-tor), "Tor or nothing"
-  policy for protected chats to prevent IP leaks, bridges / pluggable transports (IPtProxy)
-  when Tor is blocked.
 - **Anti-timing analysis:** random network jitter (50-300ms) and confirmation quorum
   (3/5+ relays) to obfuscate traffic patterns.
 - **Signed relay list:** the updatable relay list (`RelayListStore`) is signed with the
@@ -287,7 +269,7 @@ exchange.
 ## Tech stack
 
 Kotlin / Android (minSdk 24, targetSdk 34, compileSdk 35) · Nostr (NIP-01) + OkHttp
-WebSocket · embedded Tor (`kmp-tor`) + IPtProxy · AES-GCM / Argon2 / BIP-340 Schnorr
+WebSocket · AES-GCM / Argon2 / BIP-340 Schnorr
 (BouncyCastle) · Room + EncryptedSharedPreferences · Android Views, Material, CameraX,
 Lottie, ZXing, uCrop.
 
