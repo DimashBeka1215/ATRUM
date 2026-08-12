@@ -50,6 +50,7 @@ ROADMAP_TODO.md
 *.md
 !CLAUDE.md
 !DESIGN.md
+!README.md
 
 # Каталог SDK-модов — локальный, не в репозиторий
 mods-sdk/
