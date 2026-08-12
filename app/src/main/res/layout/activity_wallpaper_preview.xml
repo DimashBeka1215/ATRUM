@@ -20,12 +20,15 @@
             android:scaleType="centerCrop"
             android:contentDescription="@null" />
 
-        <!-- Мок-чат поверх обоев -->
+        <!-- Мок-чат поверх обоев.
+             paddingBottom = 100dp — ровно высота скрим-фейда ниже. Было 80dp, из-за чего
+             панель ввода попадала внутрь градиента и подмывалась заливкой @color/surface
+             поверх себя. Теперь нижний край панели совпадает с прозрачным началом скрима. -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:orientation="vertical"
-            android:paddingBottom="80dp">
+            android:paddingBottom="100dp">
 
             <!-- Мок-шапка -->
             <LinearLayout
@@ -41,7 +44,7 @@
                     android:layout_width="20dp"
                     android:layout_height="20dp"
                     android:src="@drawable/ic_arrow_back"
-                    android:tint="@color/text_primary"
+                    app:tint="@color/text_primary"
                     android:alpha="0.8"
                     android:layout_marginEnd="10dp"
                     android:contentDescription="@null" />
@@ -121,42 +124,90 @@
                         android:textColor="@color/white"
                         android:textSize="15sp" />
 
-                    <TextView
+                    <!-- Время + галочка. Раньше галочки были вшиты в строку текстом
+                         («14:32 ✓✓») — это нарушало §9 и выглядело иначе, чем в реальном
+                         чате. Теперь один в один с iv_tick из item_message_self.xml. -->
+                    <LinearLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_gravity="end"
-                        android:text="@string/mock_msg_time"
-                        android:textColor="@color/accent_light"
-                        android:textSize="10sp"
-                        android:layout_marginTop="2dp" />
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="2dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/mock_msg_time"
+                            android:textColor="@color/accent_light"
+                            android:textSize="10sp" />
+
+                        <ImageView
+                            android:layout_width="14dp"
+                            android:layout_height="14dp"
+                            android:layout_marginStart="4dp"
+                            android:src="@drawable/ic_check_double"
+                            app:tint="@color/read_tick"
+                            android:contentDescription="@null" />
+                    </LinearLayout>
                 </LinearLayout>
             </LinearLayout>
 
-            <!-- Мок-панель ввода -->
+            <!-- Мок-панель ввода. Повторяет структуру настоящей (activity_chat.xml,
+                 input_area → input_pill): скрепка + плейсхолдер + круглая кнопка отправки
+                 ВНУТРИ пилюли. Раньше пилюля была пустым View, а кнопка висела снаружи —
+                 на тёмных обоях от панели оставалась одна стрелка в воздухе, и превью не
+                 показывало то, что настраивает ползунок «Интерфейс». -->
             <LinearLayout
                 android:id="@+id/mockInputArea"
                 android:layout_width="match_parent"
-                android:layout_height="52dp"
+                android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
-                android:paddingHorizontal="8dp"
+                android:paddingHorizontal="12dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="10dp"
                 android:background="@color/chat_overlay">
 
-                <View
+                <LinearLayout
                     android:id="@+id/mockInputPill"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
-                    android:layout_weight="1"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
                     android:background="@drawable/bg_chat_input_pill"
-                    android:layout_marginHorizontal="4dp" />
+                    android:paddingHorizontal="6dp"
+                    android:paddingVertical="4dp">
 
-                <ImageView
-                    android:layout_width="36dp"
-                    android:layout_height="36dp"
-                    android:src="@drawable/ic_send"
-                    android:tint="@color/accent"
-                    android:padding="6dp"
-                    android:contentDescription="@null" />
+                    <ImageView
+                        android:layout_width="34dp"
+                        android:layout_height="34dp"
+                        android:src="@drawable/ic_attach"
+                        app:tint="@color/text_secondary"
+                        android:padding="8dp"
+                        android:contentDescription="@null" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginHorizontal="2dp"
+                        android:paddingHorizontal="8dp"
+                        android:text="@string/hint_message"
+                        android:textColor="@color/text_tertiary"
+                        android:textSize="15sp"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
+
+                    <ImageView
+                        android:layout_width="34dp"
+                        android:layout_height="34dp"
+                        android:src="@drawable/ic_send"
+                        android:background="@drawable/bg_send_button"
+                        app:tint="@color/white"
+                        android:padding="8dp"
+                        android:contentDescription="@null" />
+                </LinearLayout>
             </LinearLayout>
         </LinearLayout>
 

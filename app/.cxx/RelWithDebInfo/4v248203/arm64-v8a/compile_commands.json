@@ -1,7 +1,0 @@
-[
-{
-  "directory": "C:/Users/Dimash/Desktop/ATRUM/app/.cxx/RelWithDebInfo/4v248203/arm64-v8a",
-  "command": "C:\\Users\\Dimash\\AppData\\Local\\Android\\Sdk\\ndk\\27.0.12077973\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang.exe --target=aarch64-none-linux-android24 --sysroot=C:/Users/Dimash/AppData/Local/Android/Sdk/ndk/27.0.12077973/toolchains/llvm/prebuilt/windows-x86_64/sysroot -Datrumcodec_EXPORTS -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -O2 -g -DNDEBUG -fPIC -O2 -fvisibility=hidden -o CMakeFiles\\atrumcodec.dir\\tamper.c.o -c C:\\Users\\Dimash\\Desktop\\ATRUM\\app\\src\\main\\cpp\\tamper.c",
-  "file": "C:\\Users\\Dimash\\Desktop\\ATRUM\\app\\src\\main\\cpp\\tamper.c"
-}
-]

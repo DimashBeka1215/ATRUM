@@ -169,6 +169,31 @@ class Prefs(private val context: Context) {
         get() = prefs.getBoolean(KEY_SVC_DISMISSED, false)
         set(v) = prefs.edit().putBoolean(KEY_SVC_DISMISSED, v).apply()
 
+    /**
+     * Поднимать фоновую службу пушей после перезагрузки телефона (см. [BootReceiver]).
+     * По умолчанию ВЫКЛ — так поведение существующих установок после обновления не
+     * меняется (§17). Работает только совместно с [pushEnabled].
+     *
+     * Исторически автозапуск был вшит безусловно и его пришлось убрать по репорту
+     * «сам себя перезапускает, не могу закрыть». Теперь это осознанный выбор пользователя,
+     * а не поведение по умолчанию.
+     */
+    var autoStartOnBoot: Boolean
+        get() = prefs.getBoolean(KEY_AUTOSTART_BOOT, false)
+        set(v) = prefs.edit().putBoolean(KEY_AUTOSTART_BOOT, v).apply()
+
+    /**
+     * Возвращать фоновую службу, даже если пользователь сам смахнул приложение из
+     * «недавних» (то есть игнорировать [serviceUserDismissed] в [PushCatchupWorker]).
+     * По умолчанию ВЫКЛ — иначе приложение снова станет невозможно закрыть.
+     *
+     * Внимание: восстановление после Doze-kill работает и БЕЗ этого флага — там
+     * [serviceUserDismissed] не взводится. Флаг влияет только на осознанное закрытие.
+     */
+    var reviveService: Boolean
+        get() = prefs.getBoolean(KEY_REVIVE_SERVICE, false)
+        set(v) = prefs.edit().putBoolean(KEY_REVIVE_SERVICE, v).apply()
+
     /** Суммарное число непрочитанных, о котором уже показан пуш (анти-повтор/звон). */
     var pushNotifiedTotal: Int
         get() = prefs.getInt(KEY_PUSH_TOTAL, 0)
@@ -943,6 +968,8 @@ class Prefs(private val context: Context) {
         private const val KEY_BIOMETRIC = "biometric_enabled"
         private const val KEY_PUSH_ENABLED = "push_enabled"
         private const val KEY_SVC_DISMISSED = "svc_user_dismissed"
+        private const val KEY_AUTOSTART_BOOT = "autostart_on_boot"
+        private const val KEY_REVIVE_SERVICE = "revive_service"
         private const val KEY_PUSH_TOTAL = "push_notified_total"
         private const val KEY_BATTERY_HINT = "battery_hint_shown"
         private const val KEY_ROOT_WARN = "root_warning_shown"

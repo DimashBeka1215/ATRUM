@@ -219,11 +219,27 @@ class WallpaperPreviewActivity : SecureActivity() {
     }
 
     private fun updateMockAlpha() {
-        binding.mockBubbleSelf.alpha  = (binding.seekBubbleSelf.progress  + MIN_ALPHA) / 100f
-        binding.mockBubbleOther.alpha = (binding.seekBubbleOther.progress + MIN_ALPHA) / 100f
-        val uiA                       = (binding.seekUi.progress          + MIN_ALPHA) / 100f
+        // Непрозрачность пузырьков применяем к ФОНУ, а не к View — ровно как в
+        // MessageAdapter. Иначе превью врёт: в нём гаснет и текст, а в реальном чате нет.
+        setBubbleBackgroundAlpha(
+            binding.mockBubbleSelf,
+            (binding.seekBubbleSelf.progress + MIN_ALPHA) / 100f
+        )
+        setBubbleBackgroundAlpha(
+            binding.mockBubbleOther,
+            (binding.seekBubbleOther.progress + MIN_ALPHA) / 100f
+        )
+        val uiA = (binding.seekUi.progress + MIN_ALPHA) / 100f
         binding.mockHeader.alpha    = uiA
         binding.mockInputArea.alpha = uiA
+    }
+
+    /** Гасит только фон пузырька, оставляя текст внутри на 100% (см. MessageAdapter). */
+    private fun setBubbleBackgroundAlpha(bubble: android.view.View, fraction: Float) {
+        bubble.alpha = 1f
+        bubble.background = bubble.background?.mutate()?.apply {
+            alpha = (fraction.coerceIn(0f, 1f) * 255f).toInt()
+        }
     }
 
     // ── Утилиты ───────────────────────────────────────────────────────────────

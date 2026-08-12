@@ -982,7 +982,16 @@ class MessageAdapter(
                             ContextCompat.getColor(ctx, R.color.text_primary)
                         )
                     }
-                    bubble.alpha = if (msg.isSelf) bubbleAlphaSelf else bubbleAlphaOther
+                    // Пользовательская непрозрачность пузырька (ползунок при установке обоев).
+                    // Применяем ТОЛЬКО к фону, а не к View: alpha на bubble_container гасила и
+                    // текст, и время, и цитату внутри — при 60% сообщение собеседника
+                    // становилось нечитаемым. mutate() обязателен: ContextCompat.getDrawable
+                    // отдаёт общий ConstantState, без него alpha утечёт на все пузырьки списка.
+                    val bubbleAlpha = if (msg.isSelf) bubbleAlphaSelf else bubbleAlphaOther
+                    bubble.alpha = 1f
+                    bubble.background = bubble.background?.mutate()?.apply {
+                        alpha = (bubbleAlpha.coerceIn(0f, 1f) * 255f).toInt()
+                    }
                 }
             }
 
