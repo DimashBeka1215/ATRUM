@@ -38,6 +38,18 @@
 
 ---
 
+## Скриншоты
+
+| Чаты | Переписка | Профиль |
+|---|---|---|
+| <img src="docs/screenshots/chats-list.jpg" width="230" alt="Список чатов"> | <img src="docs/screenshots/chat.jpg" width="230" alt="Экран чата с обоями"> | <img src="docs/screenshots/settings.jpg" width="230" alt="Профиль и настройки"> |
+
+| Стикеры и реакции | Экономия заряда |
+|---|---|
+| <img src="docs/screenshots/chat-stickers.jpg" width="230" alt="Анимированные стикеры и реакции"> | <img src="docs/screenshots/battery-saver.jpg" width="230" alt="Анимация стикеров отключается при низком заряде"> |
+
+---
+
 ## Идея
 
 Обычный мессенджер хранит переписку на сервере компании. Atrum серверов не имеет вовсе.
@@ -197,6 +209,16 @@ phone numbers, no central server that can be seized or compelled to hand over yo
 | 📣 [Telegram channel](https://t.me/Atrum_Chat) | News and updates — new version announcements |
 | 💬 [Community chat on Telegram](https://t.me/+4hhc8PwwNf03ZmMy) | Discussion, questions and community support |
 | ❤️ [Support the project](#support) | DonationAlerts, Boosty, Buy Me a Coffee |
+
+## Screenshots
+
+| Chats | Conversation | Profile |
+|---|---|---|
+| <img src="docs/screenshots/chats-list.jpg" width="230" alt="Chat list"> | <img src="docs/screenshots/chat.jpg" width="230" alt="Chat screen with wallpaper"> | <img src="docs/screenshots/settings.jpg" width="230" alt="Profile and settings"> |
+
+| Stickers and reactions | Battery saver |
+|---|---|
+| <img src="docs/screenshots/chat-stickers.jpg" width="230" alt="Animated stickers and reactions"> | <img src="docs/screenshots/battery-saver.jpg" width="230" alt="Sticker animation pauses on low battery"> |
 
 ## The idea
 
