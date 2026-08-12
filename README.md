@@ -42,11 +42,11 @@
 
 | Чаты | Переписка | Профиль |
 |---|---|---|
-| <img src="docs/screenshots/chats-list.jpg" width="230" alt="Список чатов"> | <img src="docs/screenshots/chat.jpg" width="230" alt="Экран чата с обоями"> | <img src="docs/screenshots/settings.jpg" width="230" alt="Профиль и настройки"> |
+| <img src="docs/screenshots/chats-list.jpg" height="460" alt="Список чатов"> | <img src="docs/screenshots/chat-stickers.jpg" height="460" alt="Экран чата с обоями, стикер и реакция"> | <img src="docs/screenshots/settings.jpg" height="460" alt="Профиль и настройки"> |
 
-| Стикеры и реакции | Экономия заряда |
+| Экономия заряда | Переписка целиком |
 |---|---|
-| <img src="docs/screenshots/chat-stickers.jpg" width="230" alt="Анимированные стикеры и реакции"> | <img src="docs/screenshots/battery-saver.jpg" width="230" alt="Анимация стикеров отключается при низком заряде"> |
+| <img src="docs/screenshots/battery-saver.jpg" height="460" alt="Анимация стикеров отключается при низком заряде"> | <img src="docs/screenshots/chat.jpg" height="460" alt="Длинный скриншот переписки"> |
 
 ---
 
@@ -214,11 +214,11 @@ phone numbers, no central server that can be seized or compelled to hand over yo
 
 | Chats | Conversation | Profile |
 |---|---|---|
-| <img src="docs/screenshots/chats-list.jpg" width="230" alt="Chat list"> | <img src="docs/screenshots/chat.jpg" width="230" alt="Chat screen with wallpaper"> | <img src="docs/screenshots/settings.jpg" width="230" alt="Profile and settings"> |
+| <img src="docs/screenshots/chats-list.jpg" height="460" alt="Chat list"> | <img src="docs/screenshots/chat-stickers.jpg" height="460" alt="Chat screen with wallpaper, sticker and reaction"> | <img src="docs/screenshots/settings.jpg" height="460" alt="Profile and settings"> |
 
-| Stickers and reactions | Battery saver |
+| Battery saver | Full conversation |
 |---|---|
-| <img src="docs/screenshots/chat-stickers.jpg" width="230" alt="Animated stickers and reactions"> | <img src="docs/screenshots/battery-saver.jpg" width="230" alt="Sticker animation pauses on low battery"> |
+| <img src="docs/screenshots/battery-saver.jpg" height="460" alt="Sticker animation pauses on low battery"> | <img src="docs/screenshots/chat.jpg" height="460" alt="Long screenshot of a conversation"> |
 
 ## The idea
 
