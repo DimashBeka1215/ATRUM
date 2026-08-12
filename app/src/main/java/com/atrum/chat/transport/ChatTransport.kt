@@ -329,8 +329,32 @@ interface ChatTransport {
         files.forEach { (name, content) -> saveFile(name, content) }
     }
 
+    /**
+     * Мой pubkey на проводе (hex), которым подписаны МОИ события. Нужен, чтобы отличить свой
+     * слот от чужого при проверке взаимного обмена профилями: попадание моего профиля в мой же
+     * слот ничего не доказывает (см. JoinChatActivity.awaitMutualProfileExchange).
+     *
+     * null — транспорт без подписи событий (локальный чат, Bluetooth): там слот всегда один
+     * и различать нечего.
+     */
+    val myWirePubkey: String? get() = null
+
     /** Загружает файл; возвращает null если не существует или ошибка. */
     suspend fun loadFileOrNull(name: String): String?
+
+    /**
+     * Загружает ВСЕ версии файла — по одной на каждого автора («слоты»), новые первыми.
+     *
+     * Зачем отдельно от [loadFileOrNull]: у файлов, которые независимо переписывают НЕСКОЛЬКО
+     * участников (profiles.txt), каждое устройство пишет СВОЙ слот, и «последний записавший»
+     * не содержит правок остальных. [loadFileOrNull] отдаёт ровно один, самый свежий, поэтому
+     * построенный на нём read-modify-write теряет чужие профили (см. ProfileSync.pullProfiles).
+     *
+     * Дефолтная реализация — один слот: для транспортов с ОДНИМ писателем (локальный чат
+     * «Избранное», обмен по Bluetooth) уния не нужна, поведение остаётся прежним.
+     */
+    suspend fun loadFileSlots(name: String): List<String> =
+        listOfNotNull(loadFileOrNull(name)?.takeIf { it.isNotBlank() })
 
     /** Загружает файл; бросает исключение если не существует. */
     suspend fun loadFile(name: String): String

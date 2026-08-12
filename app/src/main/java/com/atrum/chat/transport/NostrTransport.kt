@@ -700,6 +700,28 @@ class NostrTransport(
         null
     }
 
+    /**
+     * Все слоты файла (по одному на автора), новые первыми.
+     *
+     * ⚠️ БЕСПЛАТНО ПО ТРАФИКУ: это ТОТ ЖЕ САМЫЙ запрос, который делает [loadFile] — реле и так
+     * отдают ВСЕ события с этим тегом, а loadFile просто выбрасывал все, кроме самого свежего
+     * (`maxByOrNull { created_at }`). Здесь мы их не выбрасываем. Ни одного дополнительного
+     * обращения к реле не добавляется (§1: лишние запросы ломают синхронизацию).
+     *
+     * Не предназначено для неизменяемых файлов (img_/stk_): там имя уникально и слот всегда
+     * один, а несколько разных копий означают расхождение реле — этим занимается [loadFile]
+     * (берёт самую длинную, т.к. обрезка только укорачивает).
+     */
+    override suspend fun loadFileSlots(name: String): List<String> = try {
+        val events = queryAllRelays(fileFilter(name)) ?: emptyList()
+        events.filter { ev -> eventHasFileName(ev, name) }
+            .sortedByDescending { it.created_at }
+            .map { it.content }
+            .filter { it.isNotBlank() }
+    } catch (_: Exception) {
+        emptyList()
+    }
+
     override suspend fun loadFile(name: String): String {
         if (isImmutableFile(name)) {
             mediaCache.get(wireName(name))?.let { return it }
@@ -962,6 +984,13 @@ class NostrTransport(
     private val myPubkeyHex: String by lazy {
         com.atrum.chat.nostr.Schnorr.pubkeyFromPrivkey(privkey).toHex()
     }
+
+    /**
+     * Публичный доступ к [myPubkeyHex] — чтобы вызывающий код мог отличить МОЙ слот от чужого
+     * (проверка взаимного обмена профилями, см. ChatTransport.myWirePubkey). Отдаётся только
+     * ОТКРЫТЫЙ ключ: приватный остаётся внутри транспорта.
+     */
+    override val myWirePubkey: String get() = myPubkeyHex
 
     /** Фильтр стрима профилей: НОВЫЕ FILE_KIND-слоты profiles.txt этого канала. */
     private fun profileStreamFilter(sinceSec: Long): JSONObject = JSONObject().apply {

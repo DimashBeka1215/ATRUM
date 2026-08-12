@@ -498,6 +498,15 @@ class ChatActivity : SecureActivity() {
     @Volatile private var lastPartnerProfile: Profile? = null
     /** Тикер: раз в секунду пере-вычисляет онлайн/печать/запись по таймауту. */
     private var presenceTickerJob: Job? = null
+
+    /**
+     * true, когда ЧТЕНИЕ канала подтвердило: мой профиль лежит на реле и совпадает с текущим
+     * (имя/тег/аватар/эфемерный ключ). Ставится только по СЫРОМУ union-снимку — см.
+     * [confirmMyProfilePublished]. Пока false, [startProfilePublishGuard] повторяет публикацию.
+     */
+    @Volatile private var myProfilePublishConfirmed = false
+    /** Сторож публикации своего профиля (см. startProfilePublishGuard). */
+    private var profilePublishGuardJob: Job? = null
     /** true пока МЫ записываем голосовое — шлём это партнёру в presence. */
     @Volatile private var isRecordingVoice = false
 
@@ -549,6 +558,20 @@ class ChatActivity : SecureActivity() {
         }
         map[prefs.myUserId] = prefs.myAvatarBase64
         adapter.updateAvatars(map)
+
+        // Актуальные ники отправителей (репорт: «ник на старых сообщениях не меняется»). Имя
+        // зашивается в сам текст сообщения при отправке и навсегда там застывает, поэтому после
+        // смены ника вся прежняя переписка показывала старое имя. Отдаём адаптеру свежие имена
+        // по userId — он подставит их вместо зашитых. Тот же межчатовый fallback, что и для
+        // аватара: человек с тем же userId уже мог быть увиден в другом чате.
+        val names = HashMap<String, String>(source.size + 1)
+        for ((uid, profile) in source) {
+            val fresh = profile.name.takeIf { it.isNotBlank() }
+                ?: ProfileSync.getGlobalKnown(uid)?.name?.takeIf { it.isNotBlank() }
+            if (fresh != null) names[uid] = fresh
+        }
+        prefs.myName.takeIf { it.isNotBlank() }?.let { names[prefs.myUserId] = it }
+        adapter.updateSenderNames(names)
 
         // Галочки верификации у ников отправителей в беседе. Считаем КРИПТОГРАФИЧЕСКИ:
         // VerifiedBadge сначала дёшево проверяет членство ключа в списке, и только для
@@ -866,6 +889,9 @@ class ChatActivity : SecureActivity() {
      */
     private fun syncProfiles() = lifecycleScope.launch {
         if (chat.isFavorites) return@launch
+        // Сторож публикации своего профиля — единая точка запуска на оба вызова syncProfiles()
+        // (onCreate и onResume). Сам по себе дёшев: молчит, пока публикация подтверждена.
+        startProfilePublishGuard()
         // Подстраховка: до 3 попыток с нарастающей паузой (3с → 6с).
         // Раньше была одна попытка, после которой всё молча игнорировалось —
         // любая кратковременная сетевая ошибка приводила к тому, что ephemeral
@@ -957,7 +983,7 @@ class ChatActivity : SecureActivity() {
         } else {
             ProfileSync.parseProfiles(allData.profilesContent, chat.chatPassword, chat.chatId)
         }
-        val partner = ProfileSync.findPartner(allProfiles, prefs.myUserId, prefs.myName)
+        val partner = ProfileSync.findPartner(allProfiles, prefs.myUserId, prefs.myName, prefs.myIdentityPubKey)
 
         // ⚠️ Переход partnerJoined=false→true и плашка «X присоединился к чату» для
         // 1:1-чатов раньше считались ЗДЕСЬ — с ограниченным числом ретраев (3с→6с→9с)
@@ -1038,24 +1064,51 @@ class ChatActivity : SecureActivity() {
             tryEstablishSessionKey(partner.ephemeralPubKey)
             verifyPartnerIdentity(partner)
         }
+        // Рукопожатие: разрешаем шифровать сессионным ключом только если партнёр подтвердил,
+        // что держит МОЙ эфемерный ключ. Строго ПОСЛЕ tryEstablishSessionKey — гейт учитывает
+        // и факт наличия ключа, и подтверждение (см. applyHandshakeGate).
+        applyHandshakeGate(partner)
+
+        // Лечение уже испорченных чатов (репорт: «в шапке моё имя и моя заглушка вместо
+        // собеседника»). Из-за прежнего фолбэка в findPartner мой собственный старый профиль
+        // мог попасть в Room как профиль собеседника и остаться там НАВСЕГДА: обновление шапки
+        // срабатывает, только когда найден настоящий партнёр, а его может не быть. Чиним не
+        // только логику выбора, но и уже записанные данные.
+        healSelfPinnedAsPartner()
+
+        // Подтверждение публикации СВОЕГО профиля по этому же (уже сделанному) чтению —
+        // бесплатно по сети. Должно идти ДО пуша: сверяем, что реально лежит на реле СЕЙЧАС.
+        confirmMyProfilePublished(allProfiles)
 
         // Пушим свой профиль (свежие данные из Settings).
         // ephemeralPubKey включаем чтобы партнёр мог вычислить ECDH и начать V3-шифрование.
         // onlineTs включаем если мы на переднем плане — иначе точка погаснет у собеседника.
-        val myProfile = Profile(
-            userId = prefs.myUserId,
-            name = prefs.myName,
-            tag = prefs.myTag,
-            avatarBase64 = prefs.myAvatarBase64,
-            onlineTs = if (isInForeground) System.currentTimeMillis() else 0L,
-            ephemeralPubKey = myCurrentEphemeralPubKey,
-            identityPubKey = prefs.myIdentityPubKey,
-            ephemeralSig = myEphemeralSig,
-            identitySig = myIdentitySig,
-            verifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.chatId),
-            status = prefs.myStatus.takeIf { it.isNotBlank() }
+        val myProfile = buildMyProfile()
+        // ⚠️ ФИКС (репорт: «захожу в 1:1, вижу аву собеседника, а ему мои данные не пришли»).
+        // Раньше результат pushMyProfile ЗДЕСЬ ИГНОРИРОВАЛСЯ, а syncProfiles() считал попытку
+        // удачной по одному лишь факту «партнёр найден» — то есть по ЧТЕНИЮ. Но запись и чтение
+        // в Nostr несимметричны: чтение union'ом переживает флаки-сеть, если ответило хоть одно
+        // реле, а публикация требует КВОРУМА (publishToAnyRelay, 2 из >3 реле за 20с через Tor).
+        // Поэтому «я его вижу, а он меня — нет» это не экзотика, а штатный исход: моё чтение
+        // прошло, моя запись молча упала (исключение проглатывалось в ProfileSync.lastError),
+        // и ничто её не повторяло — обещанный в комментарии PERIODIC_PROFILE_SYNC_MS-ресинк
+        // в проекте вообще не объявлен. Теперь результат учитывается: провал уходит в
+        // TorSyncWatchdog, а сторож ниже (startProfilePublishGuard) добивает публикацию.
+        val pushedOk = ProfileSync.pushMyProfile(
+            transport, chat.chatPassword, myProfile, prefs.getOrCreateIdentity().first
         )
-        ProfileSync.pushMyProfile(transport, chat.chatPassword, myProfile, prefs.getOrCreateIdentity().first)
+        if (!pushedOk) {
+            myProfilePublishConfirmed = false
+            // Персистентная страховка: даже если пользователь сейчас закроет чат или приложение,
+            // публикация будет добита фоновой очередью и переживёт перезапуск процесса.
+            PublishScheduler.markMyProfileDirty(applicationContext, chat.chatId)
+            if (isTorChat()) {
+                TorSyncWatchdog.reportDeviation(
+                    applicationContext, chat.chatId, "pushMyProfile (doSyncProfilesOnce) вернул false",
+                    ProfileSync.lastError ?: IllegalStateException("pushMyProfile вернул false, lastError пуст")
+                )
+            }
+        }
 
         // Групповой чат (ADR-001), только у админа: свежий allProfiles уже под рукой
         // (не зависит от того, менялся ли chat.txt) — самый быстрый путь заметить
@@ -2195,6 +2248,9 @@ class ChatActivity : SecureActivity() {
         stopTypingJob?.cancel(); stopTypingJob = null
         presenceJob?.cancel(); presenceJob = null
         presenceTickerJob?.cancel(); presenceTickerJob = null
+        // Сторож публикации профиля живёт только вместе с открытым экраном: в фоне polling
+        // остановлен, подтверждать публикацию нечем. onResume → syncProfiles() запустит заново.
+        profilePublishGuardJob?.cancel(); profilePublishGuardJob = null
         lastPartnerProfile = null
         if (::transport.isInitialized) {
             val capturedTransport  = transport
@@ -2208,6 +2264,10 @@ class ChatActivity : SecureActivity() {
             val capturedSig        = myEphemeralSig
             val capturedIdentitySig = myIdentitySig
             val capturedConfirmed  = prefs.getConfirmedPartnerIdentity(chat.chatId)
+            // Рукопожатие: оффлайн-пуш тоже переписывает мой слот целиком, поэтому подтверждение
+            // обязано ехать и в нём — иначе выход из чата стирал бы его, и партнёр при следующем
+            // чтении откатился бы с forward secrecy на парольное шифрование.
+            val capturedEphAck     = ProfileHandshake.ackFor(chat.partnerEphemeralPubKeyB64, chat.chatId)
             // Флаш «прочитано» при выходе: если 500мс-таймер не успел, досылаем индекс этим же
             // офлайн-пушем (монотонно) — иначе быстрый выход терял read receipt (репорт).
             val capturedReadIndex  = lastRequestedReadLines.takeIf { it > lastPushedReadIndex && it > 0 }
@@ -2235,6 +2295,8 @@ class ChatActivity : SecureActivity() {
                             myEphemeralSig       = capturedSig,
                             myIdentitySig        = capturedIdentitySig,
                             myVerifiedPartnerIdk = capturedConfirmed,
+                            myEphAck             = capturedEphAck,
+                            myPv                 = ProfileHandshake.PROTOCOL_VERSION,
                             lastReadIndex        = capturedReadIndex
                         )
                     } catch (_: Exception) { false }
@@ -2386,6 +2448,10 @@ class ChatActivity : SecureActivity() {
         // Сырой снимок — для presence-записей (чтобы не реинжектить устаревшего партнёра).
         lastKnownProfiles.clear()
         lastKnownProfiles.putAll(parsed)
+        // Подтверждение публикации своего профиля — на СЫРОМ снимке этого тика, ДО «липкого»
+        // union ниже (тот всегда вернул бы меня из локального кэша, и подтверждение было бы
+        // ложным). Бесплатно по сети: тик опроса уже сходил в канал. См. startProfilePublishGuard.
+        confirmMyProfilePublished(parsed)
         // Для отображения и сессионного ключа — «липкий» партнёр (флаки-чтение не теряет его).
         val allProfiles = ProfileSync.unionAndRemember(transport.chatId, parsed)
         // Кандидаты упоминания (@) — из «липкого» union (аватары/теги не пропадают).
@@ -2399,7 +2465,7 @@ class ChatActivity : SecureActivity() {
         // участников всё равно должны обновиться).
         refreshMessageAvatars(allProfiles)
 
-        val partner = ProfileSync.findPartner(allProfiles, prefs.myUserId, prefs.myName)
+        val partner = ProfileSync.findPartner(allProfiles, prefs.myUserId, prefs.myName, prefs.myIdentityPubKey)
         if (partner == null) {
             updateTypingIndicator(false)
             updateOnlineIndicator(false)
@@ -2426,6 +2492,11 @@ class ChatActivity : SecureActivity() {
 
         // Обновляем V3-сессионный ключ если партнёр опубликовал новый ephemeral ключ
         tryEstablishSessionKey(partner.ephemeralPubKey)
+        // Рукопожатие на КАЖДОМ тике опроса: как только подтверждение партнёра доехало,
+        // forward secrecy включается сразу, без перезахода в чат (§1.5). И наоборот —
+        // если партнёр сменил ключ и подтверждение перестало сходиться, шифрование
+        // автоматически возвращается к парольному, чтобы сообщения не стали нечитаемыми.
+        applyHandshakeGate(partner)
         verifyPartnerIdentity(partner)
 
         // Галочка верификации в шапке — обновляем СРАЗУ после проверки подписи, а не ждём
@@ -3437,7 +3508,16 @@ class ChatActivity : SecureActivity() {
                 val existingRef = prefs.getStickerContentRef(transport.chatId, sticker.fileId)
                 val contentRef: String = if (existingRef != null) existingRef else {
                     val encryptedSticker = withContext(Dispatchers.Default) {
-                        CryptoHelper.encrypt(b64, chat.chatPassword, chat.chatId)
+                        // ⚠️ ФИКС (репорт: «собеседник не видит мои стикеры»). Раньше здесь стоял
+                        // обычный CryptoHelper.encrypt — а он при установленной сессии шифрует
+                        // ЭФЕМЕРНЫМ ключом forward secrecy, который живёт только в памяти и
+                        // умирает вместе с чатом. Для контента стикера это неверно: он
+                        // заливается ОДИН раз, ссылка на него хранится вечно и переиспользуется
+                        // при каждой следующей отправке (дедуп ниже). Получатель, не
+                        // расшифровавший его в ту же сессию, не мог сделать этого уже никогда, а
+                        // переотправка не помогала — контент просто не перезаливался.
+                        // encryptSharedContent шифрует паролем чата, как и подразумевал дедуп.
+                        CryptoHelper.encryptSharedContent(b64, chat.chatPassword, chat.chatId)
                     }
                     val uploaded = imageUploadQueue.execute {
                         withContext(Dispatchers.IO) {
@@ -4353,16 +4433,13 @@ class ChatActivity : SecureActivity() {
      * Подписывает эфемерный ключ долговременным Ed25519 identity-ключом.
      * Данные подписи: ephPubBytes ‖ chatId (привязка к чату от replay).
      */
-    private fun computeEphemeralSig(ephPubB64: String?, chatId: String): String? {
-        if (ephPubB64 == null) return null
-        val (priv, _) = prefs.getOrCreateIdentity()
-        return try {
-            val data = Base64.decode(ephPubB64, Base64.NO_WRAP) + chatId.toByteArray(Charsets.UTF_8)
-            CryptoHelper.signWithIdentity(priv, data)
-        } finally {
-            priv.fill(0)
-        }
-    }
+    // ⚠️ Тело подписи вынесено в ProfileSigning: тот же самый набор подписей обязан класть
+    // PublishScheduler, когда добивает недоставленную публикацию профиля в фоне/после
+    // перезапуска. Иначе фоновая публикация переписала бы мой слот версией БЕЗ подписи и
+    // у собеседника погасла бы галочка. Здесь оставлены тонкие обёртки — вызывающий код
+    // экрана чата не менялся.
+    private fun computeEphemeralSig(ephPubB64: String?, chatId: String): String? =
+        ProfileSigning.ephemeralSig(prefs, ephPubB64, chatId)
 
     /**
      * Подпись «доказательство identity» (домен+chatId моим identity-ключом). В отличие от
@@ -4370,16 +4447,8 @@ class ChatActivity : SecureActivity() {
      * profiles.txt как Profile.identitySig и даёт неподделываемую галочку в группах.
      * priv затирается сразу после подписи (§1).
      */
-    private fun computeIdentitySig(chatId: String): String? {
-        val (priv, _) = prefs.getOrCreateIdentity()
-        return try {
-            CryptoHelper.signWithIdentity(priv, VerifiedBadge.identitySigData(chatId))
-        } catch (_: Exception) {
-            null
-        } finally {
-            priv.fill(0)
-        }
-    }
+    private fun computeIdentitySig(chatId: String): String? =
+        ProfileSigning.identitySig(prefs, chatId)
 
     private val ephemeralRotationMs = 24L * 60 * 60 * 1000  // ротация эфемерного ключа раз в сутки
     // ВРЕМЕННО ВЫКЛ: ротация требует надёжной доставки нового pub через profiles.txt
@@ -4655,6 +4724,170 @@ class ChatActivity : SecureActivity() {
         }
     }
 
+    // ── Публикация своего профиля: подтверждение и сторож ─────────────────────
+
+    /**
+     * Собирает МОЙ профиль для публикации. Вынесено из doSyncProfilesOnce, чтобы сторож
+     * [startProfilePublishGuard] публиковал РОВНО то же самое, что и обычный синк —
+     * иначе повторная публикация могла бы разойтись с первой по составу полей.
+     */
+    private fun buildMyProfile(): Profile = Profile(
+        userId = prefs.myUserId,
+        name = prefs.myName,
+        tag = prefs.myTag,
+        avatarBase64 = prefs.myAvatarBase64,
+        onlineTs = if (isInForeground) System.currentTimeMillis() else 0L,
+        ephemeralPubKey = myCurrentEphemeralPubKey,
+        identityPubKey = prefs.myIdentityPubKey,
+        ephemeralSig = myEphemeralSig,
+        identitySig = myIdentitySig,
+        verifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.chatId),
+        status = prefs.myStatus.takeIf { it.isNotBlank() },
+        // Рукопожатие: подтверждаем, какой эфемерный ключ партнёра мы реально держим. Увидев
+        // здесь отпечаток своего ключа, партнёр поймёт, что может включать forward secrecy —
+        // до этого он обязан писать парольным форматом, который мы точно прочитаем.
+        ephAck = ProfileHandshake.ackFor(chat.partnerEphemeralPubKeyB64, chat.chatId),
+        pv = ProfileHandshake.PROTOCOL_VERSION
+    )
+
+    /**
+     * Решает, можно ли шифровать сессионным ключом (результат рукопожатия), и применяет решение.
+     *
+     * Вызывается на каждом чтении профиля партнёра — и на начальном синке, и на тике опроса,
+     * чтобы разрешение появлялось СРАЗУ, как только подтверждение доехало (§1.5), и снималось,
+     * если партнёр сменил ключ.
+     */
+    private fun applyHandshakeGate(partner: Profile?) {
+        if (chat.isGroup || chat.isFavorites) return   // ECDH-сессия только для 1:1
+        val allowed = ProfileHandshake.partnerHasMyKey(
+            partner = partner,
+            myEphPubB64 = myCurrentEphemeralPubKey,
+            chatId = chat.chatId,
+            myPublishConfirmed = myProfilePublishConfirmed
+        ) && CryptoHelper.hasSessionKey(chat.chatId)
+        CryptoHelper.setSessionEncryptionAllowed(chat.chatId, allowed)
+    }
+
+    /**
+     * Убирает из Room МОЙ СОБСТВЕННЫЙ профиль, если он записан как профиль собеседника.
+     *
+     * Так выглядел репорт: в шапке 1:1-чата стояли моё имя и моя заглушка аватара, хотя
+     * сообщения от собеседника приходили и подписывались его ником. Причина — прежний
+     * фолбэк в [ProfileSync.findPartner]: если все «чужие» профили в канале оказывались
+     * тёзками меня (типичный случай после сброса аккаунта — старый «я» с другим userId),
+     * он возвращал такого тёзку как партнёра, и тот уезжал в Room через updatePartnerProfile.
+     *
+     * Одного исправления выбора мало: испорченная запись уже лежит в базе, а перезаписывается
+     * она только при обнаружении НАСТОЯЩЕГО партнёра — если тот ещё не опубликовал профиль,
+     * шапка врала бы бесконечно. Поэтому распознаём и стираем испорченные данные.
+     *
+     * Критерий намеренно узкий, чтобы не задеть легитимного однофамильца: совпасть должны И
+     * имя, И аватар (сравниваем с моими текущими). Вероятность такого совпадения у другого
+     * человека пренебрежимо мала, а «я сам у себя в шапке» распознаётся однозначно.
+     */
+    private suspend fun healSelfPinnedAsPartner() {
+        if (chat.isGroup || chat.isFavorites || chat.isSystemNotifications) return
+        val myName = prefs.myName
+        if (myName.isBlank() || chat.partnerName != myName) return
+        val myAvatar = prefs.myAvatarBase64.orEmpty()
+        if (chat.partnerAvatarBase64.orEmpty() != myAvatar) return
+        val neutralName = getString(R.string.join_default_partner_name)
+        db.chatDao().updatePartnerProfile(chat.id, neutralName, null, null)
+        chat = chat.copy(partnerName = neutralName, partnerTag = null, partnerAvatarBase64 = null)
+        withContext(Dispatchers.Main) { applyPartnerToHeader() }
+    }
+
+    /**
+     * Подтверждает, что МОЙ профиль реально лежит на реле и совпадает с текущим.
+     *
+     * Вызывается на СЫРОМ union-снимке (до «липкого» ProfileSync.unionAndRemember) — иначе
+     * подтверждение было бы ложным: локальный кэш [ProfileSync.known] всегда содержит меня,
+     * даже если на реле меня нет, и сторож никогда бы не сработал.
+     *
+     * ⚠️ Сверяем НЕ только имя/аватар, но и эфемерный ключ этой сессии. Причина найдена в
+     * песочнице: партнёр публикует карту участников ЦЕЛИКОМ, поэтому в ЕГО слоте лежит копия
+     * меня — по имени и аватару она совпадёт с текущими, и проверка «я опубликован» прошла бы,
+     * хотя МОЕГО слота на реле нет. Вместе с ним отсутствовал бы мой актуальный
+     * ephemeralPubKey → у партнёра не сходится ECDH и не встаёт V3-сессия (forward secrecy) —
+     * ровно тот класс бага, о котором предупреждает докстринг ProfileSync.pushPresence.
+     */
+    private fun confirmMyProfilePublished(rawProfiles: Map<String, Profile>) {
+        val mine = rawProfiles[prefs.myUserId]
+        // orEmpty() с обеих сторон обязателен: Profile.toJsonObject не пишет пустые tag/avatar,
+        // а fromJsonObject возвращает для них null (см. takeIf { isNotBlank() }). Без нормализации
+        // "" и null никогда бы не совпали, подтверждение не наступало бы НИКОГДА, и сторож
+        // публиковал бы профиль вхолостую на каждом открытии чата. prefs.myTag — не-nullable String.
+        myProfilePublishConfirmed = mine != null &&
+            mine.name == prefs.myName &&
+            mine.tag.orEmpty() == prefs.myTag &&
+            mine.avatarBase64.orEmpty() == prefs.myAvatarBase64.orEmpty() &&
+            mine.ephemeralPubKey.orEmpty() == myCurrentEphemeralPubKey.orEmpty()
+    }
+
+    /**
+     * Сторож публикации своего профиля: пока чтение канала не подтвердило, что мой профиль
+     * лежит на реле, повторяет публикацию с нарастающей паузой.
+     *
+     * Зачем (см. подробный разбор у вызова pushMyProfile в doSyncProfilesOnce): публикация
+     * требует кворума реле и падает заметно чаще, чем чтение. Один молчаливый провал раньше
+     * означал, что собеседник НИКОГДА не получит мои имя/аватар/эфемерный ключ в этой сессии:
+     * повторов не было, а «успехом» синка считался факт, что Я вижу ЕГО.
+     *
+     * Свойства (обкатаны в песочнице, 25/25):
+     *  - идемпотентно: publish — replaceable-событие по (pubkey, kind, d), слоты не плодятся;
+     *  - не долбит реле: как только чтение подтвердило публикацию, сторож умолкает;
+     *  - ограничен по числу попыток — при полном оффлайне не крутится бесконечно;
+     *  - работает и когда партнёра в чате ещё нет (сценарий инвайт→джойн): моя публикация
+     *    не должна зависеть от того, вошёл ли уже собеседник.
+     */
+    private fun startProfilePublishGuard() {
+        if (chat.isFavorites) return
+        profilePublishGuardJob?.cancel()
+        profilePublishGuardJob = lifecycleScope.launch {
+            var lastPublishFailed = false
+            for (attempt in 0 until PROFILE_PUBLISH_GUARD_ATTEMPTS) {
+                delay(PROFILE_PUBLISH_GUARD_BACKOFF_MS[minOf(attempt, PROFILE_PUBLISH_GUARD_BACKOFF_MS.size - 1)])
+                if (!isActive) return@launch
+                // Подтверждено обычным тиком опроса (processParsedProfiles) — работа сделана.
+                if (myProfilePublishConfirmed) return@launch
+                // В фоне не публикуем: polling остановлен, сеть трогать незачем — при
+                // возврате на экран onResume заново запустит и синк, и этот сторож.
+                if (!isInForeground || !::transport.isInitialized) continue
+                val ok = runCatching {
+                    ProfileSync.pushMyProfile(
+                        transport, chat.chatPassword, buildMyProfile(), prefs.getOrCreateIdentity().first
+                    )
+                }.getOrDefault(false)
+                // ⚠️ ФИКС ПРОИЗВОДИТЕЛЬНОСТИ (репорт: «синк стал очень долгим»). Раньше выход
+                // был ТОЛЬКО по myProfilePublishConfirmed, и если подтверждение почему-то не
+                // сходилось (например, union отдал мой профиль с «липким» полем из чужого
+                // слота), сторож всё равно делал все попытки подряд — а КАЖДАЯ публикация это
+                // полный сетевой цикл GET+PATCH через Tor. Плюс дальше эстафета уходила в
+                // очередь, добавляя ещё несколько циклов. До 11 лишних обращений к реле на
+                // каждое открытие чата — этого хватало, чтобы «всё стало очень долго».
+                //
+                // Успешная запись — уже подтверждение от РЕЛЕ (publishToAnyRelay отдаёт true
+                // только собрав кворум), поэтому её достаточно, чтобы остановиться. Повторяем
+                // строго при реальных провалах записи — ради чего сторож и заводился.
+                if (ok) return@launch
+                if (isTorChat()) {
+                    TorSyncWatchdog.record(
+                        chat.chatId, "PROFILE_PUBLISH_RETRY",
+                        "повтор публикации профиля ${attempt + 1}/$PROFILE_PUBLISH_GUARD_ATTEMPTS не удался: " +
+                            (ProfileSync.lastError?.message ?: "причина неизвестна")
+                    )
+                }
+                lastPublishFailed = true
+            }
+            // Эстафету очереди передаём ТОЛЬКО если запись реально не прошла. Раньше условием
+            // было «нет подтверждения», из-за чего очередь запускалась даже после успешных
+            // публикаций и молотила сеть впустую.
+            if (lastPublishFailed) {
+                PublishScheduler.markMyProfileDirty(applicationContext, chat.chatId)
+            }
+        }
+    }
+
     // ── Online presence ───────────────────────────────────────────────────────
 
     /**
@@ -4704,23 +4937,43 @@ class ChatActivity : SecureActivity() {
         // ВСЕГДА GET+merge (как Gist): profiles.txt — общий файл, который пишут оба
         // участника, а Nostr-чтение берёт одно последнее событие. Запись из кэша
         // затирала бы профиль собеседника. Свежий pull+merge сохраняет обе стороны.
-        val ok = withContext(Dispatchers.IO) {
-            ProfileSync.pushPresence(
-                api               = transport,
-                password          = chat.chatPassword,
-                myUserId          = myUserId,
-                typingTs          = typingTs,
-                onlineTs          = onlineTs,
-                recordingTs       = recordingTs,
-                myEphemeralPubKey = myCurrentEphemeralPubKey,
-                myName            = prefs.myName,
-                myTag             = prefs.myTag,
-                myAvatarBase64    = prefs.myAvatarBase64,
-                myIdentityPubKey     = prefs.myIdentityPubKey,
-                myEphemeralSig       = myEphemeralSig,
-                myIdentitySig        = myIdentitySig,
-                myVerifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.chatId)
-            )
+        //
+        // ⚠️ Presence-пуш несёт не только онлайн/печатает, но и мои имя/тег/аватар/ключи
+        // (fallback-параметры ниже) — то есть это ВТОРОЙ путь, которым мои данные доезжают
+        // до собеседника. Раньше его провал не обрабатывался вообще: результат использовался
+        // только для локального кэша. Через Tor кворум записи собирается не всегда с первого
+        // раза, поэтому даём короткий повтор — тем же приёмом, что уже применён к оффлайн-пушу
+        // при выходе из чата (см. repeat(3) в onPause). Дороже это не делает: повтор только
+        // при реальном провале, а не в штатном случае.
+        var ok = false
+        for (attempt in 0 until PRESENCE_PUSH_ATTEMPTS) {
+            ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    ProfileSync.pushPresence(
+                        api               = transport,
+                        password          = chat.chatPassword,
+                        myUserId          = myUserId,
+                        typingTs          = typingTs,
+                        onlineTs          = onlineTs,
+                        recordingTs       = recordingTs,
+                        myEphemeralPubKey = myCurrentEphemeralPubKey,
+                        myName            = prefs.myName,
+                        myTag             = prefs.myTag,
+                        myAvatarBase64    = prefs.myAvatarBase64,
+                        myIdentityPubKey     = prefs.myIdentityPubKey,
+                        myEphemeralSig       = myEphemeralSig,
+                        myIdentitySig        = myIdentitySig,
+                        myVerifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(chat.chatId),
+                        // Рукопожатие: presence переписывает мой слот целиком, поэтому
+                        // подтверждение обязано ехать и здесь — иначе оно стиралось бы
+                        // через несколько секунд после публикации.
+                        myEphAck             = ProfileHandshake.ackFor(chat.partnerEphemeralPubKeyB64, chat.chatId),
+                        myPv                 = ProfileHandshake.PROTOCOL_VERSION
+                    )
+                }.getOrDefault(false)
+            }
+            if (ok || attempt == PRESENCE_PUSH_ATTEMPTS - 1) break
+            delay(PRESENCE_PUSH_RETRY_MS)
         }
 
         // Обновляем локальный кэш сразу — следующий write-only push будет корректным
@@ -6736,6 +6989,29 @@ class ChatActivity : SecureActivity() {
         const val SYNC_PROFILES_MAX_ATTEMPTS = 3
         /** Базовая задержка между retry sync-профилей (умножается на номер попытки). */
         const val SYNC_PROFILES_RETRY_BASE_MS = 3_000L
+
+        /**
+         * Сколько раз сторож повторяет публикацию МОЕГО профиля, пока чтение канала её не
+         * подтвердит (см. startProfilePublishGuard). Ограничение обязательно: при полном
+         * оффлайне цикл не должен крутиться бесконечно.
+         */
+        const val PROFILE_PUBLISH_GUARD_ATTEMPTS = 6
+        /**
+         * Нарастающие паузы между повторами публикации профиля. Растущие — чтобы не долбить
+         * реле во время помехи (тот же принцип, что у NostrTransport.FILE_PUBLISH_BACKOFF_MS),
+         * и чтобы между попытками успел пройти обычный тик опроса, который даёт подтверждение.
+         */
+        val PROFILE_PUBLISH_GUARD_BACKOFF_MS = longArrayOf(3_000L, 5_000L, 8_000L, 13_000L, 21_000L, 30_000L)
+
+        /**
+         * Попыток на ОДИН presence-пуш (несёт и мои имя/аватар/ключи, см. doPushPresence).
+         * Держим маленьким: presence и так повторяется каждые PRESENCE_INTERVAL_MS, здесь нужен
+         * лишь запас на единичный несобравшийся кворум, а не полноценный ретрай-цикл.
+         */
+        const val PRESENCE_PUSH_ATTEMPTS = 2
+        /** Пауза перед повтором presence-пуша. Заметно меньше PRESENCE_INTERVAL_MS — повтор
+         *  обязан уложиться внутрь текущего цикла и не наезжать на следующий. */
+        const val PRESENCE_PUSH_RETRY_MS = 1_200L
 
     }
 }

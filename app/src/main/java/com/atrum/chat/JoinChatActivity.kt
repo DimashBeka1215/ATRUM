@@ -532,7 +532,9 @@ class JoinChatActivity : SecureActivity() {
                     tag = prefs.myTag,
                     avatarBase64 = prefs.myAvatarBase64,
                     identityPubKey = prefs.myIdentityPubKey,
-                    identitySig = myGroupIdentitySig
+                    identitySig = myGroupIdentitySig,
+                    // Беседы без эфемерных ключей — подтверждать нечего, но версию объявляем.
+                    pv = ProfileHandshake.PROTOCOL_VERSION
                 )
                 // Догон: пере-публикуем свой профиль несколько раз (см. publishJoinProfileBurst) —
                 // слот расходится по большему числу реле, и все участники зачисляют вошедшего
@@ -583,25 +585,61 @@ class JoinChatActivity : SecureActivity() {
             }
             val alreadyInChat = profilesMap.containsKey(myUserId)
 
-            // Показываем аватарку и имя собеседника, если нашли
-            if (partnerProfileFound != null) {
-                if (isTor) {
-                    TorSyncWatchdog.disarm(invite.channelId, "партнёр найден при первом pullProfiles (JoinChatActivity)")
-                }
-                withContext(Dispatchers.Main) {
-                    showFoundInfo(
-                        name = partnerProfileFound!!.name,
-                        tag = partnerProfileFound!!.tag,
-                        avatarBase64 = partnerProfileFound!!.avatarBase64,
-                        verified = VerifiedBadge.isVerifiedProfile(partnerProfileFound, invite.channelId)
-                    )
-                    triggerFoundPulse()
-                }
+            if (partnerProfileFound != null && isTor) {
+                TorSyncWatchdog.disarm(invite.channelId, "партнёр найден при первом pullProfiles (JoinChatActivity)")
             }
 
+            // ⚠️ Проверку «чат занят» делаем ДО первой публикации своего профиля: она считает
+            // профили в канале, и опубликовавшись раньше, я бы посчитал самого себя и пропустил
+            // переполненный чат.
             if (profilesMap.size >= 2 && !alreadyInChat) {
                 showError(getString(R.string.join_err_chat_full))
                 return
+            }
+
+            // ⚠️ ИЗМЕНЕНО по просьбе пользователя: аватар и ник показываем ТОЛЬКО при успехе —
+            // когда обмен профилями подтверждён С ОБЕИХ сторон. Раньше карточка появлялась,
+            // как только я УВИДЕЛ собеседника, то есть по одностороннему признаку: он при этом
+            // мог не получить мой профиль вовсе, и переписка начиналась вслепую.
+            //
+            // Доказательство взаимности берём честное, а не косвенное: слоты profiles.txt
+            // подписаны их авторами, поэтому ищем слот, подписанный НЕ мной, в котором лежит
+            // МОЙ профиль. Это значит, что собеседник меня уже прочитал и переопубликовал.
+            //
+            // Чтобы такому слоту было откуда взяться, сначала публикуемся сами — до этого
+            // момента подтверждать нечего в принципе.
+            if (partnerProfileFound != null) {
+                setProgress(getString(R.string.join_status_loading_profile))
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        ProfileSync.pushMyProfile(
+                            transport, invite.chatPassword,
+                            Profile(
+                                userId = prefs.myUserId,
+                                name = prefs.myName,
+                                tag = prefs.myTag,
+                                avatarBase64 = prefs.myAvatarBase64,
+                                pv = ProfileHandshake.PROTOCOL_VERSION
+                            )
+                        )
+                    }
+                }
+                val mutual = awaitMutualProfileExchange(transport, invite.chatPassword, invite.channelId)
+                if (mutual != null) {
+                    withContext(Dispatchers.Main) {
+                        showFoundInfo(
+                            name = mutual.name.ifBlank { partnerProfileFound!!.name },
+                            tag = mutual.tag ?: partnerProfileFound!!.tag,
+                            avatarBase64 = mutual.avatarBase64 ?: partnerProfileFound!!.avatarBase64,
+                            verified = VerifiedBadge.isVerifiedProfile(mutual, invite.channelId)
+                        )
+                        triggerFoundPulse()
+                    }
+                    partnerProfileFound = mutual
+                }
+                // Не подтвердилось — карточку НЕ показываем и молча идём дальше: собеседник
+                // мог просто не открывать приложение. Чат создаётся, профили сойдутся позже
+                // сами (ChatActivity.doSyncProfilesOnce + сторож публикации).
             }
 
             // 4. Локальная запись чата.
@@ -633,7 +671,11 @@ class JoinChatActivity : SecureActivity() {
                 userId = prefs.myUserId,
                 name = prefs.myName,
                 tag = prefs.myTag,
-                avatarBase64 = prefs.myAvatarBase64
+                avatarBase64 = prefs.myAvatarBase64,
+                // Рукопожатие: эфемерного ключа создателя чата я на этом шаге ещё не читал,
+                // подтверждать нечего. Но версию протокола объявляем сразу, иначе создатель
+                // примет меня за старого клиента и включит forward secrecy до подтверждения.
+                pv = ProfileHandshake.PROTOCOL_VERSION
             )
             // Догон: пере-публикуем свой профиль несколько раз (см. publishJoinProfileBurst),
             // чтобы слот разошёлся по реле и собеседник подхватил ник/аву быстро.
@@ -647,6 +689,7 @@ class JoinChatActivity : SecureActivity() {
                         ?: IllegalStateException("pushMyProfile вернул false, но lastError пуст")
                     TorSyncWatchdog.reportDeviation(applicationContext, invite.channelId, "JoinChatActivity.pushMyProfile", cause)
                 }
+                ok   // результат раунда: успех прекращает burst, полный провал уйдёт в очередь
             }
 
             // 6. Открываем чат сразу
@@ -706,24 +749,81 @@ class JoinChatActivity : SecureActivity() {
      * сокращена: раз каждый раунд и так занимает реальное сетевое время, незачем ждать
      * ДОПОЛНИТЕЛЬНО поверх него — раунды идут почти встык, а не размазаны на ~9с простоя.
      */
+    /**
+     * Ждёт ВЗАИМНОГО обмена профилями и возвращает профиль собеседника, если он подтверждён.
+     *
+     * Подтверждением считается слот profiles.txt, подписанный НЕ мной, в котором лежит МОЙ
+     * профиль с моим текущим именем. Каждый участник публикует карту профилей целиком, поэтому
+     * попадание меня в ЧУЖОЙ слот означает ровно одно: собеседник меня прочитал. Свой слот
+     * отсеиваем по подписи ([ChatTransport.myWirePubkey]) — иначе я подтверждал бы сам себя.
+     *
+     * @return профиль собеседника из того же чтения, либо null, если за отведённое время
+     *         взаимность не подтвердилась (тогда карточку показывать нельзя).
+     */
+    private suspend fun awaitMutualProfileExchange(
+        transport: ChatTransport,
+        password: String,
+        chatId: String
+    ): Profile? {
+        val myUserId = prefs.myUserId
+        val myName = prefs.myName
+        val myPubkey = transport.myWirePubkey
+        for (attempt in 0 until JOIN_MUTUAL_MAX_ATTEMPTS) {
+            val all = withContext(Dispatchers.IO) {
+                runCatching { transport.loadAll() }.getOrNull()
+            }
+            if (all != null) {
+                val slots = all.profileSlotsSigned
+                var partner: Profile? = null
+                var sawMe = false
+                for (slot in slots) {
+                    val parsed = withContext(Dispatchers.IO) {
+                        runCatching { ProfileSync.parseProfiles(slot.content, password, chatId) }
+                            .getOrDefault(emptyMap())
+                    }
+                    parsed.values.firstOrNull { it.userId != myUserId && it.name.isNotBlank() }
+                        ?.let { if (partner == null) partner = it }
+                    // Мой собственный слот подтверждением быть не может.
+                    if (myPubkey != null && slot.signerPubkey.equals(myPubkey, ignoreCase = true)) continue
+                    val meInForeignSlot = parsed[myUserId] ?: continue
+                    // Сверяем имя: устаревшая копия меня (например, из прошлой сессии с другим
+                    // ником) не должна засчитываться как «он получил мои АКТУАЛЬНЫЕ данные».
+                    if (myName.isBlank() || meInForeignSlot.name == myName) sawMe = true
+                }
+                if (sawMe && partner != null) return partner
+            }
+            if (attempt < JOIN_MUTUAL_MAX_ATTEMPTS - 1) delay(JOIN_MUTUAL_RETRY_DELAY_MS)
+        }
+        return null
+    }
+
     private fun publishJoinProfileBurst(
         chatIdForLog: String,
         isTor: Boolean,
         transport: ChatTransport,
-        push: suspend () -> Unit
+        push: suspend () -> Boolean
     ) {
         AppScope.launch {
             runCatching { transport.warmUp() }
+            var published = false
             repeat(JOIN_PUBLISH_BURST_ROUNDS) { round ->
+                if (published) return@repeat
                 if (round > 0) kotlinx.coroutines.delay(JOIN_PUBLISH_BURST_INTERVAL_MS)
                 try {
-                    push()
+                    // ⚠️ Раньше результат публикации не проверялся вовсе (лямбда возвращала Unit):
+                    // раунды отрабатывали вхолостую даже если проваливались ВСЕ до одного, и
+                    // вошедший оставался «невидимым» для остальных до первого открытия чата.
+                    // Теперь успех прекращает burst досрочно (не долбим реле зря), а полный
+                    // провал передаётся персистентной очереди — она добьёт публикацию даже
+                    // после перезапуска приложения.
+                    published = push()
                 } catch (e: Throwable) {
                     if (isTor) TorSyncWatchdog.reportDeviation(
                         applicationContext, chatIdForLog, "JoinChatActivity.publishJoinProfileBurst", e
                     )
                 }
             }
+            if (!published) PublishScheduler.markMyProfileDirty(applicationContext, chatIdForLog)
         }
     }
 
@@ -957,6 +1057,16 @@ class JoinChatActivity : SecureActivity() {
         // самим ChatActivity после открытия чата (см. doSyncProfilesOnce/processChannelData).
         // 6 попыток по 2.5с ≈ 15с — тот же порядок величины, что и остальные bounded-retry
         // окна в проекте (см. GroupStatsActivity/UserStatsActivity.FIRST_LOAD_MAX_ATTEMPTS).
+        /**
+         * Ожидание ВЗАИМНОГО обмена профилями (см. awaitMutualProfileExchange). Дольше, чем
+         * односторонний поиск собеседника: теперь нужен не только его профиль, но и ответная
+         * публикация с моими данными — а второй телефон мог опрашивать реле как раз в этот
+         * момент. 12 × 2.5с ≈ 30 секунд.
+         */
+        const val JOIN_MUTUAL_MAX_ATTEMPTS = 12
+        /** Пауза между проверками взаимности. Совпадает с ритмом обычного поиска профиля. */
+        const val JOIN_MUTUAL_RETRY_DELAY_MS = 2_500L
+
         const val JOIN_PROFILE_MAX_ATTEMPTS = 6
         const val JOIN_PROFILE_RETRY_DELAY_MS = 2_500L
 

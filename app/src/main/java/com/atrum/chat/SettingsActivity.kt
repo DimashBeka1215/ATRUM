@@ -574,10 +574,26 @@ class SettingsActivity : SecureActivity() {
                     } catch (_: Exception) { null }
                     val withIdentity = profile.copy(
                         identityPubKey = settingsPrefs.myIdentityPubKey,
-                        identitySig = isig
+                        identitySig = isig,
+                        // Рукопожатие: pushMyProfile делает ПОЛНУЮ замену моего слота, поэтому
+                        // без этих полей сохранение настроек стирало бы подтверждение — и у
+                        // собеседника forward secrecy откатывался бы на парольное шифрование
+                        // после каждой смены имени/аватара. Ключ партнёра берём из Room.
+                        ephAck = ProfileHandshake.ackFor(chat.partnerEphemeralPubKeyB64, chat.chatId),
+                        pv = ProfileHandshake.PROTOCOL_VERSION
                     )
-                    ProfileSync.pushMyProfile(api, password, withIdentity, priv)
-                } catch (_: Exception) {}
+                    // ⚠️ ФИКС надёжности: это ЕДИНСТВЕННЫЙ путь, которым новое имя/аватар
+                    // разъезжаются по всем чатам, и он был полностью безмолвным — одна попытка,
+                    // результат не проверялся, исключение глоталось. Не собрался кворум реле —
+                    // и собеседники в этом чате видят старое имя/аву, пока я не открою чат
+                    // (а presence-пуш их не поправит: он только восполняет ПУСТЫЕ поля).
+                    // Теперь провал уходит в персистентную очередь и добивается в фоне.
+                    if (!ProfileSync.pushMyProfile(api, password, withIdentity, priv)) {
+                        PublishScheduler.markMyProfileDirty(appContext, chat.chatId)
+                    }
+                } catch (_: Exception) {
+                    PublishScheduler.markMyProfileDirty(appContext, chat.chatId)
+                }
             }
         }
     }
@@ -661,8 +677,19 @@ class SettingsActivity : SecureActivity() {
                     val password = logoutPrefs.getChatPassword(chat.chatId)
                         .takeIf { it.isNotEmpty() }
                         ?: @Suppress("DEPRECATION") chat.chatPassword
-                    val api = TransportFactory.forChat(applicationContext, chat.chatId, token, password, myUserId)
-                    ProfileSync.pushDeletedMarker(api, password, myUserId)
+                    // ⚠️ ФИКС надёжности: раньше «надгробие» профиля публиковалось РОВНО ОДИН раз,
+                    // а результат не проверялся вообще. Если запись не собрала кворум реле,
+                    // собеседник никогда не узнавал, что профиль удалён, — и продолжал писать
+                    // в пустоту. Повторить позже нельзя: строкой ниже секреты чата стираются
+                    // навсегда, а следом чистится вся база, поэтому это ЕДИНСТВЕННЫЙ шанс.
+                    // Отсюда несколько попыток с паузой — и только затем удаление секретов.
+                    for (attempt in 0 until DELETE_MARKER_ATTEMPTS) {
+                        val api = TransportFactory.forChat(applicationContext, chat.chatId, token, password, myUserId)
+                        if (ProfileSync.pushDeletedMarker(api, password, myUserId)) break
+                        if (attempt < DELETE_MARKER_ATTEMPTS - 1) {
+                            kotlinx.coroutines.delay(DELETE_MARKER_RETRY_MS)
+                        }
+                    }
                 } catch (_: Exception) {}
                 logoutPrefs.deleteChatSecrets(chat.chatId)
             }
@@ -763,5 +790,16 @@ class SettingsActivity : SecureActivity() {
             colors
         )
         binding.vBannerGradient.background = gradient
+    }
+
+    companion object {
+        /**
+         * Попыток опубликовать «надгробие» профиля (deleted=true) при сбросе аккаунта.
+         * Второго шанса нет: сразу после этого стираются секреты чата и вся база, поэтому
+         * одна попытка — это гарантированная потеря при любом сбое сети.
+         */
+        private const val DELETE_MARKER_ATTEMPTS = 3
+        /** Пауза между попытками публикации «надгробия». */
+        private const val DELETE_MARKER_RETRY_MS = 2_000L
     }
 }

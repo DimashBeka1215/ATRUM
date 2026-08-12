@@ -240,6 +240,23 @@ object CryptoHelper {
     private val sessionKeys     = HashMap<String, ArrayDeque<ByteArray>>()
     private val sessionKeysLock = Any()
 
+    /**
+     * Чаты, где сессионным ключом разрешено ШИФРОВАТЬ (рукопожатие подтверждено).
+     *
+     * ⚠️ КЛЮЧЕВОЕ РАЗДЕЛЕНИЕ (репорт: «собеседник видит моё сообщение, но его ответ ко мне не
+     * приходит»). Наличие сессионного ключа и право им ШИФРОВАТЬ — разные вещи. Ключ выводится
+     * по ECDH, как только я получил эфемерный ключ партнёра; но общий ключ у нас сойдётся,
+     * только если и ОН получил мой. Раньше [encrypt] переключался на сессионный ключ сразу, и
+     * если мой профиль до партнёра не доехал, он не мог расшифровать ни одного моего сообщения —
+     * при том что его сообщения я читал нормально. Односторонняя «глухота» ровно как в репорте.
+     *
+     * Теперь шифрование включается только после подтверждения рукопожатия (см.
+     * [ProfileHandshake] и ChatActivity.applyHandshakeGate). РАСШИФРОВКА не гейтится никогда:
+     * она обязана принимать всё, что может, иначе уже отправленные сообщения стали бы
+     * нечитаемыми (§17).
+     */
+    private val sessionEncryptAllowed = HashSet<String>()
+
     // ─── Хук локального шифр-архива истории (forward secrecy + сохранение истории) ──
     interface FsArchiveHook {
         fun remember(chatId: String, ciphertext: String, plaintext: String)
@@ -270,7 +287,12 @@ object CryptoHelper {
      */
     fun encrypt(plaintext: String, password: String, chatId: String = ""): String {
         require(chatId.isNotBlank()) { "chatId must not be blank" }
-        val sk = synchronized(sessionKeysLock) { sessionKeys[chatId]?.firstOrNull() }
+        // Сессионным ключом шифруем ТОЛЬКО при подтверждённом рукопожатии — см. докстринг
+        // [sessionEncryptAllowed]. Иначе падаем на парольный формат: он читается обеими
+        // сторонами всегда, поэтому сообщение дойдёт, даже если обмен профилями ещё не сошёлся.
+        val sk = synchronized(sessionKeysLock) {
+            if (sessionEncryptAllowed.contains(chatId)) sessionKeys[chatId]?.firstOrNull() else null
+        }
         if (sk != null) return encryptAesGcm(plaintext, sk, V4S_PREFIX)
         return encryptV5(plaintext, password)
     }
@@ -292,6 +314,31 @@ object CryptoHelper {
      * старые V5-метаданные, так что смешанные версии у двух телефонов работают.
      */
     fun encryptMetadata(plaintext: String, password: String, chatId: String): String =
+        encryptV4(plaintext, password, chatId)
+
+    /**
+     * Шифрует ДОЛГОЖИВУЩИЙ разделяемый контент, на который ссылаются по ссылке и который
+     * переиспользуется повторно (сейчас — контент стикеров).
+     *
+     * ⚠️ ЗАЧЕМ ОТДЕЛЬНО ОТ [encrypt] (репорт: «собеседник не видит мои стикеры»). Обычный
+     * [encrypt] при установленной сессии шифрует ЭФЕМЕРНЫМ ключом forward secrecy — он живёт
+     * только в памяти и уничтожается при закрытии чата. Для сообщения это и нужно, но контент
+     * стикера ведёт себя иначе: он заливается ОДИН раз, ссылка на него сохраняется навсегда
+     * (Prefs.setStickerContentRef) и переиспользуется при каждой следующей отправке того же
+     * стикера. В результате контент, зашифрованный ключом одной сессии, оставался в чате
+     * ссылкой навсегда — и получатель, не расшифровавший его сразу, не мог сделать этого уже
+     * никогда: повторная отправка ничего не перезаливала из-за дедупа.
+     *
+     * Именно парольное шифрование и подразумевалось изначально — см. комментарий у
+     * Prefs.getStickerContentRef («контент шифруется паролем чата»); [encrypt] молча подменял
+     * его сессионным ключом. Здесь используется V4: соль детерминирована от chatId, ключ
+     * Argon2 кэшируется, поэтому отправка не дорожает (тот же приём, что у метаданных).
+     *
+     * Конфиденциальность сохраняется: реле видит только шифртекст, ключ выводится из пароля
+     * чата, которого нет ни на одном сервере. Теряется лишь forward secrecy ДЛЯ КОНТЕНТА
+     * СТИКЕРА — картинки из общего набора, а не текста переписки.
+     */
+    fun encryptSharedContent(plaintext: String, password: String, chatId: String): String =
         encryptV4(plaintext, password, chatId)
 
     /**
@@ -469,8 +516,30 @@ object CryptoHelper {
      * Вызывать из ChatActivity.onDestroy() — это момент утраты forward secrecy.
      */
     fun clearSessionKey(chatId: String) {
-        synchronized(sessionKeysLock) { sessionKeys.remove(chatId)?.forEach { it.fill(0) } }
+        synchronized(sessionKeysLock) {
+            sessionKeys.remove(chatId)?.forEach { it.fill(0) }
+            sessionEncryptAllowed.remove(chatId)
+        }
     }
+
+    /**
+     * Разрешает/запрещает ШИФРОВАНИЕ сессионным ключом для чата (результат рукопожатия).
+     *
+     * Вызывается из ChatActivity после каждого чтения профиля партнёра: разрешение действует,
+     * только пока подтверждение актуально. По умолчанию (пока не вызвали) — ЗАПРЕЩЕНО:
+     * безопасный дефолт, при котором сообщение уйдёт в парольном формате и точно дойдёт.
+     *
+     * На расшифровку не влияет вообще — см. [decryptSessionMulti].
+     */
+    fun setSessionEncryptionAllowed(chatId: String, allowed: Boolean) {
+        synchronized(sessionKeysLock) {
+            if (allowed) sessionEncryptAllowed.add(chatId) else sessionEncryptAllowed.remove(chatId)
+        }
+    }
+
+    /** Разрешено ли сейчас шифровать сессионным ключом (для диагностики/UI). */
+    fun isSessionEncryptionAllowed(chatId: String): Boolean =
+        synchronized(sessionKeysLock) { sessionEncryptAllowed.contains(chatId) }
 
     /**
      * Проверяет есть ли в тексте V4-S/V3-строки без активного сессионного ключа.

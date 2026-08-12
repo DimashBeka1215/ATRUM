@@ -43,6 +43,18 @@ object PublishScheduler {
     private const val KIND_MEMBERS = "members"
     private const val KIND_PROFILE = "profile"
 
+    /**
+     * МОЙ профиль в profiles.txt (имя/тег/аватар/ключи/подписи) конкретного чата.
+     *
+     * Добавлено по репорту «захожу в 1:1, вижу аву собеседника, а ему мои данные не пришли».
+     * Публикация СВОЕГО профиля была единственной публикацией без персистентного ретрая:
+     * сторож в ChatActivity добивает её, пока экран открыт, но если приложение свернули или
+     * закрыли раньше — попытки терялись, и собеседник не получал профиль до следующего
+     * открытия ЭТОГО чата. Через очередь публикация переживает и закрытие экрана, и
+     * перезапуск процесса (дочистка — [resume] из App.onCreate).
+     */
+    private const val KIND_MY_PROFILE = "myprofile"
+
     /** Бэкофф между проходами по грязным чатам, когда публикация не удалась. */
     private val RETRY_DELAYS_MS = longArrayOf(0L, 2_000L, 5_000L, 15_000L, 30_000L)
 
@@ -66,11 +78,19 @@ object PublishScheduler {
     /** Имя/ава/описание изменились — опубликовать groupprofile.txt чата. */
     fun markProfileDirty(context: Context, networkChatId: String) = mark(context, KIND_PROFILE, networkChatId)
 
+    /**
+     * Мой профиль в этом чате не доставлен (или изменился) — добить публикацию.
+     * Помечать можно свободно: публикация идемпотентна (replaceable-событие по моему pubkey),
+     * повторы коалесцируются, а флаг снимается только после успеха.
+     */
+    fun markMyProfileDirty(context: Context, networkChatId: String) = mark(context, KIND_MY_PROFILE, networkChatId)
+
     /** Дочистка недоставленного после перезапуска процесса — вызывается из App.onCreate. */
     fun resume(context: Context) {
         val prefs = Prefs(context)
         if (prefs.getPublishDirtySet(KIND_MEMBERS).isNotEmpty() ||
-            prefs.getPublishDirtySet(KIND_PROFILE).isNotEmpty()
+            prefs.getPublishDirtySet(KIND_PROFILE).isNotEmpty() ||
+            prefs.getPublishDirtySet(KIND_MY_PROFILE).isNotEmpty()
         ) ensureWorker(context.applicationContext)
     }
 
@@ -90,7 +110,8 @@ object PublishScheduler {
                 // чтобы не потерять сигнал (классическое окно compareAndSet).
                 val prefs = Prefs(appContext)
                 if (prefs.getPublishDirtySet(KIND_MEMBERS).isNotEmpty() ||
-                    prefs.getPublishDirtySet(KIND_PROFILE).isNotEmpty()
+                    prefs.getPublishDirtySet(KIND_PROFILE).isNotEmpty() ||
+                    prefs.getPublishDirtySet(KIND_MY_PROFILE).isNotEmpty()
                 ) {
                     if (workerActive.compareAndSet(false, true)) {
                         AppScope.launch(Dispatchers.IO) {
@@ -116,6 +137,10 @@ object PublishScheduler {
             for (chatId in prefs.getPublishDirtySet(KIND_PROFILE)) {
                 val ok = runCatching { publishProfile(appContext, chatId) }.getOrDefault(false)
                 if (ok) removeDirty(prefs, KIND_PROFILE, chatId) else anyLeft = true
+            }
+            for (chatId in prefs.getPublishDirtySet(KIND_MY_PROFILE)) {
+                val ok = runCatching { publishMyProfile(appContext, chatId) }.getOrDefault(false)
+                if (ok) removeDirty(prefs, KIND_MY_PROFILE, chatId) else anyLeft = true
             }
             if (!anyLeft) return
         }
@@ -210,6 +235,66 @@ object PublishScheduler {
         // отдельно и обновляют по created_at, поэтому его «версия» приёмнику не важна.
         if (isPrimary) db.chatDao().updateMembersVersionIfNewer(chat.id, newVersion)
         return true
+    }
+
+    /**
+     * Публикация МОЕГО профиля в profiles.txt чата (см. [KIND_MY_PROFILE]).
+     *
+     * Снимок собирается в момент выполнения из Prefs/Room — поэтому коалесценция бесплатна:
+     * пять быстрых правок профиля дадут одну публикацию с последним состоянием.
+     *
+     * Возврат true = «успех ИЛИ делать нечего» (флаг снимается), false = «повторить позже».
+     * Случаи «делать нечего» намеренно возвращают true, иначе флаг остался бы навсегда и
+     * воркер молотил бы вхолостую на каждом старте приложения:
+     *  • чата больше нет в Room (удалён/покинут);
+     *  • это «Избранное» (локальный чат, сети нет вообще);
+     *  • секретов чата уже нет — их стирают при выходе из беседы/сбросе аккаунта, и
+     *    опубликоваться в этот чат уже физически невозможно.
+     */
+    private suspend fun publishMyProfile(appContext: Context, networkChatId: String): Boolean {
+        val db = AppDatabase.get(appContext)
+        val prefs = Prefs(appContext)
+        val chat = db.chatDao().getByChatId(networkChatId) ?: return true
+        if (chat.isFavorites) return true
+        val password = prefs.getChatPassword(networkChatId).ifEmpty {
+            @Suppress("DEPRECATION") chat.chatPassword
+        }
+        if (password.isEmpty()) return true
+        val token = prefs.getChatToken(networkChatId).ifEmpty {
+            @Suppress("DEPRECATION") chat.transportToken
+        }
+        val transport = TransportFactory.forChat(
+            appContext, networkChatId, token, password, prefs.myUserId, adminUserId = chat.adminUserId
+        )
+        // ⚠️ Набор полей обязан совпадать с ChatActivity.buildMyProfile(). Публикация переписывает
+        // МОЙ слот целиком, поэтому неполный снимок отсюда СТЁР бы то, что уже опубликовал экран
+        // чата: эфемерный ключ (без него у собеседника не встаёт forward-secrecy сессия) и подписи
+        // (без них гаснет галочка подлинности). Эфемерный ключ берём из Room — там его хранит
+        // ChatActivity (Chat.myEphemeralPubKeyB64), подписи считаем общим ProfileSigning.
+        //
+        // onlineTs НЕ ставим: это фоновая публикация, экран чата не открыт, и заявлять «в сети»
+        // было бы враньём — presence ведёт свой цикл в ChatActivity.
+        val ephPub = chat.myEphemeralPubKeyB64
+        val myProfile = Profile(
+            userId = prefs.myUserId,
+            name = prefs.myName,
+            tag = prefs.myTag,
+            avatarBase64 = prefs.myAvatarBase64,
+            ephemeralPubKey = ephPub,
+            identityPubKey = prefs.myIdentityPubKey,
+            ephemeralSig = ProfileSigning.ephemeralSig(prefs, ephPub, networkChatId),
+            identitySig = ProfileSigning.identitySig(prefs, networkChatId),
+            verifiedPartnerIdk = prefs.getConfirmedPartnerIdentity(networkChatId),
+            status = prefs.myStatus.takeIf { it.isNotBlank() },
+            // Рукопожатие: фоновая публикация тоже переписывает мой слот целиком, поэтому обязана
+            // нести подтверждение — иначе она стёрла бы его, и партнёр откатился бы с forward
+            // secrecy на парольное шифрование. Ключ партнёра берём из Room (его туда кладёт
+            // ChatActivity.tryEstablishSessionKey).
+            ephAck = ProfileHandshake.ackFor(chat.partnerEphemeralPubKeyB64, networkChatId),
+            pv = ProfileHandshake.PROTOCOL_VERSION
+        )
+        val (identityPriv, _) = prefs.getOrCreateIdentity()
+        return ProfileSync.pushMyProfile(transport, password, myProfile, identityPriv)
     }
 
     /** Публикация текущего профиля беседы (имя/ава/описание) из Room. */

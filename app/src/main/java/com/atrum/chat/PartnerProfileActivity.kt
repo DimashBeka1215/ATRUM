@@ -723,11 +723,20 @@ class PartnerProfileActivity : AppCompatActivity() {
         ).apply { duration = 460; start() }
     }
 
-    /** Одноразово публикует моё подтверждение. pushPresence сохраняет eph/sig — FS не ломается. */
+    /**
+     * Публикует моё подтверждение личности собеседника. pushPresence сохраняет eph/sig — FS не ломается.
+     *
+     * ⚠️ Раньше публикация была ОДНОРАЗОВОЙ и полностью безмолвной (`catch (_: Exception) {}`,
+     * результат не проверялся): если запись не собрала кворум реле, собеседник НИКОГДА не узнавал,
+     * что я сверил его личность, — а я при этом видел у себя «подтверждено» и был уверен, что всё
+     * прошло. Сам факт подтверждения хранится в Prefs (setConfirmedPartnerIdentity), поэтому
+     * достаточно попросить очередь переопубликовать мой профиль: PublishScheduler.publishMyProfile
+     * кладёт verifiedPartnerIdk из тех же Prefs и повторяет попытки, переживая перезапуск.
+     */
     private fun publishMyConfirmation(chatId: String, partnerIdk: String) {
         if (verifyToken.isBlank() || verifyPassword.isBlank()) return
         lifecycleScope.launch(Dispatchers.IO) {
-            try {
+            val ok = try {
                 val transport = TransportFactory.forChat(this@PartnerProfileActivity, chatId, verifyToken, verifyPassword, prefs.myUserId)
                 ProfileSync.pushPresence(
                     api = transport, password = verifyPassword, myUserId = prefs.myUserId,
@@ -736,7 +745,8 @@ class PartnerProfileActivity : AppCompatActivity() {
                     myIdentityPubKey = prefs.myIdentityPubKey,
                     myVerifiedPartnerIdk = partnerIdk
                 )
-            } catch (_: Exception) {}
+            } catch (_: Exception) { false }
+            if (!ok) PublishScheduler.markMyProfileDirty(applicationContext, chatId)
         }
     }
 

@@ -81,9 +81,23 @@ object ProfileSync {
         private set
 
     /** Возвращает (кэш ∪ read), где read свежее (выигрывает по ключам, что в нём есть). */
-    private fun unionWithKnown(chatId: String, read: Map<String, Profile>): MutableMap<String, Profile> {
+    private fun unionWithKnown(chatId: String, read: Map<String, Profile>): MutableMap<String, Profile> =
+        mergeReadOverKnown(known[chatId], read)
+
+    /**
+     * Чистая часть [unionWithKnown] — слияние прочитанного поверх ранее известного.
+     *
+     * Вынесено отдельно и помечено `internal` РАДИ ЮНИТ-ТЕСТОВ: сам [unionWithKnown] завязан на
+     * глобальный кэш [known], а эта функция — чистая (вход → выход), её можно проверять без
+     * Android, сети и криптографии. Логика при выносе не менялась — только перемещена.
+     * См. ProfileSyncMergeTest.
+     */
+    internal fun mergeReadOverKnown(
+        knownForChat: Map<String, Profile>?,
+        read: Map<String, Profile>
+    ): MutableMap<String, Profile> {
         val result = LinkedHashMap<String, Profile>()
-        known[chatId]?.let { result.putAll(it) }   // ранее виденные (в т.ч. партнёр)
+        knownForChat?.let { result.putAll(it) }   // ранее виденные (в т.ч. партнёр)
         // Монотонное слияние: поля профиля (имя/аватар/ключи) берём по большему updatedAt,
         // чтобы УСТАРЕВШИЙ опрос (реле отдало старую копию слота при флаки-Tor) НЕ откатывал
         // уже показанный свежий аватар. Presence — из свежего чтения (быстрый «не в сети»),
@@ -186,10 +200,30 @@ object ProfileSync {
         return merged
     }
 
+    /**
+     * Читает профили чата.
+     *
+     * ⚠️ ФИКС (§16, аудит синка профилей): раньше здесь стоял `api.loadFileOrNull(FILE_NAME)` —
+     * ОДИН, самый свежий слот («последний записавший выигрывает»). Все читающие экраны давно
+     * переведены на унию слотов (ChatActivity/ChatsListActivity/PartnerProfileActivity), а вот
+     * сам pullProfiles остался на одном блобе — и именно на нём построена ЗАПИСЬ:
+     * [pushMyProfile] и [pushPresence] берут отсюда карту участников, дописывают себя и
+     * публикуют её целиком в свой слот. То есть мой слот мог нести устаревшие копии чужих
+     * профилей, а в беседе — вовсе потерять участника, чей профиль в прочитанный блоб не попал.
+     *
+     * Теперь читаем ВСЕ слоты и сливаем их так же, как читающая сторона. Дополнительного
+     * трафика это не создаёт: [ChatTransport.loadFileSlots] выполняет ТОТ ЖЕ запрос, что и
+     * loadFileOrNull, и просто не выбрасывает лишние события (см. NostrTransport).
+     * Обратная совместимость (§17): старый общий блоб — это просто слот с несколькими uid.
+     */
     suspend fun pullProfiles(api: ChatTransport, password: String): Map<String, Profile> {
-        val rawEncrypted = api.loadFileOrNull(FILE_NAME)?.trim() ?: return emptyMap()
-        if (rawEncrypted.isEmpty()) return emptyMap()
-        val parsed = parseProfiles(rawEncrypted, password, api.chatId)
+        val slots = api.loadFileSlots(FILE_NAME)
+        if (slots.isEmpty()) return emptyMap()
+        val parsed = if (slots.size == 1) {
+            parseProfiles(slots[0].trim(), password, api.chatId)
+        } else {
+            unionProfileSlots(slots, password, api.chatId)
+        }
         // Пополняем кэш известных участников всем, что реально прочитали с реле.
         if (parsed.isNotEmpty()) {
             val merged = unionWithKnown(api.chatId, parsed)
@@ -217,17 +251,75 @@ object ProfileSync {
      * дешёвое сравнение полей — остаётся последовательным ПОСЛЕ того, как все расшифровки
      * завершились, никакой гонки на общем состоянии. Результат идентичен прежнему.
      */
+    /**
+     * Кэш разбора ОДНОГО слота: ключ — чат + отпечаток шифртекста, значение — уже разобранные
+     * профили этого слота.
+     *
+     * ⚠️ Добавлено по репорту «синк стал очень долгим». unionProfileSlots вызывается и на каждом
+     * тике опроса, и на КАЖДОМ presence-пуше (раз в ~5 секунд, через pullProfiles), а слотов
+     * столько же, сколько участников. При этом реально меняется обычно один слот — тот, чей
+     * владелец обновил presence; остальные разбирались заново впустую. Теперь неизменившийся
+     * слот берётся из памяти.
+     *
+     * Размер намеренно маленький: в значениях лежат аватары в base64, и большой кэш съел бы
+     * заметную память. Восьми записей хватает на 1:1 и небольшие беседы, а для крупных групп
+     * это просто ограничивает выигрыш, но ничего не ломает.
+     */
+    private const val SLOT_PARSE_CACHE_MAX = 8
+    private val slotParseCache = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, Map<String, Profile>>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Map<String, Profile>>) =
+                size > SLOT_PARSE_CACHE_MAX
+        }
+    )
+
+    /** Отпечаток слота: длина + хэш строки. String.hashCode в JVM кэшируется, поэтому дёшево. */
+    private fun slotCacheKey(chatId: String, slotEnc: String) =
+        chatId + '#' + slotEnc.length + '#' + slotEnc.hashCode()
+
     suspend fun unionProfileSlots(slots: List<String>, password: String, chatId: String): Map<String, Profile> = coroutineScope {
         val parsedPerSlot = slots.map { slotEnc ->
-            async(profileSlotDecryptDispatcher) { parseProfiles(slotEnc, password, chatId) }
+            val key = slotCacheKey(chatId, slotEnc)
+            val cached = slotParseCache[key]
+            if (cached != null) {
+                kotlinx.coroutines.CompletableDeferred(cached)
+            } else {
+                async(profileSlotDecryptDispatcher) {
+                    parseProfiles(slotEnc, password, chatId).also { parsed ->
+                        if (parsed.isNotEmpty()) slotParseCache[key] = parsed
+                    }
+                }
+            }
         }.awaitAll()
+        mergeParsedSlots(parsedPerSlot)
+    }
 
+    /**
+     * Чистая часть [unionProfileSlots] — слияние УЖЕ расшифрованных слотов.
+     *
+     * Вынесено отдельно и помечено `internal` РАДИ ЮНИТ-ТЕСТОВ: расшифровка требует Android и
+     * реального ключа, а само слияние — чистая логика, и именно в ней исторически заводились
+     * баги (липкость авы/имени/подписей, тай-брейк по updatedAt). Логика при выносе не
+     * менялась — только перемещена. См. ProfileSyncMergeTest.
+     *
+     * ⚠️ ПОРЯДОК ВАЖЕН: ожидается, что слоты идут по created_at УБЫВАЮЩЕ (как их отдаёт
+     * NostrTransport.splitAll) — от этого зависит тай-брейк при равном updatedAt (см. ниже).
+     */
+    internal fun mergeParsedSlots(parsedPerSlot: List<Map<String, Profile>>): Map<String, Profile> {
         val best = LinkedHashMap<String, Profile>()
         for (parsed in parsedPerSlot) {
             for ((uid, p) in parsed) {
                 val cur = best[uid]
                 if (cur == null) { best[uid] = p; continue }
-                val base = if (p.updatedAt >= cur.updatedAt) p else cur
+                // ⚠️ ФИКС тай-брейка (§16, найден при аудите синка профилей; обкатан в песочнице).
+                // Слоты приходят отсортированными по created_at УБЫВАЮЩЕ (NostrTransport.splitAll),
+                // то есть первым обрабатывается САМОЕ СВЕЖЕЕ событие. При нестрогом `>=` копия с
+                // РАВНЫМ updatedAt из более СТАРОГО слота перезаписывала уже взятую свежую запись.
+                // А равный updatedAt — штатная ситуация, а не редкость: pushPresence сохраняет
+                // прежний updatedAt (делает gist.copy, не обновляя его), поэтому мой профиль и его
+                // устаревшая копия в чужом слоте почти всегда несут ОДИН И ТОТ ЖЕ updatedAt.
+                // Строгий `>` оставляет победителем запись из более НОВОГО события.
+                val base = if (p.updatedAt > cur.updatedAt) p else cur
                 best[uid] = base.copy(
                     onlineTs      = maxOf(cur.onlineTs, p.onlineTs),
                     typingTs      = maxOf(cur.typingTs, p.typingTs),
@@ -246,7 +338,7 @@ object ProfileSync {
                 )
             }
         }
-        best
+        return best
     }
 
     /** Дешифрует и парсит ОДИН уже загруженный блоб profiles.txt (без сетевого вызова). */
@@ -358,6 +450,13 @@ object ProfileSync {
         myEphemeralSig: String? = null,
         myIdentitySig: String? = null,
         myVerifiedPartnerIdk: String? = null,
+        // Рукопожатие профилей: отпечаток эфемерного ключа партнёра, который я реально держу.
+        // ОБЯЗАТЕЛЬНО передавать здесь, а не только в pushMyProfile: presence переписывает мой
+        // слот каждые ~5 секунд, и без этого поля подтверждение стиралось бы почти сразу после
+        // публикации — партнёр никогда бы не включил forward secrecy. null = сохранить как в base.
+        myEphAck: String? = null,
+        /** Версия протокола профиля (см. ProfileHandshake.PROTOCOL_VERSION). 0 = не менять. */
+        myPv: Int = 0,
         // Read receipt: если задан — монотонно продвигаем lastReadIndex этим пушем (нужно для
         // офлайн-флаша «прочитано» при быстром выходе из чата). null = сохранить как в base.
         lastReadIndex: Int? = null
@@ -373,7 +472,7 @@ object ProfileSync {
                 avatarBase64 = gist.avatarBase64 ?: myAvatarBase64
             ) ?: Profile(userId = myUserId, name = myName, tag = myTag, avatarBase64 = myAvatarBase64)
 
-            existing[myUserId] = base.copy(
+            val updated = base.copy(
                 typingTs           = typingTs,
                 onlineTs           = onlineTs,
                 recordingTs        = recordingTs,
@@ -384,8 +483,39 @@ object ProfileSync {
                 identityPubKey     = myIdentityPubKey ?: base.identityPubKey,
                 ephemeralSig       = myEphemeralSig ?: base.ephemeralSig,
                 identitySig        = myIdentitySig ?: base.identitySig,
-                verifiedPartnerIdk = myVerifiedPartnerIdk ?: base.verifiedPartnerIdk
+                verifiedPartnerIdk = myVerifiedPartnerIdk ?: base.verifiedPartnerIdk,
+                // Рукопожатие: свежее подтверждение перекрывает прежнее (партнёр мог сменить
+                // ключ), а если подтверждать пока нечего — сохраняем уже опубликованное.
+                ephAck             = myEphAck ?: base.ephAck,
+                pv                 = if (myPv > 0) myPv else base.pv
             )
+
+            // ⚠️ ФИКС (§16, аудит синка): presence-пуш НИКОГДА не двигал updatedAt — писал профиль
+            // через gist.copy(), сохраняя прежнее значение. А ведь он же и ВОССТАНАВЛИВАЕТ
+            // содержимое: подставляет имя/тег/аватар из fallback-параметров, если в источнике они
+            // пустые, и заново вставляет ключи с подписями. Восстановленные данные выходили
+            // «несвежими» и при слиянии проигрывали (или в лучшем случае сравнивались на равных)
+            // устаревшей копии меня из чужого слота — из-за чего правка могла не доехать вообще.
+            //
+            // Двигаем updatedAt ТОЛЬКО когда реально изменилось СОДЕРЖИМОЕ профиля. Делать это на
+            // каждом тике нельзя: presence идёт раз в ~5 секунд, и профиль тогда считался бы
+            // изменившимся постоянно — лишние перерисовки у получателей и бессмысленная «свежесть».
+            // Presence-поля (онлайн/печатает/записывает/прочитано) содержимым НЕ считаются.
+            val contentChanged = gist == null ||
+                updated.name               != gist.name ||
+                updated.tag                != gist.tag ||
+                updated.avatarBase64       != gist.avatarBase64 ||
+                updated.ephemeralPubKey    != gist.ephemeralPubKey ||
+                updated.identityPubKey     != gist.identityPubKey ||
+                updated.ephemeralSig       != gist.ephemeralSig ||
+                updated.identitySig        != gist.identitySig ||
+                updated.verifiedPartnerIdk != gist.verifiedPartnerIdk ||
+                // Появление/смена подтверждения рукопожатия — тоже изменение содержимого:
+                // партнёр ждёт именно его, чтобы включить forward secrecy, поэтому свежая
+                // отметка обязана выигрывать слияние у устаревших копий.
+                updated.ephAck             != gist.ephAck
+            existing[myUserId] =
+                if (contentChanged) updated.copy(updatedAt = System.currentTimeMillis()) else updated
             rememberKnown(api.chatId, existing) // не теряем партнёра при флаки-чтениях
             val json = JSONObject().apply {
                 for ((uid, p) in existing) put(uid, p.toJsonObject())
@@ -463,13 +593,32 @@ object ProfileSync {
     fun findPartner(
         profiles: Map<String, Profile>,
         myUserId: String,
-        myName: String = ""
+        myName: String = "",
+        myIdentityPubKey: String? = null
     ): Profile? {
-        val others = profiles.values.filter { it.userId != myUserId }
+        // ⚠️ ФИКС (репорт: «в шапке чата стоит МОЁ ИМЯ и моя заглушка вместо собеседника»).
+        // Жёсткий отсев «это точно я»: не только по userId, но и по identity-ключу. После
+        // сброса аккаунта в канале остаётся мой старый профиль с ДРУГИМ userId — по userId он
+        // не отсеивался, и дальше срабатывал фолбэк ниже, из-за чего партнёром назначался
+        // мой же старый профиль. Он попадал в Room (updatePartnerProfile) и намертво
+        // прописывался в шапке: собеседник при этом писал и его сообщения приходили, но
+        // имя и аватар в шапке были моими. Identity-ключ подделать нельзя, поэтому это
+        // однозначный признак «этот профиль — я», даже если имя успело смениться.
+        val others = profiles.values.filter { p ->
+            p.userId != myUserId &&
+                !(myIdentityPubKey != null && p.identityPubKey != null && p.identityPubKey == myIdentityPubKey)
+        }
         if (others.isEmpty()) return null
-        // Отбрасываем "клонов меня" (моё имя, чужой userId) — но если кроме них
-        // никого нет, значит это легитимный партнёр с таким же именем: берём его.
+        // Отбрасываем "клонов меня" (моё имя, чужой userId).
         val nonClones = if (myName.isBlank()) others else others.filter { it.name != myName }
-        return (if (nonClones.isNotEmpty()) nonClones else others).maxByOrNull { it.updatedAt }
+        if (nonClones.isNotEmpty()) return nonClones.maxByOrNull { it.updatedAt }
+        // Остались только тёзки. Раньше здесь безусловно брался любой из них — именно этот
+        // фолбэк и назначал партнёром мой старый профиль. Берём тёзку, ТОЛЬКО если он
+        // доказанно не я: у него есть СВОЙ identity-ключ, отличный от моего. Легитимный
+        // однофамилец такой ключ публикует всегда (ChatActivity кладёт его в каждый профиль),
+        // а вот у старого «меня» его обычно нет — и назначать его собеседником нельзя.
+        return others
+            .filter { it.identityPubKey != null && it.identityPubKey != myIdentityPubKey }
+            .maxByOrNull { it.updatedAt }
     }
 }

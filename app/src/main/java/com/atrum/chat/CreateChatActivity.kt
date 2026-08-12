@@ -568,18 +568,30 @@ class CreateChatActivity : SecureActivity() {
                 userId = prefs.myUserId,
                 name = prefs.myName,
                 tag = prefs.myTag,
-                avatarBase64 = prefs.myAvatarBase64
+                avatarBase64 = prefs.myAvatarBase64,
+                // Рукопожатие: подтверждать пока нечего (собеседника ещё нет), но версию
+                // протокола объявляем сразу — иначе вошедший примет меня за старого клиента
+                // и включит forward secrecy, не дождавшись моего подтверждения.
+                pv = ProfileHandshake.PROTOCOL_VERSION
             )
             AppScope.launch {
                 try {
                     val transport = NostrTransport(channelId, password, prefs.myUserId, preferTor = selectedTor)
                     val ok = ProfileSync.pushMyProfile(transport, password, myProfile)
-                    if (!ok && selectedTor) {
-                        val cause = ProfileSync.lastError
-                            ?: IllegalStateException("pushMyProfile вернул false, но lastError пуст")
-                        TorSyncWatchdog.reportDeviation(applicationContext, channelId, "CreateChatActivity.pushMyProfile", cause)
+                    if (!ok) {
+                        // Профиль автора приглашения критичен: пока он не опубликован, вошедший
+                        // по коду не увидит ни имени, ни аватара пригласившего. Раньше провал
+                        // только записывался в диагностику и НИКОГДА не повторялся — теперь его
+                        // добивает персистентная очередь (переживает и перезапуск приложения).
+                        PublishScheduler.markMyProfileDirty(applicationContext, channelId)
+                        if (selectedTor) {
+                            val cause = ProfileSync.lastError
+                                ?: IllegalStateException("pushMyProfile вернул false, но lastError пуст")
+                            TorSyncWatchdog.reportDeviation(applicationContext, channelId, "CreateChatActivity.pushMyProfile", cause)
+                        }
                     }
                 } catch (e: Exception) {
+                    PublishScheduler.markMyProfileDirty(applicationContext, channelId)
                     if (selectedTor) {
                         TorSyncWatchdog.reportDeviation(applicationContext, channelId, "CreateChatActivity.pushMyProfile", e)
                     }
@@ -679,7 +691,10 @@ class CreateChatActivity : SecureActivity() {
                 userId = prefs.myUserId,
                 name = prefs.myName,
                 tag = prefs.myTag,
-                avatarBase64 = prefs.myAvatarBase64
+                avatarBase64 = prefs.myAvatarBase64,
+                // Беседы эфемерными ключами не пользуются — подтверждать нечего, но версию
+                // протокола объявляем (аддитивно, старые клиенты поле игнорируют).
+                pv = ProfileHandshake.PROTOCOL_VERSION
             )
             AppScope.launch {
                 try {
@@ -690,7 +705,12 @@ class CreateChatActivity : SecureActivity() {
                         preferTor = selectedTor,
                         adminUserId = adminUserId
                     )
-                    ProfileSync.pushMyProfile(transport, password, myProfile)
+                    // Профиль админа беседы: провал раньше проходил совершенно молча, и участники
+                    // не видели создателя, пока он сам не откроет чат. Ставим в ту же очередь,
+                    // через которую уже идут members.txt и профиль беседы (строки ниже).
+                    if (!ProfileSync.pushMyProfile(transport, password, myProfile)) {
+                        PublishScheduler.markMyProfileDirty(applicationContext, channelId)
+                    }
                     // Первичные members.txt (v1: админ + имя группы) и профиль беседы
                     // (имя/ава) — через планировщик (PublishScheduler): снимок строится
                     // из Room (строка чата и участник-админ уже записаны выше),

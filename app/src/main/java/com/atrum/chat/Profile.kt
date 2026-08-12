@@ -110,7 +110,25 @@ data class Profile(
      * (обратная совместимость §17): тогда содержимое считается «не подтверждённым», но не
      * отвергается (не-блокирующая детекция).
      */
-    val contentSig: String? = null
+    val contentSig: String? = null,
+    /**
+     * Рукопожатие профилей: отпечаток эфемерного ключа ПАРТНЁРА, который я реально получил
+     * (см. [ProfileHandshake.ackFor]). Партнёр, увидев здесь отпечаток своего текущего ключа,
+     * получает доказательство, что я способен вывести общий сессионный ключ, — и только тогда
+     * включает forward-secrecy шифрование. Без этого он шифровал бы тем, что я физически не
+     * могу расшифровать (репорт: «его ответ ко мне не приходит»).
+     *
+     * null — подтверждать нечего (ключа партнёра ещё нет) либо это беседа: групповые чаты
+     * эфемерными ключами не пользуются.
+     */
+    val ephAck: String? = null,
+    /**
+     * Версия протокола профиля. 0 = старый клиент, который про [ephAck] не знает и никогда его
+     * не пришлёт — с таким партнёром решение о forward secrecy принимается иначе
+     * (см. [ProfileHandshake.partnerHasMyKey]). Поле аддитивное: старые клиенты его игнорируют
+     * при разборе, для них ничего не меняется (§17).
+     */
+    val pv: Int = 0
 ) {
     fun toJsonObject(): JSONObject = JSONObject().apply {
         put("name", name)
@@ -130,6 +148,10 @@ data class Profile(
         if (verifiedPartnerIdk != null) put("vpk", verifiedPartnerIdk)
         if (status != null) put("status", status)
         if (contentSig != null) put("csig", contentSig)
+        // Рукопожатие: пишем только когда есть что подтверждать — старый клиент эти ключи
+        // просто не читает, поэтому для него профиль остаётся прежним (§17).
+        if (ephAck != null) put("eack", ephAck)
+        if (pv > 0) put("pv", pv)
     }
 
     companion object {
@@ -153,7 +175,11 @@ data class Profile(
                 identitySig = json.optString("isig", "").takeIf { it.isNotBlank() },
                 verifiedPartnerIdk = json.optString("vpk", "").takeIf { it.isNotBlank() },
                 status = json.optString("status", null)?.takeIf { it.isNotBlank() },
-                contentSig = json.optString("csig", "").takeIf { it.isNotBlank() }
+                contentSig = json.optString("csig", "").takeIf { it.isNotBlank() },
+                // Отсутствуют у старых клиентов — дефолты (null / 0) означают «подтверждать
+                // не умеет», и решение о forward secrecy принимается по другому пути (§17).
+                ephAck = json.optString("eack", "").takeIf { it.isNotBlank() },
+                pv = json.optInt("pv", 0)
             )
         }
     }

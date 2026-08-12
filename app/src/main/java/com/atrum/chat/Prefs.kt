@@ -308,6 +308,28 @@ class Prefs(private val context: Context) {
     }
 
     /**
+     * Одноразовый сброс ссылок на уже залитые стикеры (репорт: «собеседник не видит мои стикеры»).
+     *
+     * Прежние ссылки могут указывать на контент, зашифрованный ЭФЕМЕРНЫМ сессионным ключом
+     * (см. CryptoHelper.encryptSharedContent): получатель, не расшифровавший его в ту же
+     * сессию, не расшифрует уже никогда — а дедуп не давал перезалить контент, поэтому
+     * переотправка того же стикера просто переиспользовала нечитаемую ссылку. Забываем ссылки
+     * ОДИН раз: каждый стикер зальётся заново, уже парольным шифрованием, и станет читаемым
+     * навсегда.
+     *
+     * Операция дешёвая и безопасная: удаляются только ключи ссылок — сами файлы стикеров,
+     * наборы и любые другие настройки не трогаются. Повторно не выполняется.
+     */
+    fun resetStickerContentRefsOnce() {
+        if (prefs.getBoolean(KEY_STICKER_REFS_RESET, false)) return
+        val stale = prefs.all.keys.filter { it.startsWith("stk_ref_") }
+        prefs.edit().apply {
+            stale.forEach { remove(it) }
+            putBoolean(KEY_STICKER_REFS_RESET, true)
+        }.apply()
+    }
+
+    /**
      * Выбранная тема: "dark" | "light" | "system".
      * По умолчанию "dark" — приложение задумано тёмным.
      */
@@ -969,6 +991,8 @@ class Prefs(private val context: Context) {
         private const val KEY_PUSH_ENABLED = "push_enabled"
         private const val KEY_SVC_DISMISSED = "svc_user_dismissed"
         private const val KEY_AUTOSTART_BOOT = "autostart_on_boot"
+        /** Флаг одноразового сброса ссылок на стикеры (см. resetStickerContentRefsOnce). */
+        private const val KEY_STICKER_REFS_RESET = "sticker_refs_reset_v1"
         private const val KEY_REVIVE_SERVICE = "revive_service"
         private const val KEY_PUSH_TOTAL = "push_notified_total"
         private const val KEY_BATTERY_HINT = "battery_hint_shown"

@@ -69,6 +69,11 @@ class App : Application() {
         // сессии (dirty-флаги персистентны — см. PublishScheduler.resume).
         PublishScheduler.resume(this)
 
+        // Одноразовая починка стикеров (репорт: «собеседник не видит мои стикеры»): забываем
+        // ссылки на контент, залитый эфемерным сессионным ключом, чтобы он перезалился
+        // парольным шифрованием и стал читаемым у собеседника навсегда. См. Prefs.
+        runCatching { Prefs(this).resetStickerContentRefsOnce() }
+
         val prefs = Prefs(this)
         BatteryUtils.animatePersistOverride = prefs.lowBattAnimate
         ConnectionPrefs.loadFrom(prefs)

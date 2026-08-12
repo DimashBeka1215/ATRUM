@@ -178,6 +178,42 @@ class MessageAdapter(
 
     private fun avatarFor(msg: Message): String? = msg.senderUserId?.let { avatarsByUserId[it] }
 
+    /**
+     * АКТУАЛЬНЫЕ ники отправителей по userId (из profiles.txt).
+     *
+     * ⚠️ Зачем (репорт: «ник на старых сообщениях не меняется»). Имя отправителя зашивается в
+     * САМО сообщение при отправке (см. Message.composePlaintext) и остаётся там навсегда.
+     * Поэтому после смены ника вся прежняя переписка продолжала показывать старое имя, хотя в
+     * шапке и в профиле уже стояло новое. Здесь держим свежие имена по userId и подставляем их
+     * при отрисовке; зашитое в сообщение остаётся запасным вариантом — для старых сообщений
+     * без userId, системных и тех, чей профиль ещё не доехал.
+     */
+    private var namesByUserId: Map<String, String> = emptyMap()
+
+    /** Актуальное имя отправителя: свежее из профиля, иначе — зашитое в сообщение. */
+    private fun senderNameFor(msg: Message): String =
+        msg.senderUserId?.let { namesByUserId[it] }?.takeIf { it.isNotBlank() } ?: msg.sender
+
+    /**
+     * Обновляет ники отправителей. Перебиндивает ТОЧЕЧНО только строки того, кто реально сменил
+     * имя (тот же приём, что и [updateAvatars]): полный ребайнд списка на каждом тике опроса
+     * давал бы мерцание (§14).
+     */
+    fun updateSenderNames(newMap: Map<String, String>) {
+        if (newMap == namesByUserId) return
+        val changedUsers = HashSet<String>()
+        for (uid in newMap.keys + namesByUserId.keys) {
+            if (newMap[uid] != namesByUserId[uid]) changedUsers.add(uid)
+        }
+        namesByUserId = newMap
+        if (changedUsers.isEmpty()) return
+        val eff = effectiveList()
+        for (i in eff.indices) {
+            val uid = eff[i].senderUserId ?: continue
+            if (uid in changedUsers) notifyItemChanged(i, PAYLOAD_AVATAR)
+        }
+    }
+
     /** Верифицирован ли отправитель сообщения (галочка у ника). Считается во ВНЕШНЕМ классе
      *  адаптера — VH не видит [verifiedUserIds], поэтому результат передаётся в bind(). */
     private fun isVerifiedSender(msg: Message): Boolean =
@@ -443,7 +479,9 @@ class MessageAdapter(
         }
         if (payloads.isNotEmpty() && payloads.all { it === PAYLOAD_AVATAR }) {
             val msg = effectiveList()[position]
-            holder.bindAvatarOnly(msg, avatarFor(msg), isFirstOfRun(position))
+            // Тем же точечным апдейтом обновляем и НИК: он меняется ровно тогда же, когда
+            // аватар (человек поменял профиль), и отдельный payload только удвоил бы работу.
+            holder.bindAvatarOnly(msg, avatarFor(msg), isFirstOfRun(position), senderNameFor(msg))
             return
         }
         super.onBindViewHolder(holder, position, payloads)
@@ -479,7 +517,8 @@ class MessageAdapter(
             showAvatar        = isFirstOfRun(position),
             isGroupChat       = isGroupChat,
             isVerifiedSender  = isVerifiedSender(msg),
-            authState         = authStateFor?.invoke(msg) ?: MsgAuth.UNSIGNED
+            authState         = authStateFor?.invoke(msg) ?: MsgAuth.UNSIGNED,
+            senderName        = senderNameFor(msg)
         )
     }
 
@@ -626,7 +665,7 @@ class MessageAdapter(
          * аватарки. Буква-плейсхолдер берётся из msg.sender — работает даже для очень
          * старых сообщений без senderUserId (тогда просто avatarBase64 == null).
          */
-        private fun bindAvatar(msg: Message, avatarBase64: String?, show: Boolean) {
+        private fun bindAvatar(msg: Message, avatarBase64: String?, show: Boolean, senderName: String = msg.sender) {
             val frame = avatarFrame ?: return
             if (!show) {
                 frame.visibility = View.INVISIBLE
@@ -648,13 +687,28 @@ class MessageAdapter(
             } else {
                 avatarImage?.visibility = View.GONE
                 avatarInitial?.visibility = View.VISIBLE
-                avatarInitial?.text = (msg.sender.trim().firstOrNull()?.uppercase()?.toString() ?: "?")
+                // Буква-заглушка — из АКТУАЛЬНОГО ника, а не из зашитого в сообщение:
+                // иначе после смены имени она осталась бы от старого (репорт).
+                avatarInitial?.text = (senderName.trim().firstOrNull()?.uppercase()?.toString() ?: "?")
             }
         }
 
-        /** Точечный апдейт ТОЛЬКО аватарки (PAYLOAD_AVATAR) — без ребайнда текста/фото/реакций. */
-        fun bindAvatarOnly(msg: Message, avatarBase64: String?, show: Boolean) {
-            bindAvatar(msg, avatarBase64, show)
+        /**
+         * Точечный апдейт аватарки и ника (PAYLOAD_AVATAR) — без ребайнда текста/фото/реакций.
+         * Ник обновляется здесь же: он меняется одновременно с аватаром, когда человек правит
+         * профиль (см. MessageAdapter.updateSenderNames).
+         */
+        fun bindAvatarOnly(msg: Message, avatarBase64: String?, show: Boolean, senderName: String) {
+            bindAvatar(msg, avatarBase64, show, senderName)
+            senderView?.let {
+                if (senderName.isNotBlank()) {
+                    it.text = senderName
+                    it.visibility = View.VISIBLE
+                    (senderRow ?: it).visibility = View.VISIBLE
+                } else {
+                    (senderRow ?: it).visibility = View.GONE
+                }
+            }
         }
 
         /**
@@ -788,18 +842,21 @@ class MessageAdapter(
             showAvatar: Boolean = false,
             isGroupChat: Boolean = false,
             isVerifiedSender: Boolean = false,
-            authState: MsgAuth = MsgAuth.UNSIGNED
+            authState: MsgAuth = MsgAuth.UNSIGNED,
+            /** Актуальный ник отправителя (см. MessageAdapter.senderNameFor). По умолчанию —
+             *  зашитый в сообщение, чтобы вызовы без профиля работали как раньше. */
+            senderName: String = msg.sender
         ) {
             if (msg.isSystem) {
                 bindSystem(msg)
                 return
             }
 
-            bindAvatar(msg, avatarBase64, showAvatar)
+            bindAvatar(msg, avatarBase64, showAvatar, senderName)
 
             senderView?.let {
-                if (msg.sender.isNotBlank()) {
-                    it.text = msg.sender
+                if (senderName.isNotBlank()) {
+                    it.text = senderName
                     it.visibility = View.VISIBLE
                     (senderRow ?: it).visibility = View.VISIBLE
                     // Галочка верификации рядом с ником отправителя в беседе. [isVerifiedSender]

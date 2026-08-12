@@ -328,7 +328,7 @@ class ChatsListActivity : SecureActivity() {
                 val parsed = ProfileSync.parseProfiles(content, password, api.chatId)
                 if (parsed.isNotEmpty()) {
                     val all = ProfileSync.unionAndRemember(api.chatId, parsed)
-                    val partner = ProfileSync.findPartner(all, prefs.myUserId, prefs.myName)
+                    val partner = ProfileSync.findPartner(all, prefs.myUserId, prefs.myName, prefs.myIdentityPubKey)
                     if (partner != null && fresh != null && partner.name.isNotBlank()) {
                         // ⚠️ Не затираем аву/тег ПУСТЫМ значением (presence/частичное чтение
                         // партнёра приходит без avatar → иначе ава пропадала у собеседника,
@@ -655,7 +655,7 @@ class ChatsListActivity : SecureActivity() {
                 ProfileSync.unionProfileSlots(all.profileSlots, chatPassword, api.chatId)
             else ProfileSync.parseProfiles(all.profilesContent, chatPassword, api.chatId)
             val allProfiles = ProfileSync.unionAndRemember(api.chatId, parsedProfiles)
-            val partner = ProfileSync.findPartner(allProfiles, myUserId, myName)
+            val partner = ProfileSync.findPartner(allProfiles, myUserId, myName, prefs.myIdentityPubKey)
             var ephPub: String? = chat.partnerEphemeralPubKeyB64
             if (partner != null) {
                 // ⚠️ Пустое имя/ава/тег не затирают сохранённые (presence/частичное чтение
@@ -1080,32 +1080,63 @@ class ChatsListActivity : SecureActivity() {
                 withContext(Dispatchers.IO) {
                     // Децентрализованный ростер (ADR-001): выходя из беседы, публикуем свой
                     // профиль с left=true — тумбстоун, по которому остальные исключат меня из
-                    // счётчика БЕЗ участия админа. Best-effort с коротким таймаутом, чтобы
-                    // удаление не подвисало на медленной сети; секреты ещё на месте (нужны
-                    // для публикации), удаляем их сразу после.
+                    // счётчика БЕЗ участия админа.
+                    //
+                    // ⚠️ ФИКС надёжности. Было: ОДНА попытка под общим `withTimeoutOrNull(8_000L)`,
+                    // результат не проверялся. Два дефекта сразу:
+                    //  1) 8с МЕНЬШЕ, чем дедлайн кворума самого транспорта через Tor (20с,
+                    //     NostrTransport.publishToAnyRelay) — то есть на Tor-беседах тумбстоун
+                    //     почти гарантированно обрывался на полпути, не успев опубликоваться;
+                    //  2) повторов не было, а сразу после этого стираются секреты чата — значит
+                    //     опубликовать тумбстоун позже уже НЕЧЕМ (ни пароля, ни токена), и
+                    //     персистентная очередь тут помочь не может. Для остальных участников
+                    //     я так и остаюсь в списке и в счётчике беседы навсегда.
+                    // Стало: несколько попыток с запасом по времени под КАЖДУЮ, и только потом
+                    // удаление секретов. Чтобы пользователь не ждал, вся операция ушла в AppScope,
+                    // а чат из списка пропадает сразу (§1.5) — строка Room удаляется ниже.
                     if (chat.isGroup) {
-                        runCatching {
-                            val token = prefs.getChatToken(chat.chatId).takeIf { it.isNotEmpty() }
-                                ?: @Suppress("DEPRECATION") chat.transportToken
-                            val password = prefs.getChatPassword(chat.chatId).takeIf { it.isNotEmpty() }
-                                ?: @Suppress("DEPRECATION") chat.chatPassword
-                            val api = TransportFactory.forChat(
-                                applicationContext, chat.chatId, token, password,
-                                prefs.myUserId, chat.adminUserId
-                            )
-                            val leftProfile = Profile(
-                                userId = prefs.myUserId,
-                                name = prefs.myName,
-                                tag = prefs.myTag,
-                                left = true
-                            )
-                            kotlinx.coroutines.withTimeoutOrNull(8_000L) {
-                                ProfileSync.pushMyProfile(api, password, leftProfile)
+                        val token = prefs.getChatToken(chat.chatId).takeIf { it.isNotEmpty() }
+                            ?: @Suppress("DEPRECATION") chat.transportToken
+                        val password = prefs.getChatPassword(chat.chatId).takeIf { it.isNotEmpty() }
+                            ?: @Suppress("DEPRECATION") chat.chatPassword
+                        val leftChatId = chat.chatId
+                        val leftAdminId = chat.adminUserId
+                        val leftProfile = Profile(
+                            userId = prefs.myUserId,
+                            name = prefs.myName,
+                            tag = prefs.myTag,
+                            left = true
+                        )
+                        val leftPrefs = prefs
+                        val appCtx = applicationContext
+                        AppScope.launch {
+                            try {
+                                for (attempt in 0 until LEAVE_TOMBSTONE_ATTEMPTS) {
+                                    val ok = runCatching {
+                                        val api = TransportFactory.forChat(
+                                            appCtx, leftChatId, token, password,
+                                            leftPrefs.myUserId, leftAdminId
+                                        )
+                                        kotlinx.coroutines.withTimeoutOrNull(LEAVE_TOMBSTONE_TIMEOUT_MS) {
+                                            ProfileSync.pushMyProfile(api, password, leftProfile)
+                                        } ?: false
+                                    }.getOrDefault(false)
+                                    if (ok) break
+                                    if (attempt < LEAVE_TOMBSTONE_ATTEMPTS - 1) {
+                                        kotlinx.coroutines.delay(LEAVE_TOMBSTONE_RETRY_MS)
+                                    }
+                                }
+                            } finally {
+                                // Секреты стираем В ЛЮБОМ случае (в т.ч. при отмене/исключении):
+                                // иначе пароль и токен покинутой беседы остались бы на устройстве
+                                // навсегда — это прямое ослабление приватности (§1).
+                                leftPrefs.deleteChatSecrets(leftChatId)
                             }
                         }
+                    } else {
+                        // Не беседа — публиковать тумбстоун некому, чистим сразу.
+                        prefs.deleteChatSecrets(chat.chatId)
                     }
-                    // Nostr/DHT: серверного gist нет — только локальная очистка секретов
-                    prefs.deleteChatSecrets(chat.chatId)
                     db.chatDao().delete(chat)
                 }
                 android.widget.Toast.makeText(
@@ -1128,5 +1159,21 @@ class ChatsListActivity : SecureActivity() {
          * практически неотличимо от "никогда не истечёт".
          */
         private const val TTL_INFINITE_MS = 100L * 365 * 24 * 60 * 60 * 1000
+
+        /**
+         * Попыток опубликовать тумбстоун выхода из беседы (профиль с left=true) перед тем,
+         * как секреты чата будут стёрты навсегда. Второго шанса не будет: без пароля и токена
+         * опубликоваться в эту беседу уже невозможно, и для остальных участников я останусь
+         * в списке и в счётчике. Поэтому попыток несколько, а не одна.
+         */
+        private const val LEAVE_TOMBSTONE_ATTEMPTS = 3
+        /**
+         * Таймаут ОДНОЙ попытки. Должен покрывать дедлайн кворума транспорта через Tor
+         * (NostrTransport.publishToAnyRelay ждёт до 20с) — прежние 8с обрывали публикацию
+         * на полпути, из-за чего на Tor-беседах тумбстоун почти никогда не доходил.
+         */
+        private const val LEAVE_TOMBSTONE_TIMEOUT_MS = 25_000L
+        /** Пауза между попытками — дать сети/реле «отпустить» (тот же приём, что в транспорте). */
+        private const val LEAVE_TOMBSTONE_RETRY_MS = 3_000L
     }
 }
