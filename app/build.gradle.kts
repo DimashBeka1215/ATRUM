@@ -221,7 +221,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Корутины
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 
     // ⚠️ ПОРЯДОК ЭТИХ ДВУХ БЛОКОВ ВРЕМЕННО ПОМЕНЯН МЕСТАМИ (см. TorManager.USE_TOR_ANDROID_ENGINE
     // = true — тест на устройстве). packagingOptions.jniLibs.pickFirst берёт lib/arm64-v8a/libtor.so
@@ -307,5 +307,5 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("io.mockk:mockk:1.13.11")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
 }
