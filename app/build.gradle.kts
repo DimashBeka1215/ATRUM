@@ -278,7 +278,7 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
 
     // Lottie — анимации и стикеры
-    implementation("com.airbnb.android:lottie:6.3.0")
+    implementation("com.airbnb.android:lottie:6.7.1")
 
     // ZXing — генерация QR-кода сверки (SAS) для защиты от MITM.
     implementation("com.google.zxing:core:3.5.3")
