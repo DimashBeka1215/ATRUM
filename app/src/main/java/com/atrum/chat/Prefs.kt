@@ -99,6 +99,18 @@ class Prefs(private val context: Context) {
         get() = prefs.getBoolean(KEY_WP_ADVICE_DISMISSED, false)
         set(v) = prefs.edit().putBoolean(KEY_WP_ADVICE_DISMISSED, v).apply()
 
+    /** Плашка «Код приглашения... не хранится на серверах» (экран входа по коду) скрыта
+     *  навсегда галочкой «Больше не показывать» — независимо от [joinConnectNoticeDismissed]. */
+    var joinInviteInfoDismissed: Boolean
+        get() = prefs.getBoolean(KEY_JOIN_INVITE_INFO_DISMISSED, false)
+        set(v) = prefs.edit().putBoolean(KEY_JOIN_INVITE_INFO_DISMISSED, v).apply()
+
+    /** Плашка «первое подключение может занять время» (экран входа по коду) скрыта
+     *  навсегда галочкой «Больше не показывать» — независимо от [joinInviteInfoDismissed]. */
+    var joinConnectNoticeDismissed: Boolean
+        get() = prefs.getBoolean(KEY_JOIN_CONNECT_NOTICE_DISMISSED, false)
+        set(v) = prefs.edit().putBoolean(KEY_JOIN_CONNECT_NOTICE_DISMISSED, v).apply()
+
     var testerPasswordHash: String?
         get() = prefs.getString(KEY_TESTER_PWD_HASH, null)
         set(v) {
@@ -984,6 +996,8 @@ class Prefs(private val context: Context) {
         private const val KEY_AVATAR = "avatar"
         private const val KEY_BANNER = "banner"
         private const val KEY_WP_ADVICE_DISMISSED = "wp_advice_dismissed"
+        private const val KEY_JOIN_INVITE_INFO_DISMISSED = "join_invite_info_dismissed"
+        private const val KEY_JOIN_CONNECT_NOTICE_DISMISSED = "join_connect_notice_dismissed"
         private const val KEY_BANNER_CHANGED_AT = "banner_changed_at"
         private const val KEY_LOCAL_PWD_HASH = "local_pwd_hash"
         private const val KEY_ONBOARDED = "onboarded"

@@ -4,6 +4,7 @@ import com.atrum.chat.transport.ChatTransport
 import com.atrum.chat.transport.BluetoothTransport
 import com.atrum.chat.transport.NostrTransport
 import com.atrum.chat.transport.AllChannelData
+import com.atrum.chat.transport.ProfileSlotSigned
 import com.atrum.chat.nostr.NostrRelayPool
 
 import android.animation.Keyframe
@@ -102,6 +103,15 @@ class JoinChatActivity : SecureActivity() {
         // к моменту нажатия "Подключиться" TLS уже установлен, соединение мгновенное.
         if (TorManager.status.value != TorManager.TorStatus.IDLE) NostrRelayPool.prewarm(NostrTransport.RELAYS)
 
+        setupDismissibleBanner(
+            banner = binding.bannerInviteInfo, row = binding.rowDismissInviteInfo, cb = binding.cbDismissInviteInfo,
+            alreadyDismissed = prefs.joinInviteInfoDismissed, onDismiss = { prefs.joinInviteInfoDismissed = true }
+        )
+        setupDismissibleBanner(
+            banner = binding.bannerConnectNotice, row = binding.rowDismissConnectNotice, cb = binding.cbDismissConnectNotice,
+            alreadyDismissed = prefs.joinConnectNoticeDismissed, onDismiss = { prefs.joinConnectNoticeDismissed = true }
+        )
+
         binding.btnBack.setOnClickListener { if (state != UiState.LOADING) finish() }
         binding.btnBackBottom.setOnClickListener { if (state != UiState.LOADING) finish() }
         binding.btnTogglePassword.setOnClickListener { togglePassword() }
@@ -162,6 +172,33 @@ class JoinChatActivity : SecureActivity() {
         super.onDestroy()
         connectJob?.cancel()
         heartbeatAnimator?.cancel()
+    }
+
+    /**
+     * Настраивает одну из двух инфо-плашек экрана (код приглашения / долгое соединение) так,
+     * чтобы галочка «Больше не показывать» скрывала её НАВСЕГДА (флаг в [Prefs], независимо
+     * для каждой плашки — см. Prefs.joinInviteInfoDismissed/joinConnectNoticeDismissed).
+     * Тап по всей строке отмечает галочку — сама CheckBox некликабельна (тот же паттерн, что
+     * row_keep_admin/cb_keep_admin в AdminPermissionsActivity), это просто увеличивает область
+     * попадания пальцем. Обратного пути в интерфейсе нет — как и у соседней плашки советов по
+     * обоям (Prefs.wallpaperAdviceDismissed) — плашка вернётся только если данные приложения
+     * будут сброшены.
+     */
+    private fun setupDismissibleBanner(
+        banner: View, row: View, cb: android.widget.CheckBox,
+        alreadyDismissed: Boolean, onDismiss: () -> Unit
+    ) {
+        if (alreadyDismissed) {
+            banner.visibility = View.GONE
+            return
+        }
+        row.setOnClickListener { cb.isChecked = true }
+        cb.setOnCheckedChangeListener { _, checked ->
+            if (checked) {
+                onDismiss()
+                banner.visibility = View.GONE
+            }
+        }
     }
 
     // ═══ Основной flow ═══
@@ -345,35 +382,37 @@ class JoinChatActivity : SecureActivity() {
                         ?.let { GroupProfileSync.parse(it) }
                         ?: groupProfileParsed
 
-                    if (membersParsed != null) {
-                        // members.txt уже есть (админ его публиковал) — источник истины.
-                        val myEntry = membersParsed!!.participants.firstOrNull { it.userId == myUserId }
-                        if (myEntry?.banned == true) {
-                            showError(getString(R.string.join_err_banned))
-                            return
-                        }
-                        val activeCount = membersParsed!!.participants.count { !it.banned }
-                        val limit = invite.participantLimit
-                        if (myEntry == null && limit != null && activeCount >= limit) {
-                            showError(getString(R.string.join_err_group_full))
-                            return
-                        }
-                    } else {
-                        // members.txt ещё не долетело (задержка реле) — приближённая проверка
-                        // по profiles.txt. Best-effort, не криптографическое принуждение —
-                        // см. ADR_GROUP_CHATS.md, тот же уровень доверия, что у самого инвайта.
-                        val profilesMap = withContext(Dispatchers.IO) {
-                            try {
-                                ProfileSync.pullProfiles(transport, invite.chatPassword)
-                            } catch (_: Throwable) {
-                                emptyMap()
-                            }
-                        }
-                        val limit = invite.participantLimit
-                        if (!profilesMap.containsKey(myUserId) && limit != null && profilesMap.size >= limit) {
-                            showError(getString(R.string.join_err_group_full))
-                            return
-                        }
+                    // Бан — только из members.txt (его больше нигде нет).
+                    if (membersParsed?.participants?.firstOrNull { it.userId == myUserId }?.banned == true) {
+                        showError(getString(R.string.join_err_banned))
+                        return
+                    }
+                    // ⚠️ Ёмкость считаем по ФАКТИЧЕСКОМУ составу беседы, а не по одному
+                    // источнику (§16). Членство самосуверенно: ростер у всех наполняется из
+                    // самоопубликованных слотов profiles.txt (GroupRosterSync), а members.txt —
+                    // ОВЕРЛЕЙ модерации, который законно отстаёт (новичок попадает в него лишь
+                    // когда его заведёт клиент админа, а тот может быть офлайн). Поэтому
+                    // проверка ТОЛЬКО по members.txt систематически недосчитывала людей и
+                    // пускала сверх лимита, а проверка ТОЛЬКО по профилям считала и тех, кто
+                    // уже вышел. Берём объединение: не забаненные из members.txt плюс
+                    // опубликовавшие профиль без left/deleted.
+                    //
+                    // Профили берём из УЖЕ полученного loadAll() — отдельное сетевое чтение
+                    // (прежний pullProfiles в этой ветке) убрано, вход стал на один запрос короче.
+                    val profileIds = withContext(Dispatchers.Default) {
+                        // Домен шифрования профилей — transport.chatId (ровно как в
+                        // ProfileSync.pullProfiles/pushMyProfile), а НЕ invite.channelId,
+                        // которым расшифровываются members.txt/groupprofile.txt выше.
+                        ProfileSync.unionProfileSlots(
+                            allData?.profileSlots ?: emptyList(), invite.chatPassword, transport.chatId
+                        ).filterValues { !it.left && !it.deleted }.keys
+                    }
+                    val roster = HashSet<String>(profileIds)
+                    membersParsed?.participants?.forEach { if (!it.banned) roster.add(it.userId) }
+                    val limit = invite.participantLimit
+                    if (myUserId !in roster && limit != null && roster.size >= limit) {
+                        showError(getString(R.string.join_err_group_full))
+                        return
                     }
 
                     val groupInfoReady = groupProfileParsed?.groupName?.isNotBlank() == true ||
@@ -536,11 +575,65 @@ class JoinChatActivity : SecureActivity() {
                     // Беседы без эфемерных ключей — подтверждать нечего, но версию объявляем.
                     pv = ProfileHandshake.PROTOCOL_VERSION
                 )
-                // Догон: пере-публикуем свой профиль несколько раз (см. publishJoinProfileBurst) —
-                // слот расходится по большему числу реле, и все участники зачисляют вошедшего
-                // быстро, без «приказа обновиться» (членство самосуверенно, GroupRosterSync).
-                publishJoinProfileBurst(invite.channelId, isTor, transport) {
-                    ProfileSync.pushMyProfile(transport, invite.chatPassword, myGroupProfile, prefs.getOrCreateIdentity().first)
+                // ⚠️ ПОДТВЕРЖДАЕМ ПУБЛИКАЦИЮ ДО ОТКРЫТИЯ БЕСЕДЫ (репорт: «первый заход в беседу
+                // очень глючный, первые сообщения с задержкой, как будто попал в беседу раньше
+                // времени»). Ощущение было точным — так и происходило:
+                //
+                //  • профиль публиковался «догоном» на AppScope (publishJoinProfileBurst) и
+                //    сразу же, НЕ дожидаясь результата, открывался экран беседы;
+                //  • то есть человек входил в беседу, когда его слота на реле ещё не было:
+                //    остальные участники его не видели, счётчик и ростер отставали, а админ
+                //    не мог ни зачислить его в members.txt, ни увидеть подпись личности;
+                //  • хуже того, три раунда read-modify-write из фона шли ПАРАЛЛЕЛЬНО с первой
+                //    загрузкой открытой беседы и отбирали у неё те же сокеты к реле — отсюда
+                //    и задержка первых сообщений.
+                //
+                // Тот же принцип, что уже работает в 1:1: сначала убеждаемся чтением, что мой
+                // слот реально лежит на реле, и только потом открываем чат. Взаимность здесь
+                // требовать не с кого (в беседе нет одного собеседника), поэтому условие
+                // готовности одностороннее — но настоящее, а не «отправили и надеемся».
+                setProgress(getString(R.string.join_status_profile))
+                val liveSlots = awaitMySlotLive(
+                    transport, invite.chatPassword, invite.channelId, myGroupProfile
+                )
+                if (liveSlots != null && liveSlots.isNotEmpty()) {
+                    // ⭐ РОСТЕР ИЗ ПОДТВЕРЖДАЮЩЕГО ЧТЕНИЯ — самый свежий снимок канала, какой
+                    // существует на момент входа. Ростер выше строился по снимку, снятому ДО
+                    // моей публикации; сам себя я в нём не терял (applyProfileRoster форсит
+                    // myUserId), но всех, кто опубликовался за время моего входа — терял, и
+                    // до первого тика опроса их не было ни в составе, ни в счётчике. Здесь же
+                    // применяется состояние ПОСЛЕ моей публикации, вместе со свежими
+                    // identity-ключами для TOFU-пиннинга.
+                    //
+                    // Слияние аддитивное (см. GroupRosterSync): участники только добавляются,
+                    // убираются лишь те, кто сам объявил выход, — поэтому неполное чтение
+                    // никого не может «выписать» из беседы. Сеть не трогаем: данные уже
+                    // оплачены подтверждающим чтением.
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            db.chatDao().getById(newGroupChatId)?.let { freshChat ->
+                                GroupRosterSync.applyProfileRoster(
+                                    chat = freshChat,
+                                    signedSlots = liveSlots,
+                                    password = invite.chatPassword,
+                                    participantDao = db.chatParticipantDao(),
+                                    myUserId = prefs.myUserId,
+                                    adminUserId = freshChat.adminUserId,
+                                    pubkeyForUserId = transport::pubkeyForUserId
+                                )
+                            }
+                        }
+                    }
+                } else if (liveSlots == null) {
+                    // Не подтвердилось за отведённые круги — человека дольше не держим:
+                    // беседа уже создана, а публикацию добьёт персистентная очередь, которая
+                    // переживёт и закрытие экрана, и перезапуск приложения.
+                    PublishScheduler.markMyProfileDirty(applicationContext, invite.channelId)
+                    if (isTor) TorSyncWatchdog.reportDeviation(
+                        applicationContext, invite.channelId, "JoinChatActivity.awaitMySlotLive (беседа)",
+                        ProfileSync.lastError
+                            ?: IllegalStateException("слот профиля не подтвердился чтением")
+                    )
                 }
 
                 openChat(newGroupChatId)
@@ -552,6 +645,9 @@ class JoinChatActivity : SecureActivity() {
             setProgress(getString(R.string.join_status_verifying))
             var profilesMap: Map<String, Profile> = emptyMap()
             var partnerProfileFound: Profile? = null
+            // Подтвердился ли взаимный обмен профилями (см. awaitProfileExchange). Нужен ниже,
+            // чтобы не запускать лишний фоновый догон публикации поверх уже доказанного факта.
+            var exchangeConfirmed = false
             val myUserId = prefs.myUserId
             // ⚠️ Bounded retry (см. companion.JOIN_PROFILE_MAX_ATTEMPTS, тот же принцип, что
             // и в групповой ветке выше) — не сохраняем чат/не открываем ChatActivity, пока
@@ -609,37 +705,53 @@ class JoinChatActivity : SecureActivity() {
             // Чтобы такому слоту было откуда взяться, сначала публикуемся сами — до этого
             // момента подтверждать нечего в принципе.
             if (partnerProfileFound != null) {
-                setProgress(getString(R.string.join_status_loading_profile))
-                withContext(Dispatchers.IO) {
-                    runCatching {
-                        ProfileSync.pushMyProfile(
-                            transport, invite.chatPassword,
-                            Profile(
-                                userId = prefs.myUserId,
-                                name = prefs.myName,
-                                tag = prefs.myTag,
-                                avatarBase64 = prefs.myAvatarBase64,
-                                pv = ProfileHandshake.PROTOCOL_VERSION
-                            )
-                        )
-                    }
+                // ⚠️ ПОКАЗЫВАЕМ НАЙДЕННОЕ СРАЗУ (репорт: «имя автора и ава при нахождении не
+                // отображаются в окне ввода кода»). Раньше карточка держалась до подтверждения
+                // взаимного обмена, и всё это время пользователь смотрел на пустой экран с
+                // бесконечным «загружаем» — хотя собеседник УЖЕ найден и его данные уже в руках.
+                //
+                // Требование «профили обязаны обменяться» это не ослабляет: обмен по-прежнему
+                // подтверждается ниже и по-прежнему обязателен, просто он больше не прячет от
+                // пользователя то, что и так известно. Показ — это информация, а не обещание;
+                // карточка обновится свежими данными, как только обмен подтвердится.
+                setProgress(getString(R.string.join_status_profile))
+                withContext(Dispatchers.Main) {
+                    showFoundInfo(
+                        name = partnerProfileFound!!.name,
+                        tag = partnerProfileFound!!.tag,
+                        avatarBase64 = partnerProfileFound!!.avatarBase64,
+                        verified = VerifiedBadge.isVerifiedProfile(partnerProfileFound!!, invite.channelId)
+                    )
+                    triggerFoundPulse()
                 }
-                val mutual = awaitMutualProfileExchange(transport, invite.chatPassword, invite.channelId)
-                if (mutual != null) {
+                val myJoinProfile = Profile(
+                    userId = prefs.myUserId,
+                    name = prefs.myName,
+                    tag = prefs.myTag,
+                    avatarBase64 = prefs.myAvatarBase64,
+                    pv = ProfileHandshake.PROTOCOL_VERSION
+                )
+                val live = awaitProfileExchange(
+                    transport, invite.chatPassword, invite.channelId, myJoinProfile
+                )
+                exchangeConfirmed = live != null
+                val shown = live?.partner
+                if (shown != null && shown != partnerProfileFound) {
+                    // Обмен подтверждён и чтение принесло более свежую копию — обновляем
+                    // карточку без повторного «пульса» (он уже был при первом показе).
                     withContext(Dispatchers.Main) {
                         showFoundInfo(
-                            name = mutual.name.ifBlank { partnerProfileFound!!.name },
-                            tag = mutual.tag ?: partnerProfileFound!!.tag,
-                            avatarBase64 = mutual.avatarBase64 ?: partnerProfileFound!!.avatarBase64,
-                            verified = VerifiedBadge.isVerifiedProfile(mutual, invite.channelId)
+                            name = shown.name.ifBlank { partnerProfileFound!!.name },
+                            tag = shown.tag ?: partnerProfileFound!!.tag,
+                            avatarBase64 = shown.avatarBase64 ?: partnerProfileFound!!.avatarBase64,
+                            verified = VerifiedBadge.isVerifiedProfile(shown, invite.channelId)
                         )
-                        triggerFoundPulse()
                     }
-                    partnerProfileFound = mutual
+                    partnerProfileFound = shown
                 }
-                // Не подтвердилось — карточку НЕ показываем и молча идём дальше: собеседник
-                // мог просто не открывать приложение. Чат создаётся, профили сойдутся позже
-                // сами (ChatActivity.doSyncProfilesOnce + сторож публикации).
+                // Не подтвердилось — идём дальше молча: собеседник мог свернуть приложение.
+                // Чат создаётся, публикацию добьёт догон ниже (publishJoinProfileBurst) и
+                // персистентная очередь, а его ответная публикация придёт при первом же входе.
             }
 
             // 4. Локальная запись чата.
@@ -677,9 +789,12 @@ class JoinChatActivity : SecureActivity() {
                 // примет меня за старого клиента и включит forward secrecy до подтверждения.
                 pv = ProfileHandshake.PROTOCOL_VERSION
             )
-            // Догон: пере-публикуем свой профиль несколько раз (см. publishJoinProfileBurst),
-            // чтобы слот разошёлся по реле и собеседник подхватил ник/аву быстро.
-            publishJoinProfileBurst(invite.channelId, isTor, transport) {
+            // Догон нужен ТОЛЬКО если обмен выше не подтвердился. Раньше он запускался
+            // безусловно — то есть три фоновых read-modify-write уходили к реле ровно в тот
+            // момент, когда открывающийся чат делал свою первую загрузку, и отбирали у неё
+            // сокеты. Если awaitProfileExchange уже прочитал мой слот с реле, публиковать
+            // повторно нечего: доказательство получено, а сеть лучше отдать открытию чата.
+            if (!exchangeConfirmed) publishJoinProfileBurst(invite.channelId, isTor, transport) {
                 val ok = ProfileSync.pushMyProfile(transport, invite.chatPassword, myProfile)
                 if (!ok && isTor) {
                     // ProfileSync.lastError — реальная причина, проглоченная внутри
@@ -750,49 +865,166 @@ class JoinChatActivity : SecureActivity() {
      * ДОПОЛНИТЕЛЬНО поверх него — раунды идут почти встык, а не размазаны на ~9с простоя.
      */
     /**
-     * Ждёт ВЗАИМНОГО обмена профилями и возвращает профиль собеседника, если он подтверждён.
+     * Ждёт, пока МОЙ слот profiles.txt не станет читаемым с реле, и возвращает слоты ТОГО
+     * САМОГО чтения, которое это подтвердило. Односторонняя проверка готовности — для бесед,
+     * где взаимность требовать не с кого.
      *
-     * Подтверждением считается слот profiles.txt, подписанный НЕ мной, в котором лежит МОЙ
-     * профиль с моим текущим именем. Каждый участник публикует карту профилей целиком, поэтому
-     * попадание меня в ЧУЖОЙ слот означает ровно одно: собеседник меня прочитал. Свой слот
-     * отсеиваем по подписи ([ChatTransport.myWirePubkey]) — иначе я подтверждал бы сам себя.
+     * Зачем именно чтением, а не «публикация вернула true»: запись и чтение в Nostr
+     * несимметричны. Публикация отпускает отправителя по кворуму в два реле, и этого хватает,
+     * чтобы вернуть true, — но не гарантирует, что слот увидят остальные участники, которым
+     * отвечают ДРУГИЕ узлы. Прочитанный обратно слот такую гарантию даёт: если он читается
+     * у меня, он прочитается и у них.
      *
-     * @return профиль собеседника из того же чтения, либо null, если за отведённое время
-     *         взаимность не подтвердилась (тогда карточку показывать нельзя).
+     * Зачем возвращать слоты, а не просто true (репорт: «человек должен попадать в беседу
+     * только тогда, когда беседа про него уже всё поняла»): подтверждающее чтение — самый
+     * свежий снимок канала на момент входа. Ростер, построенный по нему, отражает состояние
+     * ПОСЛЕ моей публикации, а не до неё, и подхватывает всех, кто опубликовался, пока я
+     * входил. Данные уже оплачены — дополнительных запросов к реле ноль.
+     *
+     * Про скорость. Публикация повторяется ТОЛЬКО если предыдущая провалилась. Если запись
+     * прошла, а чтение ещё не догнало (слот расходится по реле не мгновенно), правильный ответ —
+     * подождать и перечитать, а не писать заново: повторная запись это полный
+     * read-modify-write, то есть несколько лишних секунд на ровном месте. Паузы растущие:
+     * первая короткая, потому что типичная задержка распространения — сотни миллисекунд, и
+     * ждать секунду там незачем.
+     *
+     * @return слоты подтверждающего чтения, либо null, если за отведённые круги слот так и не
+     *         прочитался. Для транспорта без подписи событий (локальный/Bluetooth) отличить
+     *         свой слот от чужого нечем — там засчитывается успешная запись (§17).
      */
-    private suspend fun awaitMutualProfileExchange(
+    private suspend fun awaitMySlotLive(
         transport: ChatTransport,
         password: String,
-        chatId: String
-    ): Profile? {
+        chatId: String,
+        myProfile: Profile
+    ): List<ProfileSlotSigned>? {
         val myUserId = prefs.myUserId
         val myName = prefs.myName
+        val myAvatar = prefs.myAvatarBase64
         val myPubkey = transport.myWirePubkey
-        for (attempt in 0 until JOIN_MUTUAL_MAX_ATTEMPTS) {
-            val all = withContext(Dispatchers.IO) {
-                runCatching { transport.loadAll() }.getOrNull()
-            }
-            if (all != null) {
-                val slots = all.profileSlotsSigned
-                var partner: Profile? = null
-                var sawMe = false
-                for (slot in slots) {
-                    val parsed = withContext(Dispatchers.IO) {
-                        runCatching { ProfileSync.parseProfiles(slot.content, password, chatId) }
-                            .getOrDefault(emptyMap())
-                    }
-                    parsed.values.firstOrNull { it.userId != myUserId && it.name.isNotBlank() }
-                        ?.let { if (partner == null) partner = it }
-                    // Мой собственный слот подтверждением быть не может.
-                    if (myPubkey != null && slot.signerPubkey.equals(myPubkey, ignoreCase = true)) continue
-                    val meInForeignSlot = parsed[myUserId] ?: continue
-                    // Сверяем имя: устаревшая копия меня (например, из прошлой сессии с другим
-                    // ником) не должна засчитываться как «он получил мои АКТУАЛЬНЫЕ данные».
-                    if (myName.isBlank() || meInForeignSlot.name == myName) sawMe = true
+        var published = false
+        for (attempt in 0 until JOIN_SELF_LIVE_ATTEMPTS) {
+            if (!published) {
+                published = withContext(Dispatchers.IO) {
+                    runCatching {
+                        ProfileSync.pushMyProfile(
+                            transport, password, myProfile, prefs.getOrCreateIdentity().first
+                        )
+                    }.getOrDefault(false)
                 }
-                if (sawMe && partner != null) return partner
             }
-            if (attempt < JOIN_MUTUAL_MAX_ATTEMPTS - 1) delay(JOIN_MUTUAL_RETRY_DELAY_MS)
+            if (myPubkey == null) return if (published) emptyList() else null
+            val slots = withContext(Dispatchers.IO) {
+                runCatching { transport.loadFileSlotsSigned(ProfileSync.FILE_NAME) }
+                    .getOrDefault(emptyList())
+            }
+            val mine = slots.firstOrNull { it.signerPubkey.equals(myPubkey, ignoreCase = true) }
+            if (mine != null) {
+                val parsed = withContext(Dispatchers.IO) {
+                    runCatching { ProfileSync.parseProfiles(mine.content, password, chatId) }
+                        .getOrDefault(emptyMap())
+                }
+                // Сверяем СОДЕРЖИМОЕ, а не факт наличия слота: слот мог остаться от прошлого
+                // захода с другим ником или аватаром, и участники увидели бы устаревшего меня.
+                if (ProfileExchange.slotCarriesMyProfile(parsed, myUserId, myName, myAvatar)) return slots
+            }
+            if (attempt < JOIN_SELF_LIVE_ATTEMPTS - 1) {
+                delay(JOIN_SELF_LIVE_BACKOFF_MS[minOf(attempt, JOIN_SELF_LIVE_BACKOFF_MS.size - 1)])
+            }
+        }
+        return null
+    }
+
+    /** Результат [awaitProfileExchange]: null снаружи = обмен не подтвердился. */
+    private data class ExchangeResult(val partner: Profile?)
+
+    /**
+     * Ждёт ВЗАИМНОГО обмена профилями: мой слот читается с реле И собеседник уже переопубликовал
+     * свой слот с моими данными.
+     *
+     * ⚠️ ПЕРЕПИСАНО (репорт: «профиль ищет безумно долго»). Требование взаимности осталось —
+     * оно правильное, — но прежняя реализация делала его недостижимым и очень дорогим:
+     *
+     *  1. НЕДОСТИЖИМОСТЬ. Ответную публикацию (свой слот с моими данными внутри) умел делать
+     *     ТОЛЬКО открытый экран чата: список чатов профили лишь читал. Создатель, который отдал
+     *     ATR-код и ждёт в списке, такого слота не писал никогда — ожидание гарантированно
+     *     выбирало весь лимит попыток и заканчивалось ничем. Починено НЕ здесь, а на его
+     *     стороне: список чатов теперь подтверждает получение профиля сам (см. ProfileExchange).
+     *  2. ЦЕНА ПОПЫТКИ. Каждый круг звал transport.loadAll() — ДВА окна по 1000 событий (вся
+     *     история сообщений плюс все чанки медиа), потом Argon2 на каждый слот, потом пауза
+     *     2.5с. Двенадцать кругов — минуты ожидания и десятки мегабайт ради проверки, которая
+     *     всё равно не могла пройти. Теперь запрос ТОЧЕЧНЫЙ: только файл профилей, по тегу #d
+     *     (см. ChatTransport.loadFileSlotsSigned) — те же несколько килобайт, что и обычное
+     *     чтение профилей.
+     *
+     * Что считается успехом (оба условия обязательны):
+     *  • МОЙ слот, подписанный МОИМ ключом, лежит на реле и несёт мои актуальные ник и аватар —
+     *    иначе подтверждать собеседнику нечего;
+     *  • в ЧУЖОМ слоте лежит мой актуальный профиль — это и есть доказательство, что собеседник
+     *    меня прочитал. Свой слот таким доказательством быть не может, поэтому слоты и
+     *    различаются по подписи.
+     *
+     * Публикация повторяется, пока мой слот не подтверждён чтением; как только подтверждён —
+     * повторять нечего, дальше ждём ответа собеседника.
+     */
+    private suspend fun awaitProfileExchange(
+        transport: ChatTransport,
+        password: String,
+        chatId: String,
+        myProfile: Profile
+    ): ExchangeResult? {
+        val myUserId = prefs.myUserId
+        val myName = prefs.myName
+        val myAvatar = prefs.myAvatarBase64
+        val myPubkey = transport.myWirePubkey
+        var mineLive = false
+        for (attempt in 0 until JOIN_EXCHANGE_ATTEMPTS) {
+            // Пока мой слот не подтверждён чтением — публикуемся заново. Публикация в Nostr
+            // требует кворума реле и падает заметно чаще чтения, поэтому настойчивость нужна
+            // именно здесь, а не в ожидании ответа (см. NostrTransport.publishToAnyRelay).
+            if (!mineLive) {
+                val pushed = withContext(Dispatchers.IO) {
+                    runCatching { ProfileSync.pushMyProfile(transport, password, myProfile) }
+                        .getOrDefault(false)
+                }
+                if (!pushed && transport.useTor) {
+                    TorSyncWatchdog.reportDeviation(
+                        applicationContext, chatId, "JoinChatActivity.awaitProfileExchange.pushMyProfile",
+                        ProfileSync.lastError
+                            ?: IllegalStateException("pushMyProfile вернул false, но lastError пуст")
+                    )
+                }
+            }
+            val slots = withContext(Dispatchers.IO) {
+                runCatching { transport.loadFileSlotsSigned(ProfileSync.FILE_NAME) }
+                    .getOrDefault(emptyList())
+            }
+            var mutual = false
+            var partner: Profile? = null
+            for (slot in slots) {
+                val parsed = withContext(Dispatchers.IO) {
+                    runCatching { ProfileSync.parseProfiles(slot.content, password, chatId) }
+                        .getOrDefault(emptyMap())
+                }
+                if (parsed.isEmpty()) continue
+                val isMine = myPubkey != null && slot.signerPubkey.equals(myPubkey, ignoreCase = true)
+                if (isMine) {
+                    // Сверяем СОДЕРЖИМОЕ, а не факт наличия слота: слот мог остаться от прошлой
+                    // сессии с другим ником или аватаром, и тогда собеседник получил бы
+                    // устаревшие данные — ровно то, от чего эта проверка и защищает.
+                    if (ProfileExchange.slotCarriesMyProfile(parsed, myUserId, myName, myAvatar)) mineLive = true
+                } else {
+                    if (ProfileExchange.slotCarriesMyProfile(parsed, myUserId, myName, myAvatar)) mutual = true
+                    if (partner == null) {
+                        partner = parsed.values.firstOrNull { it.userId != myUserId && it.name.isNotBlank() }
+                    }
+                }
+            }
+            // Транспорт без подписи событий (локальный чат, Bluetooth): слот всегда один,
+            // различать авторов нечем и подтверждать взаимность не с кем (§17).
+            if (myPubkey == null) return ExchangeResult(partner)
+            if (mineLive && mutual && partner != null) return ExchangeResult(partner)
+            if (attempt < JOIN_EXCHANGE_ATTEMPTS - 1) delay(JOIN_EXCHANGE_RETRY_DELAY_MS)
         }
         return null
     }
@@ -1058,14 +1290,38 @@ class JoinChatActivity : SecureActivity() {
         // 6 попыток по 2.5с ≈ 15с — тот же порядок величины, что и остальные bounded-retry
         // окна в проекте (см. GroupStatsActivity/UserStatsActivity.FIRST_LOAD_MAX_ATTEMPTS).
         /**
-         * Ожидание ВЗАИМНОГО обмена профилями (см. awaitMutualProfileExchange). Дольше, чем
-         * односторонний поиск собеседника: теперь нужен не только его профиль, но и ответная
-         * публикация с моими данными — а второй телефон мог опрашивать реле как раз в этот
-         * момент. 12 × 2.5с ≈ 30 секунд.
+         * Сколько кругов «опубликоваться и перечитать слоты» ждать взаимного обмена
+         * (см. awaitProfileExchange). Круг — это точечное чтение файла профилей плюс, пока мой
+         * слот не подтверждён, публикация; несколько секунд сетевого времени сам по себе.
+         *
+         * Восемь кругов покрывают худший реальный случай: собеседник держит открытым СПИСОК
+         * чатов, его ответная публикация приходит с ближайшим тиком списка (~8с) плюс время
+         * самой записи. Если он вообще не в приложении, взаимность не подтвердится ничем —
+         * ждать дольше бессмысленно, чат создаётся и профили сойдутся при первом же его входе.
+         *
+         * Пришло на смену JOIN_MUTUAL_MAX_ATTEMPTS = 12 × 2.5с на loadAll() — разбор, чем то
+         * ожидание было плохо, в докстринге awaitProfileExchange.
          */
-        const val JOIN_MUTUAL_MAX_ATTEMPTS = 12
-        /** Пауза между проверками взаимности. Совпадает с ритмом обычного поиска профиля. */
-        const val JOIN_MUTUAL_RETRY_DELAY_MS = 2_500L
+        /**
+         * Сколько кругов «опубликоваться и перечитать свой слот» ждать при входе в БЕСЕДУ
+         * (см. awaitMySlotLive). Меньше, чем у 1:1: там ждут ещё и ответной публикации
+         * собеседника, а здесь подтверждение зависит только от моей записи и приходит,
+         * как правило, с первого круга. Не подтвердилось за четыре — не держим человека
+         * на экране, беседа открывается, а публикацию добивает персистентная очередь.
+         */
+        const val JOIN_SELF_LIVE_ATTEMPTS = 4
+        /**
+         * Растущие паузы между кругами подтверждения (см. awaitMySlotLive). Первая короткая:
+         * типичная задержка распространения только что опубликованного слота по реле —
+         * сотни миллисекунд, и ждать там секунду значит на ровном месте держать человека на
+         * экране входа. Дальше паузы растут: если за полсекунды не разошлось, дело не в
+         * распространении, и долбить реле чаще смысла нет.
+         */
+        val JOIN_SELF_LIVE_BACKOFF_MS = longArrayOf(400L, 900L, 1_800L)
+
+        const val JOIN_EXCHANGE_ATTEMPTS = 8
+        /** Пауза между кругами. Короткая: сам круг и так занимает сетевое время. */
+        const val JOIN_EXCHANGE_RETRY_DELAY_MS = 900L
 
         const val JOIN_PROFILE_MAX_ATTEMPTS = 6
         const val JOIN_PROFILE_RETRY_DELAY_MS = 2_500L

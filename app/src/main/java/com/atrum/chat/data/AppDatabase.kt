@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * проход гарантирует что ни одна запись не хранит приватный ключ в БД.
  * init-проверка в Chat убрана — миграция надёжнее аварийного краша.
  */
-@Database(entities = [Chat::class, ChatParticipant::class, MuteHistoryEntry::class, GroupEventEntry::class], version = 25, exportSchema = false)
+@Database(entities = [Chat::class, ChatParticipant::class, MuteHistoryEntry::class, GroupEventEntry::class], version = 27, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun chatDao(): ChatDao
@@ -82,6 +82,30 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_24_25 = object : Migration(24, 25) {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE chats ADD COLUMN resilientMedia INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * Версия 26: метка времени последнего решения о модерации участника
+         * (ChatParticipant.modTs) — без неё разбан и досрочный размут невозможны в
+         * беседе, где слоты публикует не только главный (см. MembersSync.mergeSlots).
+         * Аддитивно: колонка с дефолтом 0, существующие записи не затронуты — старые
+         * решения без метки сливаются ровно как раньше.
+         */
+        private val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE chat_participants ADD COLUMN modTs INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * Версия 27: локальный ник собеседника в 1:1-чате (Chat.partnerNickname, см. doc-
+         * комментарий у поля). Аддитивно: новая NULL-колонка, старые чаты не затронуты —
+         * у всех ника нет, показывается как раньше синканное имя (§17).
+         */
+        private val MIGRATION_26_27 = object : Migration(26, 27) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE chats ADD COLUMN partnerNickname TEXT")
             }
         }
 
@@ -303,7 +327,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "atrum.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }

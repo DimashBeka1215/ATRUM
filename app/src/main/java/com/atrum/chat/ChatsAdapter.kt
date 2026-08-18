@@ -23,7 +23,10 @@ import java.util.Locale
 class ChatsAdapter(
     private var chats: List<Chat> = emptyList(),
     private val onClick: (Chat) -> Unit,
-    private val onLongClick: (Chat) -> Unit
+    private val onLongClick: (Chat) -> Unit,
+    /** Тап по бейджу «@N» — открыть экран упоминаний беседы (см. MentionsActivity).
+     *  null → бейдж некликабельный, поведение как раньше. */
+    private val onMentionsClick: ((Chat) -> Unit)? = null
 ) : RecyclerView.Adapter<ChatsAdapter.VH>() {
 
     private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -68,6 +71,7 @@ class ChatsAdapter(
                     a.isGroup == b.isGroup &&
                     a.chatId == b.chatId &&
                     a.partnerName == b.partnerName &&
+                    a.partnerNickname == b.partnerNickname &&
                     a.partnerTag == b.partnerTag &&
                     a.groupName == b.groupName &&
                     a.lastMessage == b.lastMessage &&
@@ -92,7 +96,7 @@ class ChatsAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val chat = chats[position]
-        holder.bind(chat, formatTime(chat.lastTimeMs), searchQuery)
+        holder.bind(chat, formatTime(chat.lastTimeMs), searchQuery, onMentionsClick)
         holder.itemView.setOnClickListener { onClick(chat) }
         holder.itemView.setOnLongClickListener {
             onLongClick(chat); true
@@ -124,7 +128,17 @@ class ChatsAdapter(
         private val pinIcon: View = itemView.findViewById(R.id.iv_pin)
         private val verifiedBadge: VerifiedBadgeView = itemView.findViewById(R.id.verified_badge_list)
 
-        fun bind(chat: Chat, formattedTime: String, query: String = "") {
+        /**
+         * ⚠️ [onMentionsClick] приходит ПАРАМЕТРОМ, а не читается из адаптера напрямую:
+         * VH — вложенный (не inner) класс, поэтому свойства конструктора ChatsAdapter
+         * отсюда не видны (сборка падала на «Unresolved reference 'onMentionsClick'»).
+         */
+        fun bind(
+            chat: Chat,
+            formattedTime: String,
+            query: String = "",
+            onMentionsClick: ((Chat) -> Unit)? = null
+        ) {
             time.text = formattedTime
             pinIcon.visibility = if (chat.isPinned) View.VISIBLE else View.GONE
             // Галочка верификации у ника собеседника (только 1:1; partnerVerified считается
@@ -169,8 +183,9 @@ class ChatsAdapter(
                 avatarIcon.setImageResource(R.drawable.ic_close) // Используем ic_close как замену ✕
                 initial.text = ""
                 initial.setBackgroundResource(R.drawable.bg_avatar_deleted)
-                // Имя зачёркнуто — профиль был удалён
-                name.text = chat.partnerName.ifBlank { "?" }
+                // Имя зачёркнуто — профиль был удалён. Локальный ник (если задан) всё ещё
+                // осмыслен — это МОЙ ярлык для этого человека, профиль удалился, а не ник.
+                name.text = chat.displayName().ifBlank { "?" }
                 name.setTextColor(
                     itemView.context.getColor(R.color.text_secondary)
                 )
@@ -192,12 +207,12 @@ class ChatsAdapter(
                 name.setTextColor(
                     itemView.context.getColor(R.color.text_primary)
                 )
-                val effectiveName = if (chat.isGroup) {
-                    chat.displayName()
-                } else if (!chat.partnerTag.isNullOrBlank()) {
-                    "${chat.partnerName} ${chat.partnerTag}"
+                // chat.displayName() уже отдаёт приоритет локальному нику собеседника
+                // (Chat.partnerNickname) над синканным partnerName для 1:1 — см. Chat.kt.
+                val effectiveName = if (!chat.isGroup && !chat.partnerTag.isNullOrBlank()) {
+                    "${chat.displayName()} ${chat.partnerTag}"
                 } else {
-                    chat.partnerName
+                    chat.displayName()
                 }
                 val displayText = effectiveName.ifBlank { "?" }
                 name.text = highlightQuery(displayText, query,
@@ -227,8 +242,18 @@ class ChatsAdapter(
             if (mentionCount > 0) {
                 mentionBadge.text = "@" + (if (mentionCount > 99) "99+" else mentionCount.toString())
                 mentionBadge.visibility = View.VISIBLE
+                // Бейдж — вход в экран упоминаний. Тап по нему НЕ должен открывать чат,
+                // поэтому обработчик свой; отсутствие колбэка оставляет прежнее поведение.
+                if (onMentionsClick != null) {
+                    mentionBadge.isClickable = true
+                    mentionBadge.setOnClickListener { onMentionsClick.invoke(chat) }
+                } else {
+                    mentionBadge.isClickable = false
+                    mentionBadge.setOnClickListener(null)
+                }
             } else {
                 mentionBadge.visibility = View.GONE
+                mentionBadge.setOnClickListener(null)
             }
 
             if (chat.unreadCount > 0) {

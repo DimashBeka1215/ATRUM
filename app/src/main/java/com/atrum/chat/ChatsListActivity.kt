@@ -40,8 +40,17 @@ class ChatsListActivity : SecureActivity() {
     private lateinit var db: AppDatabase
     private val adapter = ChatsAdapter(
         onClick = { chat -> openChat(chat) },
-        onLongClick = { chat -> showChatMenu(chat) }
+        onLongClick = { chat -> showChatMenu(chat) },
+        onMentionsClick = { chat -> openMentions(chat) }
     )
+
+    /** Экран упоминаний беседы — вход по тапу на бейдж «@N» (мокап одобрен). */
+    private fun openMentions(chat: Chat) {
+        startActivity(
+            android.content.Intent(this, MentionsActivity::class.java)
+                .putExtra(MentionsActivity.EXTRA_CHAT_ROOM_ID, chat.id)
+        )
+    }
 
     /** Полный список чатов из базы — для фильтрации при поиске */
     private var allChats: List<Chat> = emptyList()
@@ -336,9 +345,40 @@ class ChatsListActivity : SecureActivity() {
                         val nameToSave = partner.name
                         val tagToSave = if (!partner.tag.isNullOrBlank()) partner.tag else fresh.partnerTag
                         val avatarToSave = if (!partner.avatarBase64.isNullOrBlank()) partner.avatarBase64 else fresh.partnerAvatarBase64
-                        if (nameToSave != fresh.partnerName || tagToSave != fresh.partnerTag ||
-                            avatarToSave != fresh.partnerAvatarBase64) {
+                        val profileReallyChanged = nameToSave != fresh.partnerName ||
+                            tagToSave != fresh.partnerTag ||
+                            avatarToSave != fresh.partnerAvatarBase64
+                        if (profileReallyChanged) {
                             db.chatDao().updatePartnerProfile(chatId, nameToSave, tagToSave, avatarToSave)
+                            // ⚡ МГНОВЕННАЯ ОТВЕТНАЯ ПУБЛИКАЦИЯ (репорт: «у автора моя аватарка
+                            // появляется быстро, а у меня поиск всё ещё долгий»). Асимметрия была
+                            // именно здесь: читающая сторона узнаёт о собеседнике из живого стрима
+                            // (мгновенно), а ответную публикацию делал только 8-секундный опрос —
+                            // и вошедший ждал этот такт плюс время самой записи, прежде чем его
+                            // экран мог засчитать взаимный обмен.
+                            //
+                            // Дёргаем ТОЛЬКО когда профиль собеседника реально изменился (появился
+                            // впервые, сменил ник или аватар). Presence-heartbeat меняет чужой слот
+                            // каждые ~5 секунд, но ни ника, ни аватара не трогает — сюда он не
+                            // попадает, лишних запросов и публикаций нет. Сам ackPeersIfNeeded ещё
+                            // и самоограничен: если мой слот уже несёт актуальную копию, он молча
+                            // ничего не делает (см. ProfileExchange).
+                            runCatching {
+                                val signed = api.loadFileSlotsSigned(ProfileSync.FILE_NAME)
+                                ProfileExchange.ackPeersIfNeeded(
+                                    api = api,
+                                    password = password,
+                                    myUserId = prefs.myUserId,
+                                    signedSlots = signed,
+                                    knownProfiles = all,
+                                    myName = prefs.myName,
+                                    myTag = prefs.myTag,
+                                    myAvatarBase64 = prefs.myAvatarBase64,
+                                    myIdentityPubKey = prefs.myIdentityPubKey,
+                                    protocolVersion = ProfileHandshake.PROTOCOL_VERSION,
+                                    identityPriv = prefs.getOrCreateIdentity().first
+                                )
+                            }
                         }
                         // Единый dev-щит и в СПИСКЕ (без захода в чат): isVerifiedDev по identity-
                         // подписи — тот же механизм, что в беседах и ChatActivity. Неподделываемо
@@ -399,7 +439,7 @@ class ChatsListActivity : SecureActivity() {
                         val dec = CryptoHelper.decrypt(line, password, chat.chatId) ?: continue
                         val parsed = Message.fromDecrypted(dec, myUserId, myName, aliases)
                         if (MentionUtil.ENABLED && chat.isGroup && !parsed.isSelf &&
-                            MentionUtil.mentionsMe(parsed.text, myTag, myName)) {
+                            MentionUtil.mentionsMeAny(parsed.text, myUserId, myTag, myName)) {
                             if (parsed.msgId.isNotBlank()) mentionIds.add(parsed.msgId)
                         }
                         if (!parsed.isSelf && parsed.sender.isNotEmpty()) cnt++
@@ -418,13 +458,20 @@ class ChatsListActivity : SecureActivity() {
                     val lastDec = CryptoHelper.decrypt(lines.last(), password, chat.chatId)
                     if (lastDec != null) {
                         val pm = Message.fromDecrypted(lastDec, myUserId, myName, aliases)
+                        // ⚠️ Без имени упомянутого подставлять некуда (это фоновый скан, не
+                        // экран с профилями) — берём Message.stripMentionMarkers (см. её доку:
+                        // «для превью в списке чатов... где подставлять имена не из чего»),
+                        // а не сырой pm.text: иначе в превью тянется технический мусор метки
+                        // (репорт: «технический бред» после тега в других UI-местах — тот же
+                        // класс бага).
+                        val cleanText = Message.stripMentionMarkers(pm.text)
                         val body = when {
-                            pm.isImage && pm.text.isBlank() -> getString(R.string.msg_preview_photo)
-                            pm.isImage -> "${getString(R.string.msg_preview_photo)} ${pm.text}"
+                            pm.isImage && cleanText.isBlank() -> getString(R.string.msg_preview_photo)
+                            pm.isImage -> "${getString(R.string.msg_preview_photo)} $cleanText"
                             pm.isVoice -> getString(R.string.msg_preview_voice)
                             pm.isSticker -> getString(R.string.msg_preview_sticker)
-                            pm.isReply -> getString(R.string.msg_preview_reply_format, pm.text)
-                            else -> pm.text
+                            pm.isReply -> getString(R.string.msg_preview_reply_format, cleanText)
+                            else -> cleanText
                         }
                         val preview = (if (pm.isSelf) "Вы: $body" else body).take(80)
                         if (preview != chat.lastMessage) db.chatDao().updatePreview(chat.id, preview, chat.lastTimeMs)
@@ -695,6 +742,30 @@ class ChatsListActivity : SecureActivity() {
                     }
                 }
             }
+            // ⭐ ОТВЕТНАЯ СТОРОНА ОБМЕНА ПРОФИЛЯМИ (см. ProfileExchange — там же разбор, почему
+            // без этого обмен был недостижим). Переопубликовать свой слот умел только открытый
+            // экран чата, поэтому создатель, который отдал ATR-код и ждёт в СПИСКЕ, никогда не
+            // подтверждал получение профиля вошедшего: тот видел собеседника, а обратно его
+            // данные уходили в пустоту до первого открытия чата.
+            //
+            // Публикуем ТОЛЬКО когда мой слот действительно не содержит актуальной копии
+            // собеседника — как только содержит, условие перестаёт выполняться само. Данные
+            // этого же чтения, своих сетевых циклов не заводим (§1).
+            runCatching {
+                ProfileExchange.ackPeersIfNeeded(
+                    api = api,
+                    password = chatPassword,
+                    myUserId = myUserId,
+                    signedSlots = all.profileSlotsSigned,
+                    knownProfiles = parsedProfiles,
+                    myName = myName,
+                    myTag = prefs.myTag,
+                    myAvatarBase64 = prefs.myAvatarBase64,
+                    myIdentityPubKey = prefs.myIdentityPubKey,
+                    protocolVersion = ProfileHandshake.PROTOCOL_VERSION,
+                    identityPriv = prefs.getOrCreateIdentity().first
+                )
+            }
             ephPub
         }
 
@@ -716,7 +787,7 @@ class ChatsListActivity : SecureActivity() {
                 val decrypted = CryptoHelper.decrypt(line, chatPassword, chat.chatId) ?: continue
                 val parsed = Message.fromDecrypted(decrypted, myUserId, myName, aliases)
                 if (MentionUtil.ENABLED && chat.isGroup && !parsed.isSelf &&
-                    MentionUtil.mentionsMe(parsed.text, myTag, myName)) {
+                    MentionUtil.mentionsMeAny(parsed.text, myUserId, myTag, myName)) {
                     if (parsed.msgId.isNotBlank()) mentionIds.add(parsed.msgId)
                 }
                 if (!parsed.isSelf && parsed.sender.isNotEmpty()) unreadFromOthers++
@@ -733,13 +804,16 @@ class ChatsListActivity : SecureActivity() {
             val lastDecrypted = CryptoHelper.decrypt(lines.last(), chatPassword, chat.chatId)
             if (lastDecrypted != null) {
                 val parsed = Message.fromDecrypted(lastDecrypted, myUserId, myName, aliases)
+                // ⚠️ См. аналогичный фикс выше по файлу: превью — не место для сырых меток
+                // упоминаний (Message.stripMentionMarkers, а не parsed.text напрямую).
+                val cleanPreviewText = Message.stripMentionMarkers(parsed.text)
                 val previewBody = when {
-                    parsed.isImage && parsed.text.isBlank() -> getString(R.string.msg_preview_photo)
-                    parsed.isImage -> "${getString(R.string.msg_preview_photo)} ${parsed.text}"
+                    parsed.isImage && cleanPreviewText.isBlank() -> getString(R.string.msg_preview_photo)
+                    parsed.isImage -> "${getString(R.string.msg_preview_photo)} $cleanPreviewText"
                     parsed.isVoice -> getString(R.string.msg_preview_voice)
                     parsed.isSticker -> getString(R.string.msg_preview_sticker)
-                    parsed.isReply -> getString(R.string.msg_preview_reply_format, parsed.text)
-                    else -> parsed.text
+                    parsed.isReply -> getString(R.string.msg_preview_reply_format, cleanPreviewText)
+                    else -> cleanPreviewText
                 }
                 val preview = if (parsed.isSelf) "Вы: $previewBody" else previewBody
                 db.chatDao().updatePreview(
@@ -834,6 +908,15 @@ class ChatsListActivity : SecureActivity() {
                     togglePin(chat)
                 })
 
+                // Локальный ник — только 1:1 (репорт: «собеседника в ЛС нельзя переименовать»,
+                // см. Chat.partnerNickname). У групп своё переименование — админом, внутри
+                // чата (PartnerProfileActivity.renameGroupReal) — здесь не дублируем.
+                if (!chat.isGroup && !chat.isFavorites && !chat.isSystemNotifications) {
+                    add(NeonDialog.Item(getString(R.string.action_rename_contact)) {
+                        renamePartnerNickname(chat)
+                    })
+                }
+
                 // BT-чат — локальный по Bluetooth: присоединение по приглашению невозможно,
                 // пункт «Поделиться приглашением» не показываем вовсе.
                 val isBtChat = prefs.getChatToken(chat.chatId) == BluetoothTransport.BT_TOKEN
@@ -864,6 +947,33 @@ class ChatsListActivity : SecureActivity() {
                 db.chatDao().updatePinned(chat.id, !chat.isPinned)
             }
         }
+    }
+
+    /**
+     * Диалог «Переименовать» (мокап одобрен) — задаёт [Chat.partnerNickname] для 1:1-чата.
+     * Пустое значение = сброс (снова показывается синканное имя партнёра). Пишем ТОЛЬКО
+     * partnerNickname — partnerName не трогаем, авто-синк профиля продолжает обновлять его
+     * в фоне как раньше (см. doc-комментарий у поля); список чатов перерисуется сам через
+     * observeAll()-Flow, отдельно обновлять UI здесь не нужно (тот же паттерн, что togglePin).
+     */
+    private fun renamePartnerNickname(chat: Chat) {
+        NeonDialog.showEdit(
+            ctx = this,
+            title = getString(R.string.rename_contact_dialog_title),
+            subtitle = getString(R.string.rename_contact_dialog_subtitle),
+            initialText = chat.partnerNickname ?: "",
+            positiveText = getString(R.string.btn_save),
+            negativeText = getString(R.string.btn_cancel),
+            validator = { !ZalgoFilter.containsZalgo(it) },
+            onPositive = { newNickname ->
+                val trimmed = newNickname.trim()
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) {
+                        db.chatDao().updatePartnerNickname(chat.id, trimmed.ifEmpty { null })
+                    }
+                }
+            }
+        )
     }
 
     /**

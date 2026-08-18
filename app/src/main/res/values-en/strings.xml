@@ -143,6 +143,8 @@
     <string name="join_chat_password_label">Invite code</string>
     <string name="join_chat_password_hint">Paste code (ATRM…)</string>
     <string name="join_chat_info">The invite code (ATRM…) must be received from a chat participant. It is not stored on any server.</string>
+    <string name="join_chat_connect_notice">The first connection can sometimes take a while — that\'s normal. ATRUM has no central server: messages travel through a network of independent relays, often over a privacy-preserving route rather than straight between you — so the connection doesn\'t happen instantly. That\'s the cost of privacy and reliability, not a glitch.</string>
+    <string name="action_dont_show_again">Don\'t show again</string>
     <string name="join_chat_connect">Connect</string>
     <string name="join_chat_back">Back</string>
     <string name="cd_toggle_password">Show / hide password</string>
@@ -583,6 +585,11 @@
     <string name="action_pin">Pin</string>
     <string name="action_unpin">Unpin</string>
     <string name="favorites_name">Favorites</string>
+
+    <!-- Local nickname for a 1:1 contact (long-press menu in the chats list) -->
+    <string name="action_rename_contact">Rename</string>
+    <string name="rename_contact_dialog_title">Local nickname</string>
+    <string name="rename_contact_dialog_subtitle">Only visible to you, never sent to them. Empty — show their real profile name.</string>
     <string name="favorites_description">My notes</string>
 
     <!-- Donate dialog -->
@@ -1358,4 +1365,10 @@
     <string name="ur_link_chat_desc">ATRUM community</string>
     <string name="ur_locked_note">Back button is disabled</string>
     <string name="ur_btn_uninstall">Uninstall app</string>
+
+    <!-- Per-conversation mentions screen -->
+    <string name="mentions_title">Mentions</string>
+    <string name="mentions_empty_title">No mentions yet</string>
+    <string name="mentions_empty_body">Messages where someone addressed you with "@" will show up here.</string>
+    <string name="mentions_yesterday">yesterday</string>
 </resources>

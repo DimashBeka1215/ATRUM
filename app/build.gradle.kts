@@ -49,7 +49,7 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 638
+        versionCode = 676
         versionName = "2.0.8"
 
         // ЛИЧНАЯ СБОРКА: по умолчанию ВЫКЛючена (обычный релиз чист). Включается в build-типе
@@ -282,6 +282,12 @@ dependencies {
 
     // ZXing — генерация QR-кода сверки (SAS) для защиты от MITM.
     implementation("com.google.zxing:core:3.5.3")
+
+    // ML Kit (bundled/offline) — СКАНИРОВАНИЕ QR (замена ZXing-сканера, см. QrScanActivity.kt:
+    // репорт «QR сканируется долго»). Именно bundled-артефакт (не play-services-mlkit-*) —
+    // модель зашита прямо в APK, работает офлайн, без Google Play Services и без сети. Цена —
+    // фиксированные +~2.4МБ к размеру APK. ZXing НЕ убран — он остаётся выше для генерации SAS.
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
     // Biometric — системный отпечаток (BiometricPrompt). Биометрия НЕ хранится
     // в приложении: запрос идёт в системную подсистему телефона (на Samsung — Knox/TEE).

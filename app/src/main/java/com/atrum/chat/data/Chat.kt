@@ -198,21 +198,44 @@ data class Chat(
      * identity), неподделываемо. Только для 1:1; у групп/избранного/системного = false.
      * По умолчанию false — старые чаты получат галочку сами после первого опроса (§17).
      */
-    val partnerVerified: Boolean = false
+    val partnerVerified: Boolean = false,
+
+    /**
+     * Локальный ник собеседника в 1:1-чате (DB v27) — задаётся ЛОКАЛЬНО через «Переименовать»
+     * в меню списка чатов (зажатие строки). null/пусто — ника нет, показывается обычное
+     * partnerName.
+     *
+     * ⚠️ ВАЖНО: это НЕ то же самое, что partnerName. partnerName — зеркало профиля, которое
+     * собеседник публикует сам и которое безусловно перезаписывается на каждом синке профиля
+     * (см. ChatActivity.doSyncProfilesOnce/processParsedProfiles, ChatsListActivity — 3
+     * независимых места). Раньше локально переименовать собеседника было нечем: любая попытка
+     * "перезаписать" partnerName напрямую тут же затиралась обратно следующим тиком синка —
+     * именно так выглядел репорт «новый ник не фиксируется, старое имя возвращается само».
+     * partnerNickname — отдельное поле, синк его никогда не трогает, поэтому оно не может
+     * быть перезатёрто чужим профилем. Приоритет над partnerName — только в [displayName]
+     * (то, что видит человек); сам partnerName продолжает обновляться в фоне как раньше —
+     * если ник сбросят (пустая строка), под ним сразу окажется актуальное синканное имя.
+     * Только для 1:1 — у групп своё переименование (админом, см. PartnerProfileActivity.
+     * renameGroupReal), это поле для группы не читается нигде.
+     */
+    val partnerNickname: String? = null
 )
 
 /**
  * Единая точка вычисления отображаемого имени чата (список чатов, меню, диалоги).
  * Для группы — groupName (актуален, обновляется через members.txt), с фоллбэком на
  * partnerName (creation-time снимок — как правило устаревший после переименования,
- * но не пустой). Для 1:1 — как и раньше, просто partnerName.
+ * но не пустой). Для 1:1 — локальный ник partnerNickname, если задан, иначе как и
+ * раньше partnerName (см. doc-комментарий у partnerNickname — почему это отдельное
+ * поле, а не запись поверх partnerName).
  *
  * Добавлено при исправлении бага: список чатов показывал старое имя/аву группы
  * после переименования, потому что часть экранов (ChatsAdapter, поиск, заголовок
  * меню чата) читала только partnerName напрямую, не проверяя isGroup/groupName.
  */
 fun Chat.displayName(): String =
-    if (isGroup) groupName?.takeIf { it.isNotBlank() } ?: partnerName else partnerName
+    if (isGroup) groupName?.takeIf { it.isNotBlank() } ?: partnerName
+    else partnerNickname?.takeIf { it.isNotBlank() } ?: partnerName
 
 /** См. [displayName] — тот же принцип для аватара. */
 fun Chat.displayAvatarBase64(): String? =

@@ -145,6 +145,8 @@
     <string name="join_chat_password_label">Код приглашения</string>
     <string name="join_chat_password_hint">Вставьте код (ATRM…)</string>
     <string name="join_chat_info">Код приглашения (ATRM...) должен быть получен от участника чата. Он не хранится на серверах.</string>
+    <string name="join_chat_connect_notice">Первое подключение иногда занимает время — это нормально. У ATRUM нет единого сервера: сообщения идут через сеть независимых реле, часто приватным маршрутом, а не напрямую между вами — поэтому соединение устанавливается не мгновенно. Это цена приватности и надёжности, а не сбой.</string>
+    <string name="action_dont_show_again">Больше не показывать</string>
     <string name="join_chat_connect">Подключиться</string>
     <string name="join_chat_back">Назад</string>
     <string name="cd_toggle_password">Показать / скрыть пароль</string>
@@ -638,6 +640,11 @@
     <string name="action_pin">Закрепить</string>
     <string name="action_unpin">Открепить</string>
     <string name="favorites_name">Избранное</string>
+
+    <!-- Локальный ник собеседника в 1:1 (меню по зажатию чата в списке) -->
+    <string name="action_rename_contact">Переименовать</string>
+    <string name="rename_contact_dialog_title">Локальный ник</string>
+    <string name="rename_contact_dialog_subtitle">Виден только тебе, собеседнику не отправляется. Пусто — показывать настоящее имя из профиля.</string>
     <string name="favorites_description">Мои заметки</string>
 
     <!-- Donate dialog -->
@@ -1380,4 +1387,10 @@
     <string name="ur_link_chat_desc">Сообщество ATRUM</string>
     <string name="ur_locked_note">Кнопка «назад» отключена</string>
     <string name="ur_btn_uninstall">Удалить приложение</string>
+
+    <!-- Экран «Упоминания» одной беседы (мокап одобрен, docs/mockup_mentions.html) -->
+    <string name="mentions_title">Упоминания</string>
+    <string name="mentions_empty_title">Вас пока не упоминали</string>
+    <string name="mentions_empty_body">Здесь появятся сообщения беседы, где к вам обратились через «@».</string>
+    <string name="mentions_yesterday">вчера</string>
 </resources>

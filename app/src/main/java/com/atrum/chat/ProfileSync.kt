@@ -26,7 +26,14 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object ProfileSync {
 
-    private const val FILE_NAME = "profiles.txt"
+    /**
+     * Имя файла профилей в канале. Публично (было private), чтобы экраны, которым нужен
+     * ТОЧЕЧНЫЙ запрос именно этого файла (см. ChatTransport.loadFileSlotsSigned —
+     * подтверждение публикации своего слота на экране присоединения), не дублировали строку
+     * литералом: расхождение в имени тихо сломало бы чтение (имя уходит на провод как
+     * wireName(name), см. NostrTransport).
+     */
+    const val FILE_NAME = "profiles.txt"
 
     /**
      * Ограниченный по параллелизму дочерний диспетчер поверх Dispatchers.Default — только
@@ -320,10 +327,19 @@ object ProfileSync {
                 // устаревшая копия в чужом слоте почти всегда несут ОДИН И ТОТ ЖЕ updatedAt.
                 // Строгий `>` оставляет победителем запись из более НОВОГО события.
                 val base = if (p.updatedAt > cur.updatedAt) p else cur
+                // ⚠️ ФИКС (репорт: «онлайн мигает и не точен, статус печати держится даже после
+                // конца печати», обкатан в песочнице sb_presence_merge.js). onlineTs/typingTs/
+                // recordingTs раньше брались через maxOf(cur, p) — ТАК ЖЕ, как monotonic-поля
+                // ниже. Но presence обязана уметь регрессировать к 0 (человек остановил печать/
+                // вышел из сети), а monotonic-полям как раз нельзя. В 1:1/группе я republish'у
+                // ВЕСЬ известный мне снимок вместе со своим presence (см. pushPresence) — то есть
+                // мой слот несёт ЭХО последнего замеченного мной presence партнёра. Пока моё эхо
+                // не протухло, оно попадает сюда вторым слотом с тем же updatedAt (presence его
+                // не двигает) — и maxOf брал МАКСИМУМ из свежего "partner стоп-сигнала" (0) и моего
+                // старого эха (ненулевой штамп), из-за чего застрявшее эхо "побеждало" настоящий
+                // стоп. base уже выбран как более свежая по порядку слотов запись (см. тай-брейк
+                // выше) — presence-поля берём ИЗ НЕГО как есть, без подмешивания другого слота.
                 best[uid] = base.copy(
-                    onlineTs      = maxOf(cur.onlineTs, p.onlineTs),
-                    typingTs      = maxOf(cur.typingTs, p.typingTs),
-                    recordingTs   = maxOf(cur.recordingTs, p.recordingTs),
                     lastReadIndex = maxOf(cur.lastReadIndex, p.lastReadIndex),
                     // Аватар/имя «липкие» — см. unionWithKnown: копия без авы/имени не
                     // должна перетирать уже известную (иначе ава пропадает у оффлайн-участника).

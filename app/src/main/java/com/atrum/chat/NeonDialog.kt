@@ -19,6 +19,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 
 /**
  * Фабрика диалогов в стиле Neon:
@@ -125,6 +126,16 @@ object NeonDialog {
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             setLayout(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
             clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            // БАГ (репорт: «блюр за диалогом ломает, экран падает вниз»): [blur] — это 1:1 снимок
+            // ВСЕГО decorView активности, включая полосу статус-бара сверху (у активности она НЕ
+            // прозрачная — см. android:statusBarColor в themes.xml — контент активности рисуется
+            // ПОД системным инсетом статус-бара). У окна диалога (Theme_Translucent_NoTitleBar) по
+            // умолчанию система делает то же самое — сама подгибает [root] снизу статус-бара своим
+            // инсетом. В итоге верхняя часть снимка (сам статус-бар) отъедает место ВТОРОЙ раз — и
+            // весь фон (и центрированная карточка вместе с ним) визуально «сползает» на высоту
+            // статус-бара вниз относительно настоящего экрана под диалогом. Отключаем авто-подгонку
+            // под системные инсеты для ЭТОГО окна — [root] и снимок укладываются 1:1, без сдвига.
+            WindowCompat.setDecorFitsSystemWindows(this, false)
         }
     }
 

@@ -41,6 +41,10 @@ interface ChatDao {
     @Query("UPDATE chats SET partnerName = :name, partnerTag = :tag, partnerAvatarBase64 = :avatar WHERE id = :id")
     suspend fun updatePartnerProfile(id: Long, name: String, tag: String?, avatar: String?)
 
+    /** Локальный ник собеседника в 1:1-чате (см. Chat.partnerNickname). null/пусто — сброс к синканному имени. */
+    @Query("UPDATE chats SET partnerNickname = :nickname WHERE id = :id")
+    suspend fun updatePartnerNickname(id: Long, nickname: String?)
+
     @Query("UPDATE chats SET partnerLastReadIndex = :index WHERE id = :id")
     suspend fun updatePartnerLastRead(id: Long, index: Int)
 

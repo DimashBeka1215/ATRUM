@@ -30,6 +30,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.atrum.chat.data.AppDatabase
 import com.atrum.chat.data.Chat
+import com.atrum.chat.data.displayName
 import com.atrum.chat.databinding.ActivityChatBinding
 import com.atrum.chat.transport.AllChannelData
 import com.atrum.chat.transport.ChatTransport
@@ -52,6 +53,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
@@ -285,6 +287,14 @@ class ChatActivity : SecureActivity() {
     @Volatile private var mentionCandidates: List<MentionUser> = emptyList()
     private var mentionAdapter: MentionAdapter? = null
 
+    /**
+     * Выбранные из подсказки упоминания: видимый хэндл (без «@») → userId. Живёт ровно до
+     * отправки: в строке ввода лежит только «@хэндл», а метка приклеивается на отправке
+     * (см. insertMention и Message.attachMentionMarkers). Записи о хэндлах, которые
+     * пользователь потом стёр, безобидны — приклеивать будет не к чему.
+     */
+    private val pendingMentionIds = LinkedHashMap<String, String>()
+
     /** msgId упоминаний, к которым я уже перешёл в этой сессии (чтобы кнопка их не предлагала). */
     private val visitedMentionIds = HashSet<String>()
     private var mentionMenuPopup: android.widget.PopupWindow? = null
@@ -369,6 +379,17 @@ class ChatActivity : SecureActivity() {
      * каждом опросе, не только при открытии чата.
      */
     private var isSelfMuted: Boolean = false
+
+    /**
+     * Точное снятие СВОЕГО мута по времени (см. scheduleSelfMuteExpiry).
+     *
+     * ⚠️ Репорт-класс «помогает перезаход»: срок мута известен локально (mutedUntilMs), но
+     * пересчитывался он только внутри processChannelData, а тот вызывается лишь когда в
+     * канале ЧТО-ТО изменилось. Заглушённый писать не может по определению, поэтому сам
+     * вызвать пересчёт он не в состоянии: в тихой беседе строка ввода возвращалась только
+     * с тихим обновлением (до 45 c) — на точном времени это выглядит как «мут не кончился».
+     */
+    private var muteExpiryJob: Job? = null
     /** userId верифицированных разработчиков в этой беседе (PERSONAL_BUILD.md §Часть 3):
      *  их сообщения НЕ прячутся у остальных даже при бане/муте — они неприкосновенны.
      *  Заполняется там же, где считаются галочки отправителей (refreshMessageAvatars). */
@@ -376,11 +397,18 @@ class ChatActivity : SecureActivity() {
 
     /** msgId'ы сообщений-оснований текущего мута (см. ChatParticipant.mutedEvidenceIds). */
     private var currentMuteEvidenceIds: List<String> = emptyList()
-    /** Полный декод последнего тика — источник для ленты оснований в карточке мута.
-     *  ⚠️ ЧИСТО UI-кэш: на chatStore/фильтрацию ленты не влияет (мут развязан от синхрона). */
+    /** Полный декод последнего тика (БЕЗ фильтра бана/мута) — источник для ленты оснований
+     *  в карточке мута. ⚠️ Сам по себе на chatStore не влияет (свой мут по-прежнему развязан
+     *  от синхрона, см. applySelfMuteState) — но это ровно тот же «сырой» декод, из которого
+     *  processChannelDataLocked() вырезает забаненных/заглушённых ЧУЖИХ отправителей, поэтому
+     *  refreshOthersModerationFilter() ниже переиспользует его как базу для перефильтровки,
+     *  не трогая сеть/Argon2 повторно. */
     private var lastAllDecodedMessages: List<Message> = emptyList()
     /** Мемо-ключ последней отрисованной ленты оснований — без реальных изменений не перестраиваем (без мерцания). */
     private var lastRenderedEvidenceKey: String? = null
+    /** Сигнатура «кто сейчас забанен/заглушён у остальных» на момент последнего применения
+     *  фильтра ленты (processChannelDataLocked ИЛИ refreshOthersModerationFilter) — см. там же. */
+    private var lastOthersModerationSig: String = ""
 
     /** true — уже показали пользователю экран «вас исключили» и закрываем чат (анти-дубль). */
     private var groupBanHandled: Boolean = false
@@ -572,6 +600,20 @@ class ChatActivity : SecureActivity() {
         }
         prefs.myName.takeIf { it.isNotBlank() }?.let { names[prefs.myUserId] = it }
         adapter.updateSenderNames(names)
+
+        // Актуальные ХЭНДЛЫ (тег, а не имя) для @упоминаний — отдельная карта от [names]
+        // (репорт: «подчёркивание в теге не вставляется, тегом считается только первая
+        // половина»; см. Profile.mentionHandle, MessageAdapter.updateMentionHandles).
+        val handles = HashMap<String, String>(source.size + 1)
+        for ((uid, profile) in source) {
+            val fresh = profile.mentionHandle() ?: ProfileSync.getGlobalKnown(uid)?.mentionHandle()
+            if (fresh != null) handles[uid] = fresh
+        }
+        // ⚠️ prefs.myTag хранится С ведущей собакой (см. TagUtils.normalize → "@$core") —
+        // снимаем её здесь же, иначе self-упоминание рендерится как «@@Sebastian_...».
+        (prefs.myTag.removePrefix("@").takeIf { it.isNotBlank() } ?: prefs.myName.takeIf { it.isNotBlank() })
+            ?.let { handles[prefs.myUserId] = it }
+        adapter.updateMentionHandles(handles)
 
         // Галочки верификации у ников отправителей в беседе. Считаем КРИПТОГРАФИЧЕСКИ:
         // VerifiedBadge сначала дёшево проверяет членство ключа в списке, и только для
@@ -1054,9 +1096,7 @@ class ChatActivity : SecureActivity() {
             // дочитали до сообщения (минимум lastReadIndex среди них), а не один
             // произвольный "partner", которого findPartner() выше выбрал для группы
             // (сам findPartner на группы не рассчитан — просто игнорируем его выбор здесь).
-            val others = allProfiles.values.filter { it.userId != prefs.myUserId }
-            val minReadIndex = others.minOfOrNull { it.lastReadIndex } ?: 0
-            adapter.setPartnerLastReadIndex(minReadIndex)
+            adapter.setPartnerLastReadIndex(groupMinReadIndex(allProfiles))
         }
 
         // Устанавливаем сессионный ключ если партнёр опубликовал свой ephemeral pub key
@@ -1097,7 +1137,21 @@ class ChatActivity : SecureActivity() {
         val pushedOk = ProfileSync.pushMyProfile(
             transport, chat.chatPassword, myProfile, prefs.getOrCreateIdentity().first
         )
-        if (!pushedOk) {
+        if (pushedOk) {
+            // ⚡ Подтверждение БЕЗ лишнего сетевого цикла (репорт: «синк долгий»). Успех
+            // pushMyProfile — это не «отправили и надеемся»: ProfileSync доводит запись до
+            // NostrTransport.publishToAnyRelay, который возвращает управление, только собрав
+            // кворум подтверждений ОТ РЕЛЕ. Значит мой слот на реле уже есть, и ждать, пока
+            // это подтвердит следующий тик опроса, незачем.
+            //
+            // Раньше флаг ставился ТОЛЬКО из confirmMyProfilePublished на следующем чтении,
+            // и до него (несколько секунд, а через Tor и десятки) держались два тормоза:
+            // сторож публикации считал работу невыполненной и повторял полный GET+PATCH, а
+            // гейт рукопожатия не пускал сессионное шифрование, хотя партнёру уже было что
+            // читать. Гейт переприменяем тут же — разрешение открывается в этом же проходе (§1.5).
+            myProfilePublishConfirmed = true
+            applyHandshakeGate(partner)
+        } else {
             myProfilePublishConfirmed = false
             // Персистентная страховка: даже если пользователь сейчас закроет чат или приложение,
             // публикация будет добита фоновой очередью и переживёт перезапуск процесса.
@@ -1234,7 +1288,9 @@ class ChatActivity : SecureActivity() {
             return
         }
 
-        binding.tvDisplayName.text = chat.partnerName
+        // chat.displayName() — приоритет локальному нику собеседника (Chat.partnerNickname,
+        // задаётся через «Переименовать» в меню списка чатов), иначе синканное partnerName.
+        binding.tvDisplayName.text = chat.displayName()
         // Галочка верификации рядом с ником собеседника (1:1). Неподделываемо: показываем
         // только если подпись identity партнёра валидна (IdentityState.VERIFIED) И его ключ
         // в списке верифицированных (VerifiedBadge).
@@ -1282,7 +1338,7 @@ class ChatActivity : SecureActivity() {
             } else {
                 binding.ivPartnerAvatar.visibility = View.GONE
                 binding.tvPartnerAvatar.visibility = View.VISIBLE
-                binding.tvPartnerAvatar.text = chat.partnerName.trim().firstOrNull()?.uppercase() ?: "?"
+                binding.tvPartnerAvatar.text = chat.displayName().trim().firstOrNull()?.uppercase() ?: "?"
             }
         }
     }
@@ -1335,7 +1391,7 @@ class ChatActivity : SecureActivity() {
         // Источник истины — объект chat, который синхронизирован с БД.
         // Не берем из lastKnownProfiles напрямую, чтобы избежать мигания/разных аватарок.
         // Групповой чат (ADR-001): имя/аватар — групповые, не одного собеседника.
-        val name         = if (chat.isGroup) (chat.groupName?.takeIf { it.isNotBlank() } ?: chat.partnerName) else chat.partnerName
+        val name         = if (chat.isGroup) (chat.groupName?.takeIf { it.isNotBlank() } ?: chat.partnerName) else chat.displayName()
         val tag          = if (chat.isGroup) null else chat.partnerTag
         val avatarBase64 = if (chat.isGroup) chat.groupAvatarBase64 else chat.partnerAvatarBase64
         val partner      = lastKnownProfiles.values.firstOrNull { it.userId != prefs.myUserId }
@@ -1553,7 +1609,25 @@ class ChatActivity : SecureActivity() {
         // Потоковые подписки (WebSocket для Nostr / BLE для Bluetooth)
         // transport.watchMessages зовёт callback при получении события из «трубы».
         // В ответ мы делаем forceSync(0L): SyncEngine немедленно читает канал и обновляет UI.
-        transportWatch = transport.watchMessages {
+        // ⚠️ fastReopen = true (репорт: «в беседе первые сообщения идут с задержкой, помогает
+        // перезаход — что недопустимо»). «Помогает перезаход» — это и был диагноз: подписку
+        // пересоздавало только повторное открытие экрана.
+        //
+        // Открытый чат вёл ОБЫЧНУЮ подписку, которая переоткрывается лишь когда hasSub == false.
+        // Публичное реле умеет «тихо убивать» подписку: сокет жив, hasSub = true, а события не
+        // идут. Такая подписка не чинилась вообще — до выхода и повторного входа. Дальше
+        // сообщения зависели только от опроса, а в беседе тик опроса тяжёлый (весь канал плюс
+        // Argon2 на каждый слот профиля), и он же single-flight — отсюда и «в 1:1 быстро, в
+        // беседе нет», и «иногда заедает у автора, иногда у собеседников».
+        //
+        // Самолечащийся вариант принудительно переоткрывает REQ с оглядкой назад: реле
+        // повторно отдаёт события «мёртвого окна», а живая подписка между переоткрытиями
+        // пушит мгновенно. Ровно тот механизм, который уже вылечил список чатов.
+        transportWatch = transport.watchMessages(fastReopen = true) {
+            // Сначала показываем то, что уже лежит локально (событие смёржено в стор прямо
+            // в колбэке стрима) — экран обновляется мгновенно. Сетевой тик идёт следом и
+            // приносит остальное: профили, реакции, членство.
+            renderLocalMessagesNow()
             syncEngine.forceSync(0L)
             // Push события revoke.txt → применяем отзыв/возврат создателя СРАЗУ (мгновенно, как мут),
             // не дожидаясь 2.5с-тикера. consumeRevokeDirty сбрасывает флаг → тикер не прочитает дважды;
@@ -1791,6 +1865,14 @@ class ChatActivity : SecureActivity() {
 
         binding.btnSticker.setOnClickListener {
             hideStickerSuggestions()
+            // БАГ: карточка приветствия беседы (см. maybeShowGroupWelcome) добавлена как оверлей
+            // прямо в android.R.id.content и центрируется по ВСЕЙ высоте окна — она не в курсе,
+            // что панель стикеров (sticker_panel_container) сейчас займёт нижнюю часть экрана,
+            // и визуально наезжает на неё. Простое и надёжное решение — не подгонять позицию
+            // карточки под панель, а считать открытие панели тем же сигналом «пользователь начал
+            // пользоваться чатом», что и первое сообщение (см. dismissGroupWelcome) — карточка
+            // уходит той же самой уже одобренной анимацией. Если карточки сейчас нет — no-op.
+            dismissGroupWelcome()
             stickerPanel?.togglePanel()
         }
 
@@ -2094,7 +2176,7 @@ class ChatActivity : SecureActivity() {
                 // иначе стандартная «Загрузка сообщений…» (группы/локальные).
                 binding.tvLoadingLabel.text =
                     if (!liveSyncArrived && isConnectingCapable())
-                        getString(R.string.chat_connecting_to, chat.partnerName)
+                        getString(R.string.chat_connecting_to, chat.displayName())
                     else getString(R.string.chat_loading)
                 // Лента остаётся видимой ПОД непрозрачным оверлеем (alpha=1) — сообщения
                 // рендерятся за экраном загрузки, а не проявляются после него (см. revealMessages).
@@ -2235,6 +2317,7 @@ class ChatActivity : SecureActivity() {
         pauseVisibleStickers()
         // Останавливаем SyncEngine и коллектор событий
         if (::syncEngine.isInitialized) syncEngine.stop()
+        silentRefreshJob?.cancel(); silentRefreshJob = null
         unregisterNetworkMonitoring()
         syncCollectorJob?.cancel()
         syncCollectorJob = null
@@ -2363,6 +2446,7 @@ class ChatActivity : SecureActivity() {
         // • Rate limit: engine сам паузирует на Retry-After
         // • forceSync() вместо дополнительного loadMessages() после отправки
         syncEngine.start(lifecycleScope)
+        startSilentRefresh()
 
         // Подписка на данные из SyncEngine → обработка в одном месте
         syncCollectorJob?.cancel()
@@ -2401,6 +2485,11 @@ class ChatActivity : SecureActivity() {
                         withContext(Dispatchers.Main) { runCatching { recreate() } }
                         return@launch
                     }
+                    // Мой бан/мут — из Room, НЕ дожидаясь снимка канала (§1.5, §16).
+                    runCatching { refreshSelfModerationState() }
+                    // Бан/мут ОСТАЛЬНЫХ участников — та же идея, для видимости их сообщений
+                    // у меня (см. refreshOthersModerationFilter).
+                    runCatching { refreshOthersModerationFilter() }
                     runCatching { syncOwnerCerts() }
                     runCatching { syncRevokes() }
                 }
@@ -2432,7 +2521,14 @@ class ChatActivity : SecureActivity() {
         val newHash = rawEncrypted.hashCode()
         if (newHash == lastProfilesHash && lastKnownProfiles.isNotEmpty()) return
         lastProfilesHash = newHash
-        processParsedProfiles(ProfileSync.parseProfiles(rawEncrypted, chat.chatPassword, transport.chatId))
+        // fullSnapshot = false: сюда приходит ОДИН слот — либо чужой из стрима (watchProfiles
+        // отфильтровывает мой pubkey), либо единственный блоб из фолбэка. Полной картиной
+        // канала он не является, поэтому ни затирать снимок, ни судить по нему о публикации
+        // СВОЕГО профиля нельзя (см. processParsedProfiles).
+        processParsedProfiles(
+            ProfileSync.parseProfiles(rawEncrypted, chat.chatPassword, transport.chatId),
+            fullSnapshot = false
+        )
     }
 
     /** Фаза 1: union-чтение всех слотов profiles.txt (по одному на участника) — убирает lost-update. */
@@ -2441,17 +2537,82 @@ class ChatActivity : SecureActivity() {
         val newHash = slots.hashCode()
         if (newHash == lastProfilesHash && lastKnownProfiles.isNotEmpty()) return
         lastProfilesHash = newHash
-        processParsedProfiles(ProfileSync.unionProfileSlots(slots, chat.chatPassword, transport.chatId))
+        // fullSnapshot = true: union ВСЕХ слотов канала — единственное чтение, по которому
+        // можно судить и о составе участников, и о том, лежит ли на реле мой собственный слот.
+        processParsedProfiles(
+            ProfileSync.unionProfileSlots(slots, chat.chatPassword, transport.chatId),
+            fullSnapshot = true
+        )
     }
 
-    private suspend fun processParsedProfiles(parsed: Map<String, Profile>) {
+    /**
+     * @param fullSnapshot true — [parsed] это union ВСЕХ слотов канала (тик опроса);
+     *                     false — один слот (пуш из стрима или легаси-блоб).
+     *
+     * ⚠️ ФИКС (репорт: «аватарка у создателя не синхронизируется, а если и доходит, то очень
+     * поздно»). Раньше различия не было, и обе ветки обращались с [parsed] как с полной
+     * картиной канала. Это давало два разных сбоя на одном и том же пути:
+     *
+     *  1. `confirmMyProfilePublished(parsed)` на ОДИНОЧНОМ ЧУЖОМ слоте. Стрим приносит слот
+     *     собеседника примерно раз в 5 секунд (presence-heartbeat). Моего актуального
+     *     эфемерного ключа в чужой копии меня почти никогда нет, поэтому подтверждение
+     *     «мой профиль лежит на реле» СБРАСЫВАЛОСЬ в false каждые ~5с — даже сразу после
+     *     успешной публикации. Отсюда: сторож публикации ([startProfilePublishGuard]) снова
+     *     считал работу невыполненной и гонял полные сетевые циклы GET+PATCH, а гейт
+     *     рукопожатия ([applyHandshakeGate]) для легаси-собеседника то открывался, то
+     *     закрывался. Теперь подтверждение считается ТОЛЬКО по union-снимку, где мой слот
+     *     физически может присутствовать.
+     *  2. `lastKnownProfiles.clear()` на одиночном слоте. Пуш от ОДНОГО участника стирал из
+     *     снимка всех остальных (и меня), а на нём построены аватарки в пузырьках, список
+     *     «кто онлайн» и dev-щит. В беседах это выглядело как исчезающие аватарки при каждом
+     *     чужом heartbeat. Полная замена снимка теперь только на union-чтении; одиночный слот
+     *     ДОПОЛНЯЕТ снимок, а не заменяет его.
+     */
+    /**
+     * «Прочитано» ✓✓ в БЕСЕДЕ — минимальный lastReadIndex по РОСТЕРУ, а не по тем, чьи
+     * профили случайно оказались в этом чтении.
+     *
+     * ⚠️ Найдено при аудите синхронизации бесед. Раньше минимум считался так:
+     * `allProfiles.values.filter { it.userId != myUserId }.minOfOrNull { it.lastReadIndex }`.
+     * Участник, который в составе беседы ЕСТЬ, но чей слот профиля ещё не доехал, в расчёт
+     * просто не попадал — и галочка «все прочитали» вставала, хотя он ничего не читал.
+     * В беседе на троих достаточно было одного дочитавшего. Липкость allProfiles это
+     * смягчала (однажды увиденный участник не пропадает), но первые секунды после входа и
+     * после переустановки картина была именно такой.
+     *
+     * Теперь неизвестный профиль считается «не читал» (индекс 0) — консервативно и честно:
+     * ✓✓ появляется, только когда подтвердили ВСЕ, кто числится в беседе.
+     *
+     * Забаненных исключаем: они не участники разговора и держали бы галочку вечно.
+     * Вышедшие из ростера убираются сами (GroupRosterSync).
+     *
+     * ⛔ Если ростер ещё пуст (первые мгновения после открытия, до применения members.txt) —
+     * возвращаемся к прежнему расчёту. Иначе минимум по пустому множеству дал бы ноль, и
+     * галочка «залипла» бы одинарной до первого успешного применения ростера.
+     */
+    private suspend fun groupMinReadIndex(allProfiles: Map<String, Profile>): Int {
+        val roster = runCatching { db.chatParticipantDao().getForChat(chat.id) }
+            .getOrDefault(emptyList())
+            .filter { !it.banned && it.userId != prefs.myUserId }
+        if (roster.isEmpty()) {
+            return allProfiles.values
+                .filter { it.userId != prefs.myUserId }
+                .minOfOrNull { it.lastReadIndex } ?: 0
+        }
+        return roster.minOf { m -> allProfiles[m.userId]?.lastReadIndex ?: 0 }
+    }
+
+    private suspend fun processParsedProfiles(
+        parsed: Map<String, Profile>,
+        fullSnapshot: Boolean = false
+    ) {
         // Сырой снимок — для presence-записей (чтобы не реинжектить устаревшего партнёра).
-        lastKnownProfiles.clear()
+        if (fullSnapshot) lastKnownProfiles.clear()
         lastKnownProfiles.putAll(parsed)
         // Подтверждение публикации своего профиля — на СЫРОМ снимке этого тика, ДО «липкого»
         // union ниже (тот всегда вернул бы меня из локального кэша, и подтверждение было бы
         // ложным). Бесплатно по сети: тик опроса уже сходил в канал. См. startProfilePublishGuard.
-        confirmMyProfilePublished(parsed)
+        if (fullSnapshot) confirmMyProfilePublished(parsed)
         // Для отображения и сессионного ключа — «липкий» партнёр (флаки-чтение не теряет его).
         val allProfiles = ProfileSync.unionAndRemember(transport.chatId, parsed)
         // Кандидаты упоминания (@) — из «липкого» union (аватары/теги не пропадают).
@@ -2482,7 +2643,8 @@ class ChatActivity : SecureActivity() {
         if (!chat.isGroup && !chat.partnerJoined) {
             db.chatDao().markPartnerJoined(chat.id)
             chat = chat.copy(partnerJoined = true)
-            val joinedName = partner.name.takeIf { it.isNotBlank() }
+            val joinedName = chat.partnerNickname?.takeIf { it.isNotBlank() }
+                ?: partner.name.takeIf { it.isNotBlank() }
                 ?: chat.partnerName.takeIf { it.isNotBlank() }
                 ?: getString(R.string.join_default_partner_name)
             chatStore.addSystemMessage(
@@ -2553,8 +2715,7 @@ class ChatActivity : SecureActivity() {
         } else {
             // Группа: «прочитано» ✓✓ — когда ВСЕ остальные дочитали (минимум по всем),
             // а не произвольный partner (тот же принцип, что в doSyncProfilesOnce).
-            val others = allProfiles.values.filter { it.userId != prefs.myUserId }
-            val minReadIndex = others.minOfOrNull { it.lastReadIndex } ?: 0
+            val minReadIndex = groupMinReadIndex(allProfiles)
             if (minReadIndex != chat.partnerLastReadIndex) {
                 db.chatDao().updatePartnerLastRead(chat.id, minReadIndex)
                 chat = chat.copy(partnerLastReadIndex = minReadIndex)
@@ -2626,7 +2787,154 @@ class ChatActivity : SecureActivity() {
      *
      * Всё в одном месте: парсинг → reconcile → UI → read receipt → profiles.
      */
-    private suspend fun processChannelData(data: AllChannelData) {
+    /**
+     * Сериализация обработки снимков канала.
+     *
+     * ⚠️ Репорт: «не всё стабильно в отображении, иногда заедает». [processChannelData] зовут
+     * из МНОГИХ мест: коллектор SyncEngine, мгновенный рендер из локального стора, кэш прошлого
+     * захода, пуш из стрима. Все они suspend и все правят один и тот же набор полей-«последнее
+     * применённое» (lastContent, lastReactionsRaw, lastMembersRaw, lastProfilesHash…). Два
+     * вызова, наложившись, могли записать эти поля вперемешку — и тогда более старый снимок
+     * помечал себя как применённый, а более новый отбрасывался ранним return. Внешне это и
+     * выглядит как «залипло до следующего изменения». Мьютекс убирает наложение целиком; на
+     * скорость не влияет — обработка снимка и так идёт последовательно.
+     */
+    private val channelDataMutex = Mutex()
+
+    private suspend fun processChannelData(data: AllChannelData) =
+        channelDataMutex.withLock { processChannelDataLocked(data) }
+
+    /** Job тихого обновления (см. startSilentRefresh). */
+    private var silentRefreshJob: Job? = null
+
+    /**
+     * ТИХОЕ ОБНОВЛЕНИЕ ЧАТА — то, что раньше делал перезаход, только само и незаметно.
+     *
+     * ⚠️ Зачем (репорт: «заебала эта штука с перезаходом»). Экран чата держит набор отметок
+     * «что уже применено»: последний применённый текст ленты, хеш профилей, набор реакций,
+     * members.txt и подписи слотов. Транспорт держит свою — хеш последнего снимка, по которому
+     * решает «изменений нет». Работает это, пока отметки соответствуют тому, что реально
+     * показано. Но стоит ОДНОМУ снимку примениться не полностью — сеть моргнула, реле отдало
+     * частичный ответ, обработка прервалась — и отметка уже стоит, а данные не показаны. Экран
+     * после этого честно считает, что показывать нечего, и залипает до тех пор, пока в канале
+     * не изменится что-то ещё.
+     *
+     * Перезаход помогал ровно потому, что пересоздавал ВСЕ отметки разом: и экранные, и
+     * загрузчика медиа (негативный кэш неудачных картинок). Лечить каждую причину такого
+     * расхождения по отдельности можно бесконечно — их порождает любая частичная неудача.
+     * Поэтому здесь общее лекарство: раз в [SILENT_REFRESH_MS] отметки сбрасываются и самый
+     * свежий снимок применяется заново, с нуля.
+     *
+     * Почему это НЕЗАМЕТНО:
+     *  • лента сообщений — StateFlow: одинаковый список не эмитится повторно, DiffUtil не
+     *    вызывается, прокрутка не дёргается;
+     *  • реакции и профили имеют собственные сравнения «изменилось ли» перед перерисовкой;
+     *  • расшифровка сообщений мемоизирована (CryptoHelper.decryptCache), поэтому повторное
+     *    применение того же текста почти бесплатно даже в беседе с тяжёлым Argon2.
+     * Видимым это становится ровно в одном случае — когда что-то ДЕЙСТВИТЕЛЬНО не было
+     * показано. Ради этого случая всё и делается.
+     *
+     * Цена: одно дополнительное чтение канала раз в сорок пять секунд поверх обычного опроса,
+     * то есть один лишний тик на четыре с половиной десятка. Только пока чат на переднем плане.
+     */
+    private fun startSilentRefresh() {
+        silentRefreshJob?.cancel()
+        silentRefreshJob = lifecycleScope.launch {
+            while (isActive) {
+                delay(SILENT_REFRESH_MS)
+                if (!isInForeground || !::transport.isInitialized || chat.isFavorites) continue
+                runCatching {
+                    // loadAllFresh, а не loadAllIfChanged: нам нужен снимок БЕЗУСЛОВНО —
+                    // «изменений нет» здесь и есть то состояние, из которого надо выйти.
+                    val fresh = withContext(Dispatchers.IO) { transport.loadAllFresh() }
+                    if (fresh != null) {
+                        resetAppliedMarkers()
+                        processChannelData(fresh)
+                    }
+                    // Пустые картинки: снимаем отметки «не загрузилось», чтобы ближайший
+                    // ребайнд сходил в сеть заново (см. ImageLoader.forgetAllFailed).
+                    imageLoader?.forgetAllFailed()
+                }
+            }
+        }
+    }
+
+    /**
+     * Сбрасывает отметки «уже применено», чтобы следующий снимок применился целиком.
+     * Только маркеры — ничего показанного пользователю не трогаем (см. startSilentRefresh).
+     */
+    private fun resetAppliedMarkers() {
+        lastContent = ""
+        lastProfilesHash = 0
+        lastReactionsRaw = ""
+        lastReactionsCanon = ""
+        lastMembersRaw = ""
+        lastMemberSlotsSig = ""
+    }
+
+    /** Защита от наложения мгновенных локальных рендеров (см. renderLocalMessagesNow). */
+    private val localRenderBusy = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * МГНОВЕННЫЙ показ пришедшего сообщения — без ожидания сетевого тика.
+     *
+     * ⚠️ Репорт: «в беседе первые сообщения не такие быстрые, как в 1:1». Реле пушит событие
+     * в стрим, и оно СРАЗУ ложится в долговечный локальный стор (см. watchMessages →
+     * NostrMessageStore.merge). Но на экран оно попадало только со следующим сетевым тиком,
+     * а тик беседы тяжёлый (весь канал плюс Argon2 на каждый слот профиля) и вдобавок
+     * single-flight: пуш честно будил цикл, но всё равно ждал конца текущего тика. В 1:1 тик
+     * дешёвый, поэтому там разница не чувствовалась, а в беседе превращалась в те самые
+     * секунды задержки.
+     *
+     * Здесь сеть не трогается вообще: берём отрисованный контент из локального стора и
+     * прогоняем через обычный путь. Расшифровка сообщений беседы мемоизирована
+     * (CryptoHelper.decryptCache, 1500 записей), поэтому повторный рендер почти бесплатен.
+     *
+     * ⛔ Важно: подставляем свежий chatContent в ПОСЛЕДНИЙ ПОЛНЫЙ снимок, а не отдаём голый
+     * локальный. Голый снимок несёт пустые профили, реакции и членство, а processChannelData
+     * кладёт полученное в ChatSnapshotCache — то есть обеднённая копия затёрла бы кэш, из
+     * которого потом строится мгновенный показ при следующем открытии чата.
+     */
+    private fun renderLocalMessagesNow() {
+        if (!::transport.isInitialized || !::chat.isInitialized || chat.isFavorites) return
+        if (!localRenderBusy.compareAndSet(false, true)) return
+        lifecycleScope.launch {
+            try {
+                val snapshot = withContext(Dispatchers.IO) {
+                    val local = runCatching { transport.loadLocalSnapshotOrNull() }.getOrNull()
+                    if (local == null || local.chatContent.isBlank()) null
+                    else {
+                        val base = runCatching { ChatSnapshotCache.get(chat.chatId) }.getOrNull()
+                        base?.copy(chatContent = local.chatContent) ?: local
+                    }
+                } ?: return@launch
+                runCatching { processChannelData(snapshot) }
+            } finally {
+                localRenderBusy.set(false)
+            }
+        }
+    }
+
+    private suspend fun processChannelDataLocked(data: AllChannelData) {
+        // ⚠️ Анти-гонка устаревшего снимка (репорт: «после редактирования сообщение
+        // мигает и прыгает от старой версии к новой»). [data] мог быть СОБРАН (loadAll/
+        // render) заметно РАНЬШЕ, чем этот конкретный вызов реально добрался сюда —
+        // несколько независимых путей готовят свой AllChannelData параллельно (обычный
+        // тик SyncEngine через Tor, мгновенный локальный пуш от стрима при merge()
+        // правки, тихое обновление) и встают в очередь на channelDataMutex; тяжёлый
+        // Argon2id-декод одного из них может задержать его настолько, что он применится
+        // ПОСЛЕ более свежего вызова — и тогда устаревший chatContent (без только что
+        // смёрженной правки/сообщения) на миг перезаписывает уже показанный новый текст,
+        // пока следующий тик снова не вернёт всё как надо (видимое «мигание туда-сюда»).
+        // transport.loadLocalSnapshotOrNull() читает ТОЛЬКО уже смёрженный локальный
+        // стор, без сети — переспрашиваем его ЗДЕСЬ, прямо перед применением: стор
+        // (NostrMessageStore) только накапливает события и никогда их не теряет, поэтому
+        // свежий локальный снимок принципиально не может быть СТАРШЕ переданного [data],
+        // только новее либо таким же. Транспорты без такого стора (Local/Bluetooth)
+        // возвращают null — используем data.chatContent как и раньше, без изменений.
+        val freshLocal = runCatching { transport.loadLocalSnapshotOrNull() }.getOrNull()
+            ?.chatContent?.takeIf { it.isNotBlank() }
+        val data = if (freshLocal != null && freshLocal != data.chatContent) data.copy(chatContent = freshLocal) else data
         ChatSnapshotCache.put(chat.chatId, data)
         val chatContent     = data.chatContent
         val profilesContent = data.profilesContent
@@ -2988,6 +3296,10 @@ class ChatActivity : SecureActivity() {
             .filter { !it.banned && it.mutedUntilMs != null && it.mutedUntilMs > nowMs && it.userId != myUid && it.userId !in verifiedSenderIds }
             .map { it.userId }
             .toSet()
+        // Держим сигнатуру refreshOthersModerationFilter() в курсе: раз фильтр только что
+        // применился обычным (тяжёлым) путём, лёгкому тикеру незачем повторять то же самое
+        // на ближайшем тике — формат сигнатуры ДОЛЖЕН совпадать с тем, что считает функция.
+        lastOthersModerationSig = bannedIds.sorted().joinToString(",") + "||" + mutedIds.sorted().joinToString(",")
         fun List<Message>.withoutBanned(): List<Message> =
             if (bannedIds.isEmpty() && mutedIds.isEmpty()) this
             else filterNot { msg ->
@@ -3697,6 +4009,13 @@ class ChatActivity : SecureActivity() {
                 // транспорт пересоздался со СМЕНЁННЫМ adminUserId (его password-pubkey — гейт
                 // members.txt нового владельца). Идемпотентно: applyOwnerChain двигает владельца
                 // ровно один раз, поэтому recreate() срабатывает однократно на смену.
+                //
+                // Если новый владелец — Я, публикую свой members.txt немедленно: файл прежнего
+                // владельца с этого момента не проходит проверку подписи ни у кого, и до моей
+                // первой публикации беседа осталась бы без ролей/банов/мутов/закрепов (§16).
+                if (withContext(Dispatchers.IO) { db.chatDao().getById(chat.id)?.adminUserId } == prefs.myUserId) {
+                    PublishScheduler.markMembersDirty(applicationContext, chat.chatId)
+                }
                 withContext(Dispatchers.Main) { runCatching { recreate() } }
                 return@runCatching
             }
@@ -3757,7 +4076,14 @@ class ChatActivity : SecureActivity() {
             if (changed) {
                 // Вместо резкого recreate() — полноэкранный переход с описанием (мокап одобрен).
                 // revoke → adminUserId очистился (пусто); restore → вернулся непустым.
-                val wasRevoke = withContext(Dispatchers.IO) { db.chatDao().getById(chat.id)?.adminUserId }.isNullOrBlank()
+                val ownerNow = withContext(Dispatchers.IO) { db.chatDao().getById(chat.id)?.adminUserId }
+                val wasRevoke = ownerNow.isNullOrBlank()
+                // Возврат создателя и это Я — сразу публикую свой members.txt: пока владельца
+                // отзывали, беседа его файл не принимала, а после возврата гейт снова ждёт
+                // ростер, подписанный МОИМ ключом (тот же случай, что и передача владения, §16).
+                if (!wasRevoke && ownerNow == prefs.myUserId) {
+                    PublishScheduler.markMembersDirty(applicationContext, chat.chatId)
+                }
                 withContext(Dispatchers.Main) {
                     runCatching {
                         // Окно перехода поверх, а чат СРАЗУ перезагружается ПОД ним (recreate).
@@ -3779,9 +4105,18 @@ class ChatActivity : SecureActivity() {
      */
     private fun maybeShowGroupWelcome() {
         if (!::chat.isInitialized || !chat.isGroup) return
+        // Раньше карточку (без раздела прав) видел любой, кто вошёл в беседу — по репорту это
+        // не нужно, теперь она строго для создателя. isGroupCreatedByMe — чисто локальный флаг
+        // устройства (ставится в CreateChatActivity в момент создания, не синкается), так что
+        // у остальных участников здесь всегда false и плашка для них не появится вовсе.
+        if (!prefs.isGroupCreatedByMe(chat.chatId)) return
         if (prefs.isGroupWelcomeShown(chat.chatId)) return
         if (groupWelcomeCard != null) return // уже показана
         if (currentMessages.isNotEmpty()) return // беседа не пуста — плашка не нужна
+        // Лента ещё не раскрыта → «пусто» сейчас значит «ещё не загрузили», а не «беседа
+        // пустая». Плашку в этот момент показывать нельзя: она мигнёт в беседе с историей
+        // и сама себя пометит показанной. После раскрытия зовёмся из revealMessages().
+        if (!firstLoadComplete) return
         val contentRoot = findViewById<android.view.ViewGroup>(android.R.id.content) ?: return
         // Снимок чата ДО добавления карточки — иначе блюр захватил бы саму карточку.
         val snapshot = ScreenBlur.capture(this, radius = 10)
@@ -3885,11 +4220,15 @@ class ChatActivity : SecureActivity() {
         val now = System.currentTimeMillis()
         val reply = replyingTo
 
+        // Упоминания: в поле ввода лежит только «@хэндл», метку с userId вешаем ЗДЕСЬ —
+        // на проводе упоминание точное, а пользователь всё это время видел чистый текст.
+        val wireText = Message.attachMentionMarkers(text, pendingMentionIds)
+
         lifecycleScope.launch {
             val plaintext = Message.composePlaintext(
                 senderName = prefs.myName,
                 senderUserId = prefs.myUserId,
-                text = text,
+                text = wireText,
                 quotedSender = reply?.sender,
                 quotedText = reply?.let { quoteLabel(it) },
                 timestampMs = now
@@ -3900,7 +4239,10 @@ class ChatActivity : SecureActivity() {
 
             val pendingMsg = Message(
                 sender = prefs.myName,
-                text = text,
+                // Тот же текст, что и в шифртексте (с метками): лента подставляет имена
+                // при отрисовке (MessageAdapter → Message.renderMentions), поэтому
+                // оптимистичный пузырёк и пришедшая с реле копия выглядят одинаково.
+                text = wireText,
                 isSelf = true,
                 rawEncrypted = encrypted,
                 timestampMs = now,
@@ -3911,7 +4253,7 @@ class ChatActivity : SecureActivity() {
             )
 
             val item = MessageSendManager.QueueItem(
-                text = text,
+                text = wireText,
                 encrypted = encrypted,
                 pendingMsg = pendingMsg
             )
@@ -3922,6 +4264,7 @@ class ChatActivity : SecureActivity() {
                 chatStore.addOptimistic(pendingMsg)
                 // Очищаем поле, onQueueChanged обновит адаптер
                 binding.etMessage.setText("")
+                pendingMentionIds.clear() // поле пустое — привязки хэндлов больше не нужны
                 clearReply()
                 // Сообщение ушло — больше не «печатаем»
                 stopTypingSignal()
@@ -4575,7 +4918,7 @@ class ChatActivity : SecureActivity() {
      */
     private fun applyConnectingSubtitleIfNeeded(): Boolean {
         if (liveSyncArrived || !isConnectingCapable()) return false
-        val nm = chat.partnerName.takeIf { it.isNotBlank() } ?: return false
+        val nm = chat.displayName().takeIf { it.isNotBlank() } ?: return false
         binding.tvChatSubtitle.text = getString(R.string.chat_connecting_to, nm)
         binding.tvChatSubtitle.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
         binding.tvChatSubtitle.setOnClickListener(null)
@@ -4596,7 +4939,7 @@ class ChatActivity : SecureActivity() {
      */
     private fun showConnectingOverlay() {
         holdConnectingOverlay = true
-        val nm = chat.partnerName.takeIf { it.isNotBlank() }
+        val nm = chat.displayName().takeIf { it.isNotBlank() }
         binding.tvLoadingLabel.text =
             if (nm != null) getString(R.string.chat_connecting_to, nm)
             else getString(R.string.chat_loading)
@@ -5150,6 +5493,8 @@ class ChatActivity : SecureActivity() {
         isSelfMuted = muted
         currentMuteEvidenceIds = evidenceIds
         if (!muted || untilMs == null) {
+            muteExpiryJob?.cancel()
+            muteExpiryJob = null
             binding.mutedBannerLarge.visibility = View.GONE
             binding.mutedBannerCompact.visibility = View.GONE
             binding.inputArea.visibility = View.VISIBLE
@@ -5158,6 +5503,7 @@ class ChatActivity : SecureActivity() {
             return
         }
         binding.inputArea.visibility = View.GONE
+        scheduleSelfMuteExpiry(untilMs)
         renderMuteEvidenceFeed()
 
         val untilFmt = java.text.SimpleDateFormat("dd.MM.yy, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(untilMs))
@@ -5187,6 +5533,112 @@ class ChatActivity : SecureActivity() {
         if (binding.mutedBannerLarge.visibility == View.VISIBLE || binding.mutedBannerCompact.visibility == View.VISIBLE) return
 
         if (prefs.isMuteBannerCollapsed(chat.chatId, untilMs)) showCollapsed() else showExpanded()
+    }
+
+    /**
+     * Мой бан/мут ПРЯМО ИЗ ROOM, без ожидания снимка канала (§16).
+     *
+     * ⚠️ Репорт: «любое действие от бана до мута у наказанного — только после перезахода».
+     * Наложение мута/бана применялось единственным путём — внутри обработки снимка канала
+     * (processChannelData). Тот вызывается, только когда транспорт СЧЁЛ, что в канале
+     * что-то изменилось, и любая заминка на этом пути (реле не вернуло слот на конкретном
+     * тике, снимок применил фоновый сервис раньше и гейт «уже применено» закрыл повтор)
+     * оставляла экран со старым состоянием до перезахода — а перезаход как раз читает
+     * ростер из Room напрямую, оттого и «помогает».
+     *
+     * Здесь читается ровно то же, что читает перезаход, раз в тик уже существующего
+     * лёгкого тикера (2.5 с) — сети не касается вовсе, одна выборка строки из Room.
+     * Идемпотентно: пока состояние не изменилось, ничего не перерисовываем.
+     */
+    private suspend fun refreshSelfModerationState() {
+        if (!::chat.isInitialized || !chat.isGroup) return
+        // Верифицированный разработчик неприкосновенен (PERSONAL_BUILD.md §Часть 3): его
+        // applySelfMuteState всё равно проигнорирует, а вызывать её каждый тик нельзя —
+        // она возвращает строку ввода, затирая, например, режим выделения сообщений.
+        if (VerifiedBadge.isKeyVerified(prefs.myIdentityPubKey)) return
+        val me = withContext(Dispatchers.IO) {
+            runCatching { db.chatParticipantDao().getOne(chat.id, prefs.myUserId) }.getOrNull()
+        } ?: return
+        if (me.banned) {
+            // checkSelfBanned сам решает, что делать (и уважает неприкосновенность верифиц-дева).
+            withContext(Dispatchers.IO) { checkSelfBanned() }
+            return
+        }
+        val until = me.mutedUntilMs
+        val muted = until != null && until > System.currentTimeMillis()
+        if (muted == isSelfMuted) return // состояние на экране уже верное
+        withContext(Dispatchers.Main) {
+            applySelfMuteState(muted, until, me.mutedReason,
+                MembersSync.evidenceIdsFromStore(me.mutedEvidenceIds))
+        }
+    }
+
+    /**
+     * Видимость сообщений ЗАБАНЕННЫХ/ЗАГЛУШЁННЫХ у ОСТАЛЬНЫХ участников — прямо из Room,
+     * тем же приёмом, что и [refreshSelfModerationState] выше, но для чужого бана/мута.
+     *
+     * ⚠️ Репорт: «после снятия мута, сообщения человека показываются всем только после
+     * перезахода». bannedIds/mutedIds (см. processChannelDataLocked → withoutBanned)
+     * пересчитываются и применяются к ленте ТОЛЬКО внутри обработки снимка канала — а та,
+     * как и у своего мута/бана выше, запускается лишь когда транспорт СЧЁЛ, что изменился
+     * сам chatContent (304 → пропуск). Снятие/наложение мута другого участника меняет
+     * ТОЛЬКО members.txt/Room, содержимое переписки при этом не трогается — поэтому вызов
+     * просто не происходил повторно, и уже показанный (устаревший) фильтр висел до
+     * следующего сообщения в чате или перезахода.
+     *
+     * Сети не касается: берём уже расшифрованный кэш ([lastAllDecodedMessages], БЕЗ
+     * фильтра) и перефильтровываем по СВЕЖИМ данным Room. chatStore.reconcile идемпотентен
+     * (не дёргает список, если состав не поменялся) — сигнатура здесь только для того,
+     * чтобы не пересчитывать фильтр на каждый холостой тик.
+     */
+    private suspend fun refreshOthersModerationFilter() {
+        if (!::chat.isInitialized || !chat.isGroup) return
+        // Ещё ни разу не декодировали содержимое на этом экране — перефильтровывать нечего,
+        // обычный путь (processChannelDataLocked) сам всё применит при первой загрузке.
+        if (lastAllDecodedMessages.isEmpty()) return
+        val groupParticipantsNow = withContext(Dispatchers.IO) { db.chatParticipantDao().getForChat(chat.id) }
+        val nowMs = System.currentTimeMillis()
+        val myUid = prefs.myUserId
+        val bannedIds: Set<String> = groupParticipantsNow
+            .filter { it.banned && it.userId !in verifiedSenderIds }
+            .map { it.userId }.toSet()
+        val mutedIds: Set<String> = groupParticipantsNow
+            .filter { !it.banned && it.mutedUntilMs != null && it.mutedUntilMs > nowMs && it.userId != myUid && it.userId !in verifiedSenderIds }
+            .map { it.userId }.toSet()
+        val sig = bannedIds.sorted().joinToString(",") + "||" + mutedIds.sorted().joinToString(",")
+        if (sig == lastOthersModerationSig) return // состав не поменялся с прошлого применения
+        lastOthersModerationSig = sig
+        val filtered = if (bannedIds.isEmpty() && mutedIds.isEmpty()) lastAllDecodedMessages
+            else lastAllDecodedMessages.filterNot { msg ->
+                msg.senderUserId != null && (msg.senderUserId in bannedIds || msg.senderUserId in mutedIds)
+            }
+        withContext(Dispatchers.Main) { chatStore.reconcile(filtered) }
+    }
+
+    /**
+     * Будильник на КОНЕЦ моего мута: ровно в срок перечитывает свою строку ростера и
+     * применяет состояние заново. Сети не трогает (§1) — срок уже лежит в Room, а сюда он
+     * попал обычным синком. Идемпотентно: продлили мут — на срабатывании увидим новый срок
+     * и переставим будильник; сняли досрочно — обычный тик снимет плашку раньше, а
+     * сработавший будильник просто подтвердит то же самое.
+     */
+    private fun scheduleSelfMuteExpiry(untilMs: Long) {
+        muteExpiryJob?.cancel()
+        val wait = untilMs - System.currentTimeMillis()
+        if (wait <= 0L) return
+        muteExpiryJob = lifecycleScope.launch {
+            // +1 c — чтобы к моменту проверки System.currentTimeMillis() гарантированно
+            // перешагнул срок (иначе сравнение "> now" на границе даст ещё один круг).
+            delay(wait + 1_000L)
+            if (!::chat.isInitialized) return@launch
+            val me = withContext(Dispatchers.IO) {
+                runCatching { db.chatParticipantDao().getOne(chat.id, prefs.myUserId) }.getOrNull()
+            }
+            val until = me?.mutedUntilMs
+            val stillMuted = until != null && until > System.currentTimeMillis()
+            applySelfMuteState(stillMuted, until, me?.mutedReason,
+                MembersSync.evidenceIdsFromStore(me?.mutedEvidenceIds))
+        }
     }
 
     /**
@@ -6165,7 +6617,7 @@ class ChatActivity : SecureActivity() {
         if (!::chat.isInitialized || !chat.isGroup) return emptyList()
         return currentMessages.filter {
             !it.isSelf && it.msgId.isNotBlank() && it.msgId !in visitedMentionIds &&
-                MentionUtil.mentionsMe(it.text, prefs.myTag, prefs.myName)
+                MentionUtil.mentionsMeAny(it.text, prefs.myUserId, prefs.myTag, prefs.myName)
         }
     }
 
@@ -6270,7 +6722,11 @@ class ChatActivity : SecureActivity() {
         if (q == null) { hideMentionStrip(); return }
         val query = q.second.lowercase()
         val list = mentionCandidates.filter { u ->
-            query.isEmpty() || (u.tag?.lowercase()?.startsWith(query) == true) || u.name.lowercase().startsWith(query)
+            // ⚠️ Тег хранится вместе с собакой («@seba2»), а запрос приходит без неё (§16):
+            // без removePrefix поиск по тегу не срабатывал НИКОГДА — подсказка находила
+            // человека только по имени.
+            val tag = u.tag?.removePrefix("@")?.lowercase()
+            query.isEmpty() || (tag?.startsWith(query) == true) || u.name.lowercase().startsWith(query)
         }.take(30)
         if (list.isEmpty()) { hideMentionStrip(); return }
         mentionAdapter?.submit(list)
@@ -6296,8 +6752,17 @@ class ChatActivity : SecureActivity() {
         val editable = binding.etMessage.text ?: return
         val caret = binding.etMessage.selectionStart.coerceIn(0, editable.length)
         if (q.first < 0 || q.first > caret) { hideMentionStrip(); return }
-        val handle = user.tag?.takeIf { it.isNotBlank() } ?: user.name
-        val insert = "@$handle "
+        // ⚠️ Хэндл БЕЗ ведущей собаки (§16): тег хранится в виде «@seba2», и старый код
+        // добавлял свою собаку сверху — в поле получалось «@@seba2».
+        val handle = (user.tag?.takeIf { it.isNotBlank() } ?: user.name).removePrefix("@")
+        // В поле ввода — ТОЛЬКО видимая часть. Метка с userId (Message.mentionMarker) больше
+        // сюда не пишется: её разделители невидимы, а сам userId — обычный текст, поэтому
+        // в строке ввода за тегом тянулся сырой uuid. Пару «хэндл → userId» запоминаем и
+        // приклеиваем метку при отправке (Message.attachMentionMarkers) — упоминание
+        // остаётся точным (тёзка его не перехватит, смена ника не разорвёт связь),
+        // но пользователь видит ровно то, что написал.
+        pendingMentionIds[handle] = user.userId
+        val insert = "@" + handle + " "
         editable.replace(q.first, caret, insert)
         // Подсветка вставленного «@тег» (без хвостового пробела).
         runCatching {
@@ -6458,15 +6923,23 @@ class ChatActivity : SecureActivity() {
     }
 
     private fun showEditDialog(msg: Message) {
+        // Правка показывает ЧИСТЫЙ текст (без служебных меток упоминаний), иначе в диалоге
+        // висел бы сырой userId — та же беда, что была в строке ввода. Пары «хэндл → userId»
+        // забираем из оригинала и навешиваем обратно на сохранении, поэтому упоминания
+        // переживают правку, даже если человек текст вокруг них переписал.
+        val clean = Message.stripMentionMarkers(msg.text)
+        val handles = Message.mentionHandleMap(msg.text)
         NeonDialog.showEdit(
             ctx = this,
             title = getString(R.string.dialog_edit_title),
-            initialText = msg.text,
+            initialText = clean,
             positiveText = getString(R.string.btn_save),
             negativeText = getString(R.string.btn_cancel),
             validator = { it.isNotBlank() && !ZalgoFilter.containsZalgo(it) }
         ) { newText ->
-            if (newText.isNotEmpty() && newText != msg.text) performEdit(msg, newText)
+            if (newText.isNotEmpty() && newText != clean) {
+                performEdit(msg, Message.attachMentionMarkers(newText, handles))
+            }
         }
     }
 
@@ -6506,7 +6979,8 @@ class ChatActivity : SecureActivity() {
             // переопубликовываем свой слот, чтобы плашка показала новый текст, а не «потеряла»
             // сообщение. Работает и для старых бесед (§17): те же поля Room, тот же общий слой.
             val newMsgId = newEncrypted.take(40)
-            if (chat.isGroup && (pinnedIds.contains(msg.msgId) || myPinnedIds.contains(msg.msgId))) {
+            val pinFollowedEdit = chat.isGroup && (pinnedIds.contains(msg.msgId) || myPinnedIds.contains(msg.msgId))
+            if (pinFollowedEdit) {
                 remapPinnedMsgId(msg.msgId, newMsgId)
             }
 
@@ -6518,6 +6992,10 @@ class ChatActivity : SecureActivity() {
                     if (!ok) {
                         // Ошибка отправки: откатываем правку — вернётся оригинал.
                         chatStore.dropPending(newEncrypted)
+                        // ⚠️ И закреп тоже возвращаем на исходный msgId (§16): его перемапили
+                        // ЗАРАНЕЕ, до сети. Без отката плашка закрепа указывала бы на строку,
+                        // которой на реле никогда не было, — «закреп потерял сообщение».
+                        if (pinFollowedEdit) lifecycleScope.launch { remapPinnedMsgId(newMsgId, msg.msgId) }
                         Toast.makeText(this@ChatActivity,
                             getString(R.string.error_message_not_found), Toast.LENGTH_SHORT).show()
                     }
@@ -6913,6 +7391,12 @@ class ChatActivity : SecureActivity() {
         } else {
             binding.tvEmptyPlaceholder.visibility = if (empty) View.VISIBLE else View.GONE
         }
+        // Приветственная плашка беседы — только ОТСЮДА и только когда лента реально
+        // раскрыта (§16). Коллектор сообщений отдаёт первую (ещё пустую) величину раньше,
+        // чем применён локальный снимок, поэтому вход в СТАРУЮ беседу успевал мигнуть
+        // плашкой «добро пожаловать» и тут же пометить её показанной. Здесь состав ленты
+        // уже настоящий: пусто — значит пусто. Вызов идемпотентен (см. maybeShowGroupWelcome).
+        if (empty && chat.isGroup && !chat.isFavorites) maybeShowGroupWelcome()
     }
 
     companion object {
@@ -6954,7 +7438,15 @@ class ChatActivity : SecureActivity() {
          * Поднято с 2с до 5с: частый presence+poll заставлял публичные Nostr-реле
          * резать запросы. 5с — баланс «онлайн» без миганий и нагрузки на реле.
          */
-        const val PRESENCE_INTERVAL_MS = 5_000L
+/**
+         * Период тихого обновления чата (см. startSilentRefresh). Сорок пять секунд — верхняя
+         * граница того, сколько экран может показывать устаревшее состояние, если один снимок
+         * применился не полностью. Чаще не нужно: обычный опрос идёт каждую секунду и в
+         * штатной ситуации всё показывает сам, а это страховка от расхождения отметок.
+         */
+        const val SILENT_REFRESH_MS = 45_000L
+
+                const val PRESENCE_INTERVAL_MS = 5_000L
         // Фаза 1 синхронизации: union-чтение слотов profiles.txt (убирает lost-update —
         // мерцание аватара/presence). ВЫКЛ по умолчанию: включить на ОБОИХ телефонах для
         // теста; после подтверждения сделать дефолтом. (см. SYNC_AUDIT.md)

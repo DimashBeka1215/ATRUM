@@ -13,6 +13,7 @@ import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -20,21 +21,27 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import com.atrum.chat.databinding.ActivityQrScanBinding
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.BinaryBitmap
-import com.google.zxing.DecodeHintType
-import com.google.zxing.MultiFormatReader
-import com.google.zxing.PlanarYUVLuminanceSource
-import com.google.zxing.common.HybridBinarizer
+import com.google.mlkit.vision.barcode.BarcodeScannerOptions
+import com.google.mlkit.vision.barcode.BarcodeScanning
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.TimeUnit
 
 /**
- * Сканер QR на CameraX + ZXing.
+ * Сканер QR на CameraX + ML Kit (репорт: «QR сканируется долго» — ML Kit заметно быстрее и
+ * надёжнее ZXing на реальных углах/освещении, см. аудит по этому репорту). Bundled-модель
+ * (`com.google.mlkit:barcode-scanning`, НЕ `play-services-mlkit-barcode-scanning`) — модель
+ * зашита в APK и работает полностью офлайн, без Google Play Services и без обращений в сеть
+ * ни при первом запуске, ни когда-либо ещё — тот же принцип, что и у остального приложения
+ * (§1 CLAUDE.md, «без серверов»). Цена — фиксированные +~2.4МБ к размеру APK.
  *  - Режим [MODE_BT]: распознаёт "ATRUMBT:<token>" → возвращает токен в [EXTRA_TOKEN].
  *  - Режим [MODE_INVITE]: распознаёт invite/deep-link (atrum://join#ATRM…) → [EXTRA_RAW].
  * В обоих режимах полный payload отдаётся в [EXTRA_RAW].
+ *
+ * ⚠️ ZXing НЕ удалён из проекта — он остался в QrGen.kt для ГЕНЕРАЦИИ QR сверки (SAS),
+ * это не связано со сканированием и трогать не нужно (см. build.gradle.kts).
  */
 class QrScanActivity : AppCompatActivity() {
 
@@ -45,16 +52,14 @@ class QrScanActivity : AppCompatActivity() {
     /** Что принимаем: BLE-токен (по умолчанию) или invite-приглашение. */
     private var mode = MODE_BT
 
-    private val reader = MultiFormatReader().apply {
-        setHints(
-            mapOf(
-                DecodeHintType.TRY_HARDER to true,
-                // Сканер принимает только QR (BT-токен и invite оба кодируются в QR) —
-                // ограничение формата чуть ускоряет декод и не влияет на распознавание.
-                DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE)
-            )
-        )
-    }
+    private val scanner = BarcodeScanning.getClient(
+        BarcodeScannerOptions.Builder()
+            // Сканер принимает только QR (BT-токен и invite оба кодируются в QR) —
+            // ограничение формата чуть ускоряет детекцию и не влияет на распознавание
+            // (тот же принцип, что был у ZXing POSSIBLE_FORMATS).
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+            .build()
+    )
 
     private val permLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -146,14 +151,10 @@ class QrScanActivity : AppCompatActivity() {
     }
 
     /**
-     * Диагностика (см. CLAUDE.md §14): раньше ЛЮБОЕ исключение в этой функции —
-     * включая НЕ штатные (не NotFoundException) — молча проглатывалось на каждом
-     * кадре без единого следа. Если декодер падает не на «QR не найден в кадре»,
-     * а на чём-то структурном (например IllegalArgumentException из
-     * PlanarYUVLuminanceSource при несовпадении реального размера буфера кадра с
-     * ожидаемым на конкретном железе), сканер выглядел как «вообще не реагирует»,
-     * и разобраться без логов было невозможно. Показываем причину ОДИН раз (не
-     * спамим тостами по кадрам) — этого достаточно, чтобы прислать текст ошибки.
+     * Диагностика (см. CLAUDE.md §14): раньше ЛЮБОЕ исключение при декоде молча проглатывалось
+     * на каждом кадре без единого следа — сканер выглядел как «вообще не реагирует», и
+     * разобраться без логов было невозможно. Показываем причину ОДИН раз (не спамим тостами
+     * по кадрам) — этого достаточно, чтобы прислать текст ошибки.
      */
     private val reportedError = AtomicBoolean(false)
 
@@ -166,44 +167,33 @@ class QrScanActivity : AppCompatActivity() {
         }
     }
 
-    /** Переиспользуемый буфер Y-плоскости кадра — чтобы не аллоцировать ~1 МБ на КАЖДЫЙ кадр
-     *  (иначе постоянные GC-паузы дёргают анализ и скан «залипает»). Растёт только при
-     *  необходимости; декод синхронный на одном потоке, поэтому переиспользование безопасно. */
-    private var frameBuf = ByteArray(0)
-
+    /**
+     * ⚠️ Раньше (ZXing) кадр обрезался до центрального квадрата ~70% перед декодом — это и
+     * было фиксом «безумно долгого» скана, отбрасывало больше половины пикселей. С ML Kit
+     * этот трюк НЕ переносим: `InputImage.fromMediaImage` игнорирует `Image.cropRect` — ML
+     * Kit всегда анализирует кадр целиком (см. googlesamples/mlkit#491, официального обхода
+     * нет). Компенсируем тем же способом, что советует сама доктрина ML Kit — разрешением
+     * анализа (см. `setTargetResolution(1280,720)` в startCamera — уже ниже подсказанного
+     * докой потолка ~2МП), а не ручной сборкой обрезанного NV21-буфера из отдельных
+     * YUV-плоскостей: риск багов на конкретном железе (шаг строки/подвыборка хромы) — не тот
+     * риск, который стоит брать в код, читающий и BT-пейринг, и инвайт.
+     */
+    @OptIn(ExperimentalGetImage::class)
     private fun decode(proxy: ImageProxy) {
         if (handled.get()) { proxy.close(); return }
-        try {
-            val plane = proxy.planes.firstOrNull() ?: return
-            val buffer = plane.buffer
-            val need = buffer.remaining()
-            if (frameBuf.size < need) frameBuf = ByteArray(need)
-            val data = frameBuf
-            buffer.get(data, 0, need)
-            val w = proxy.width
-            val h = proxy.height
-            // Декодим ТОЛЬКО центральный квадрат кадра, а не всю картинку 1280×720. Пользователь
-            // наводит QR в центральное окно сканера (ScanOverlayView, сторона 0.62 экрана), поэтому
-            // код всегда в центре кадра. Кроп ~70% отбрасывает >50% пикселей → ZXing (с TRY_HARDER)
-            // бинаризует и ищет finder-паттерны на порядок быстрее, и не отвлекается на фон.
-            // Это и есть причина «безумно долгого» скана: раньше тяжёлый декод гонялся по всему кадру.
-            val wClamped = w.coerceAtMost(plane.rowStride)
-            val side = (minOf(wClamped, h) * 7 / 10).coerceAtLeast(2)
-            val left = (wClamped - side) / 2
-            val top = (h - side) / 2
-            val source = PlanarYUVLuminanceSource(data, plane.rowStride, h, left, top, side, side, false)
-            val bitmap = BinaryBitmap(HybridBinarizer(source))
-            val result = try {
-                reader.decodeWithState(bitmap)
-            } catch (_: com.google.zxing.NotFoundException) {
-                null // штатно — в этом конкретном кадре QR не найден, пробуем следующий
-            } catch (e: Throwable) {
-                reportDecodeError("decodeWithState", e)
-                null
-            }
-            reader.reset()
-            val text = result?.text
-            if (text != null) {
+        val mediaImage = proxy.image
+        if (mediaImage == null) { proxy.close(); return }
+        val image = try {
+            InputImage.fromMediaImage(mediaImage, proxy.imageInfo.rotationDegrees)
+        } catch (e: Throwable) {
+            reportDecodeError("fromMediaImage", e)
+            proxy.close()
+            return
+        }
+        scanner.process(image)
+            .addOnSuccessListener { barcodes ->
+                val text = barcodes.firstOrNull { !it.rawValue.isNullOrEmpty() }?.rawValue
+                    ?: return@addOnSuccessListener
                 if (mode == MODE_INVITE) {
                     val invite = InviteCodec.extractInvite(text)
                     if (invite != null && handled.compareAndSet(false, true)) {
@@ -216,14 +206,11 @@ class QrScanActivity : AppCompatActivity() {
                     }
                 }
             }
-        } catch (e: Throwable) {
-            // Это уже НЕ decodeWithState (тот перехвачен выше) — значит упало на сборке
-            // источника/битмапа (PlanarYUVLuminanceSource/BinaryBitmap/HybridBinarizer)
-            // ДО декодера. Раньше такой кадр молча пропускался КАЖДЫЙ раз без следа.
-            reportDecodeError("decode", e)
-        } finally {
-            proxy.close()
-        }
+            // Штатных «не найдено» здесь нет (в отличие от ZXing NotFoundException) — ML Kit
+            // на пустом кадре просто зовёт addOnSuccessListener с пустым списком, а не падает.
+            // addOnFailureListener — это уже структурная ошибка самого детектора.
+            .addOnFailureListener { e -> reportDecodeError("scanner.process", e) }
+            .addOnCompleteListener { proxy.close() }
     }
 
     /** Возвращает результат: EXTRA_RAW — всегда, EXTRA_TOKEN — только для BLE. */
@@ -237,6 +224,7 @@ class QrScanActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         runCatching { analysisExecutor.shutdown() }
+        runCatching { scanner.close() }
     }
 
     companion object {
