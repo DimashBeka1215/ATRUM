@@ -154,8 +154,15 @@ class CreateChatActivity : SecureActivity() {
         val t = prefs.myTag ?: ""
         val a = btSafeAvatar()
         lifecycleScope.launch(Dispatchers.IO) {
-            var ok = false; var tries = 0
-            while (!ok && tries < 4) { ok = BleManager.sendHello(n, t, a); if (!ok) Thread.sleep(180); tries++ }
+            // BleManager.sendHello теперь сам ждёт ACK от собеседника и ретраит внутри —
+            // внешний слепой while-цикл больше не нужен (раньше "ok" значило только «байты
+            // ушли из этого телефона», а не «собеседник получил», см. BT_AUDIT.md 1.4).
+            val delivered = BleManager.sendHello(n, t, a)
+            if (!delivered) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@CreateChatActivity, R.string.bt_failed, Toast.LENGTH_LONG).show()
+                }
+            }
         }
     }
 
@@ -164,6 +171,43 @@ class CreateChatActivity : SecureActivity() {
     ) { result ->
         if (result.values.all { it }) startBtDiscovery()
         else binding.btStatus.setText(R.string.bt_perm_needed)
+    }
+
+    /** Действие, которое выполнится после того, как пользователь включит Bluetooth
+     *  (или сразу, если он уже включён) — см. [ensureBluetoothOn]. */
+    private var pendingBtAction: (() -> Unit)? = null
+
+    /** Системный диалог «Включить Bluetooth» (ACTION_REQUEST_ENABLE). По дизайну пользователь
+     *  не должен сам идти в системные настройки — сканирование/подключение по BT обязано само
+     *  предложить включить адаптер, если он выключен. */
+    private val enableBtLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val action = pendingBtAction
+        pendingBtAction = null
+        if (result.resultCode == RESULT_OK || BleManager.isEnabled(this)) {
+            action?.invoke()
+        } else {
+            binding.btStatus.setText(R.string.bt_failed)
+            Toast.makeText(this, R.string.bt_failed, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * Гарантирует, что Bluetooth-адаптер включён, прежде чем сканировать/подключаться.
+     * Если выключен — показывает системный диалог включения и выполняет [onEnabled] по
+     * согласию пользователя; если уже включён — выполняет сразу. Разрешения на Bluetooth
+     * должны быть уже выданы к моменту вызова (проверяются до него).
+     */
+    private fun ensureBluetoothOn(onEnabled: () -> Unit) {
+        if (BleManager.isEnabled(this)) { onEnabled(); return }
+        pendingBtAction = onEnabled
+        runCatching {
+            enableBtLauncher.launch(Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE))
+        }.onFailure {
+            pendingBtAction = null
+            binding.btStatus.setText(R.string.bt_failed)
+        }
     }
 
     /** Сканер QR (вход с экрана выбора) → подключение по токену через BLE. */
@@ -180,7 +224,7 @@ class CreateChatActivity : SecureActivity() {
     private val qrBtPermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
-        if (result.values.all { it }) launchQrScanner()
+        if (result.values.all { it }) ensureBluetoothOn { launchQrScanner() }
         else Toast.makeText(this, R.string.bt_perm_needed, Toast.LENGTH_LONG).show()
     }
 
@@ -747,6 +791,20 @@ class CreateChatActivity : SecureActivity() {
         val myAvatar = btSafeAvatar()
         setLoading(true)
         lifecycleScope.launch {
+            // Сначала приглашение (sendInvite сам ждёт ACK и ретраит) — и только когда
+            // собеседник ЕГО ПОДТВЕРДИЛ, заводим локальную запись чата и открываем его.
+            // Раньше порядок был обратным: чат создавался и открывался ДО подтверждения,
+            // так что при потере invite по BLE джойнер оставался в вечном ожидании, а автор
+            // уже сидел в "созданном" чате, ничего не подозревая.
+            val delivered = withContext(Dispatchers.IO) {
+                BleManager.sendInvite(channelId, password, myName, myTag, myAvatar)
+            }
+            if (!delivered) {
+                setLoading(false)
+                btChatOpened = false
+                Toast.makeText(this@CreateChatActivity, R.string.bt_invite_failed, Toast.LENGTH_LONG).show()
+                return@launch
+            }
             @Suppress("DEPRECATION")
             val chat = Chat(
                 chatId = channelId,
@@ -761,14 +819,6 @@ class CreateChatActivity : SecureActivity() {
             )
             prefs.saveChatSecrets(channelId, BluetoothTransport.BT_TOKEN, password)
             val newId = withContext(Dispatchers.IO) { db.chatDao().insert(chat) }
-            withContext(Dispatchers.IO) {
-                var ok = false; var tries = 0
-                while (!ok && tries < 5) {
-                    ok = BleManager.sendInvite(channelId, password, myName, myTag, myAvatar)
-                    if (!ok) Thread.sleep(200)
-                    tries++
-                }
-            }
             BleManager.keepAlive = true
             startActivity(Intent(this@CreateChatActivity, ChatActivity::class.java).apply {
                 putExtra(ChatActivity.EXTRA_CHAT_ID, newId)
@@ -811,7 +861,7 @@ class CreateChatActivity : SecureActivity() {
     private fun onScanBtCardClicked() {
         val missing = BleManager.missingPermissions(this)
         if (missing.isNotEmpty()) qrBtPermLauncher.launch(missing.toTypedArray())
-        else launchQrScanner()
+        else ensureBluetoothOn { launchQrScanner() }
     }
 
     private fun launchQrScanner() {
@@ -849,6 +899,12 @@ class CreateChatActivity : SecureActivity() {
         if (btDiscovering) return
         val missing = BleManager.missingPermissions(this)
         if (missing.isNotEmpty()) { btPermLauncher.launch(missing.toTypedArray()); return }
+        ensureBluetoothOn { startBtDiscoveryNow() }
+    }
+
+    /** Собственно запуск обнаружения — вызывается, когда разрешения выданы и BT точно включён. */
+    private fun startBtDiscoveryNow() {
+        if (btDiscovering) return
         if (!BleManager.isEnabled(this)) { binding.btStatus.setText(R.string.bt_failed); return }
         BleManager.setListener(btListener)
         btJoiner = false

@@ -202,6 +202,12 @@
             android:exported="false"
             android:theme="@style/Theme.AtrumChat" />
 
+        <!-- Упоминания меня в одной беседе (вход — бейдж «@N» в списке чатов) -->
+        <activity
+            android:name=".MentionsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AtrumChat" />
+
         <!-- Детальная статистика одного участника (диаграммы, список сообщений) -->
         <activity
             android:name=".UserStatsActivity"

@@ -31,8 +31,14 @@ interface ChatParticipantDao {
     @Query("DELETE FROM chat_participants WHERE ownerId = :ownerId AND userId NOT IN (:keepUserIds)")
     suspend fun pruneRemoved(ownerId: Long, keepUserIds: List<String>)
 
-    @Query("UPDATE chat_participants SET banned = 1 WHERE ownerId = :ownerId AND userId = :userId")
-    suspend fun ban(ownerId: Long, userId: String)
+    /**
+     * Бан. [atMs] — метка ЭТОГО решения (см. ChatParticipant.modTs): по ней слияние
+     * мультиподписи понимает, какое решение свежее. Без метки разбан невозможен в
+     * принципе (бан «всасывается» в чужие слоты и возвращается) — см. sb_unban.js.
+     * Передавать System.currentTimeMillis() момента действия.
+     */
+    @Query("UPDATE chat_participants SET banned = 1, modTs = :atMs WHERE ownerId = :ownerId AND userId = :userId")
+    suspend fun ban(ownerId: Long, userId: String, atMs: Long)
 
     /**
      * Разбан (ADR-001, §Меню забаненных). Локально снимает флаг сразу — источник
@@ -41,8 +47,8 @@ interface ChatParticipantDao {
      * доступ в чат — ему нужно заново получить приглашение (его локальный чат и
      * секреты были удалены на его устройстве в момент бана, см. ChatActivity.checkSelfBanned).
      */
-    @Query("UPDATE chat_participants SET banned = 0 WHERE ownerId = :ownerId AND userId = :userId")
-    suspend fun unban(ownerId: Long, userId: String)
+    @Query("UPDATE chat_participants SET banned = 0, modTs = :atMs WHERE ownerId = :ownerId AND userId = :userId")
+    suspend fun unban(ownerId: Long, userId: String, atMs: Long)
 
     @Query("DELETE FROM chat_participants WHERE ownerId = :ownerId")
     suspend fun deleteForChat(ownerId: Long)
@@ -60,12 +66,12 @@ interface ChatParticipantDao {
      * MembersSync.publish. [evidenceIds] — msgId'ы сообщений-оснований через запятую
      * (см. ChatParticipant.mutedEvidenceIds), null/пусто — без оснований.
      */
-    @Query("UPDATE chat_participants SET mutedUntilMs = :untilMs, mutedReason = :reason, mutedEvidenceIds = :evidenceIds WHERE ownerId = :ownerId AND userId = :userId")
-    suspend fun mute(ownerId: Long, userId: String, untilMs: Long, reason: String?, evidenceIds: String?)
+    @Query("UPDATE chat_participants SET mutedUntilMs = :untilMs, mutedReason = :reason, mutedEvidenceIds = :evidenceIds, modTs = :atMs WHERE ownerId = :ownerId AND userId = :userId")
+    suspend fun mute(ownerId: Long, userId: String, untilMs: Long, reason: String?, evidenceIds: String?, atMs: Long)
 
-    /** Досрочное снятие мута администратором. */
-    @Query("UPDATE chat_participants SET mutedUntilMs = NULL, mutedReason = NULL, mutedEvidenceIds = NULL WHERE ownerId = :ownerId AND userId = :userId")
-    suspend fun unmute(ownerId: Long, userId: String)
+    /** Досрочное снятие мута администратором. [atMs] — метка решения, см. [ban]. */
+    @Query("UPDATE chat_participants SET mutedUntilMs = NULL, mutedReason = NULL, mutedEvidenceIds = NULL, modTs = :atMs WHERE ownerId = :ownerId AND userId = :userId")
+    suspend fun unmute(ownerId: Long, userId: String, atMs: Long)
 
     /**
      * Права делегированного администратора (см. AdminPermissions). 0 — снятие роли.

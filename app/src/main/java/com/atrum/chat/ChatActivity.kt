@@ -60,6 +60,9 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class ChatActivity : SecureActivity() {
 
+    // Экран самой переписки — скриншоты запрещены всегда (см. SecureActivity.chatContentScreen).
+    override val chatContentScreen: Boolean = true
+
     private lateinit var binding: ActivityChatBinding
     private lateinit var prefs: Prefs
     private lateinit var db: AppDatabase
@@ -416,8 +419,15 @@ class ChatActivity : SecureActivity() {
     /** true после первого опроса профилей группового чата в этой сессии (см. doSyncProfilesOnce). */
     private var groupJoinAnnounceInitialized: Boolean = false
 
-    /** userId участников группы, чьё присоединение уже объявлено системным сообщением в этой сессии. */
-    private val announcedJoinedUserIds = mutableSetOf<String>()
+    /**
+     * userId участников группы, чьё присоединение уже объявлено системным сообщением в этой сессии.
+     *
+     * ⚠️ Потокобезопасный набор, а не mutableSetOf (репорт: экран, забитый одинаковыми
+     * «X присоединился к чату»). Опрос идёт раз в секунду, а один проход по Tor длится дольше;
+     * проходы перекрываются, и обычный HashSet тут и теряет отметки (гонка на add), и рискует
+     * повреждением структуры при одновременной записи из двух корутин.
+     */
+    private val announcedJoinedUserIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     // ── Гонка джойна в группу (ADR-001, §Пропагация бана / известное ограничение) ──
     // Приём в группу неатомарен: JoinChatActivity проверяет ёмкость по устаревшему
@@ -503,6 +513,11 @@ class ChatActivity : SecureActivity() {
 
     /** Откладывает вызов stopTypingSignal() на 3 сек после последнего нажатия */
     private var stopTypingJob: Job? = null
+
+    /** Локальная (не сетевая) реакция на печать — линия-подсветка под текстом в glass
+     *  (вариант Г). Отдельный короткий дебаунс (~650мс), не связан с 3-секундным сетевым
+     *  typing-сигналом (см. §1.5 — реакция обязана быть мгновенной, на месте). */
+    private var composeGlowJob: Job? = null
 
     /**
      * Единый presence-цикл: каждые PRESENCE_INTERVAL_MS шлёт ОДИН PATCH с
@@ -1923,6 +1938,7 @@ class ChatActivity : SecureActivity() {
                 if (bitmap != null) {
                     binding.ivChatWallpaper.setImageBitmap(bitmap)
                     binding.ivChatWallpaper.visibility = android.view.View.VISIBLE
+                    if (isGlass) AtmosphericGlassBackdrop.invalidate()
                 } else {
                     binding.ivChatWallpaper.visibility = android.view.View.GONE
                 }
@@ -1944,6 +1960,7 @@ class ChatActivity : SecureActivity() {
                     binding.ivChatWallpaper.setImageBitmap(def)
                     binding.ivChatWallpaper.visibility = android.view.View.VISIBLE
                     hasWallpaper = true
+                    if (isGlass) AtmosphericGlassBackdrop.invalidate()
                 } else {
                     binding.ivChatWallpaper.visibility = android.view.View.GONE
                 }
@@ -1978,18 +1995,37 @@ class ChatActivity : SecureActivity() {
 
     /** Atmospheric Glass UI: ultra-transparent, cinematic, blurred. */
     private fun applyGlassStyle() {
+        // Панель ответа теперь использует общий AtmosphericGlassBackdrop (см.
+        // attachAtmosphericGlass() ниже) — отдельная цель (setTarget) ей больше не нужна,
+        // она сама встаёт в общий задник вместе с шапкой и пилюлей ввода.
         binding.replyPanel.setGlassMode(true)
-        binding.replyPanel.setTarget(binding.rvMessages)
-        val glassToolbarBg  = ContextCompat.getDrawable(this, R.drawable.bg_glass_toolbar)
-        val glassPillBg     = ContextCompat.getDrawable(this, R.drawable.bg_glass_input_pill)
-        val glowColor       = 0x40C77DFF.toInt()   // 25% purple
         val overlayBgColor  = 0x99000000.toInt()   // 60% black for loading overlay
 
-        binding.chatHeader.background = glassToolbarBg
+        // Капсулу несёт БЕЙДЖ (назад + аватар + имя), а не вся строка шапки: бейдж имеет
+        // ширину по содержимому, поэтому стекло кончается сразу за именем — короткий бейдж
+        // вместо полосы во всю ширину. Сама строка шапки прозрачна и служит лишь рамкой,
+        // внутри которой бейдж стоит слева, а три точки — у правого края.
+        //
+        // Фоны стеклянных поверхностей (бейдж, пилюля, три точки) НЕ выставляются здесь:
+        // их выставляет сам материал в attachAtmosphericGlass() — плоская полупрозрачная
+        // заливка (@color/glass_tint), 25.08.2026 без преломления обоев, см. историю
+        // отката в AtmosphericGlass.kt. Прежние bg_glass_* остаются только для кнопок
+        // внутри стекла.
+        binding.chatHeader.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        setHeaderMargins(startEndDp = GLASS_HEADER_MARGIN_DP, topDp = 6, paddingVerticalDp = 0)
+        setHeaderBadgeInset(GLASS_BADGE_INSET_DP)
+        // Жёлоб шапки: 16dp отступ строки + 6dp её внутренний паддинг. Панель ввода
+        // выравниваем ровно по нему, чтобы края пилюли совпали со стрелкой и точками.
+        setInputAreaInset(GLASS_HEADER_MARGIN_DP + CHAT_HEADER_PADDING_DP)
         binding.inputArea.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-        binding.inputPill.background = glassPillBg
-        binding.headerDivider.setBackgroundColor(glowColor)
-        binding.headerDivider.visibility = android.view.View.VISIBLE
+        // Кнопки отправки/микрофона — тот же плотный акцентный кружок, что и в classic.
+        // Стрелке назад и трём точкам фон здесь НЕ задаём: они самостоятельные стеклянные
+        // поверхности, и фоном им становится сам материал (attachAtmosphericGlass ниже) —
+        // плоская заливка, см. комментарий выше.
+        // Скрепка живёт ВНУТРИ пилюли — ей «clear glass»: прозрачна в покое, лёгкая заливка
+        // при нажатии (стекло на стекле запрещено документацией Apple).
+        binding.btnAttach.setBackgroundResource(R.drawable.bg_glass_icon_button)
+        binding.headerDivider.visibility = android.view.View.GONE
         binding.loadingOverlay.setBackgroundColor(overlayBgColor)
         // Крупная плашка мута играет ту же роль, что loadingOverlay (перекрывает
         // область сообщений) — тот же фон, чтобы не класть непрозрачный @color/bg
@@ -2000,22 +2036,31 @@ class ChatActivity : SecureActivity() {
         binding.viewScrimTop.visibility    = android.view.View.VISIBLE
         binding.viewScrimBottom.visibility = android.view.View.VISIBLE
 
-        // API 31+: backdrop blur for true glass effect (via reflection — avoids SDK stub gap)
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            try {
-                val blurMethod = android.view.View::class.java
-                    .getMethod("setBackgroundBlurRadius", Int::class.javaPrimitiveType)
-                blurMethod.invoke(binding.chatHeader, 40)
-                blurMethod.invoke(binding.inputPill, 25)
-            } catch (_: Throwable) { /* not available on this device */ }
-        }
+        // ⚠️ Здесь раньше стоял «backdrop blur» через рефлексию на
+        // View.setBackgroundBlurRadius. Такого метода в публичном Android API НЕТ —
+        // getMethod всегда бросал NoSuchMethodException, его глотал catch, и размытия не
+        // было НИКОГДА, ни на одном устройстве (репорт: «стекло мутное и серое»). Блок
+        // удалён давно. 25.08.2026: последующая замена (настоящее преломление через
+        // AtmosphericGlassBackdrop) тоже откатана — материал теперь плоская заливка без
+        // какого-либо размытия/преломления, см. AtmosphericGlass.kt. Не возвращать —
+        // reflection-путь нерабочий by design.
 
         // Tint icons/text white for readability over wallpaper
         val white = android.graphics.Color.WHITE
         binding.tvDisplayName.setTextColor(white)
         binding.tvChatSubtitle.setTextColor(0xB3FFFFFF.toInt())  // 70% white
+        // БАГ (найден при этой же правке, см. CLAUDE.md §16): btn_back/btn_more держат статичный
+        // app:tint из XML (text_primary/text_secondary) — в СВЕТЛОЙ теме это тёмно-серый/чёрный
+        // на тёмной стеклянной капсуле, то есть фактически невидимые кнопки. Форсируем белый,
+        // как и остальные элементы шапки в glass; classic возвращает тему — restoreDefaultTextColors.
+        binding.btnBack.setColorFilter(white)
+        binding.btnMore.setColorFilter(0xB3FFFFFF.toInt())  // 70% white, как subtitle
         styleNotifEmptyCard(overWallpaper = true)
         stylePinnedBar(overWallpaper = true)
+        // Плоская стеклянная заливка бейджа/пилюли/кнопок. Ставится последним:
+        // полагается на уже выставленные выше фоны и геометрию (см. AtmosphericGlass.kt —
+        // там же история отката преломления/блика/свечения от касания).
+        attachAtmosphericGlass()
     }
 
     /** Classic mode with wallpaper: semi-transparent overlay on toolbar/input. */
@@ -2023,10 +2068,27 @@ class ChatActivity : SecureActivity() {
         binding.replyPanel.setGlassMode(false)
         val overlayColor = ContextCompat.getColor(this, R.color.chat_overlay)
         val pillBg       = ContextCompat.getDrawable(this, R.drawable.bg_chat_input_pill)
+        val sendBg       = ContextCompat.getDrawable(this, R.drawable.bg_send_button)
 
         binding.chatHeader.setBackgroundColor(overlayColor)
+        // paddingVerticalDp=10 явно возвращает XML-дефолт — иначе после glass-режима он бы
+        // «прилип» и здесь при переключении без пересоздания Activity. Бейдж в classic —
+        // просто прозрачная группа без своих отступов: фон рисует сам chat_header.
+        setHeaderMargins(startEndDp = 0, topDp = 0, paddingVerticalDp = 10)
+        binding.headerBadge.background = null
+        setHeaderBadgeInset(0)
+        setInputAreaInset(CLASSIC_INPUT_INSET_DP)
         binding.inputArea.setBackgroundColor(android.graphics.Color.TRANSPARENT)
         binding.inputPill.background = pillBg
+        binding.btnSend.background = sendBg
+        binding.btnVoice.background = sendBg
+        // Возврат обычных иконочных кнопок вместо стеклянных из glass-режима.
+        binding.btnBack.setBackgroundResource(R.drawable.bg_icon_button)
+        binding.btnMore.setBackgroundResource(R.drawable.bg_icon_button)
+        binding.btnAttach.setBackgroundResource(R.drawable.bg_icon_button)
+        // Материал Atmospheric Glass существует только в glass-режиме — снимаем полностью
+        // (гасим аниматоры, убираем foreground-слои и преломление обоев).
+        detachAtmosphericGlass()
         binding.headerDivider.visibility = android.view.View.GONE
         binding.loadingOverlay.setBackgroundColor(overlayColor)
         binding.mutedBannerLarge.setBackgroundColor(overlayColor)
@@ -2036,6 +2098,7 @@ class ChatActivity : SecureActivity() {
 
         clearBackdropBlur()
         restoreDefaultTextColors()
+        hideComposeGlow() // подсветка-реакция — только glass, в классике её быть не должно
         // Классический режим С ОБОЯМИ — тоже поверх фото, карточка пустого состояния
         // стеклянная (белый текст на тёмной подложке), чтобы читалось на любом фоне.
         styleNotifEmptyCard(overWallpaper = true)
@@ -2047,10 +2110,27 @@ class ChatActivity : SecureActivity() {
         binding.replyPanel.setGlassMode(false)
         val solidColor = ContextCompat.getColor(this, R.color.bg)
         val pillBg     = ContextCompat.getDrawable(this, R.drawable.bg_chat_input_pill)
+        val sendBg     = ContextCompat.getDrawable(this, R.drawable.bg_send_button)
 
         binding.chatHeader.setBackgroundColor(solidColor)
+        // paddingVerticalDp=10 явно возвращает XML-дефолт — иначе после glass-режима он бы
+        // «прилип» и здесь при переключении без пересоздания Activity. Бейдж в classic —
+        // просто прозрачная группа без своих отступов: фон рисует сам chat_header.
+        setHeaderMargins(startEndDp = 0, topDp = 0, paddingVerticalDp = 10)
+        binding.headerBadge.background = null
+        setHeaderBadgeInset(0)
+        setInputAreaInset(CLASSIC_INPUT_INSET_DP)
         binding.inputArea.setBackgroundColor(solidColor)
         binding.inputPill.background = pillBg
+        binding.btnSend.background = sendBg
+        binding.btnVoice.background = sendBg
+        // Возврат обычных иконочных кнопок вместо стеклянных из glass-режима.
+        binding.btnBack.setBackgroundResource(R.drawable.bg_icon_button)
+        binding.btnMore.setBackgroundResource(R.drawable.bg_icon_button)
+        binding.btnAttach.setBackgroundResource(R.drawable.bg_icon_button)
+        // Материал Atmospheric Glass существует только в glass-режиме — снимаем полностью
+        // (гасим аниматоры, убираем foreground-слои и преломление обоев).
+        detachAtmosphericGlass()
         binding.headerDivider.visibility = android.view.View.VISIBLE
         binding.headerDivider.setBackgroundColor(ContextCompat.getColor(this, R.color.border))
         binding.loadingOverlay.setBackgroundColor(solidColor)
@@ -2061,6 +2141,7 @@ class ChatActivity : SecureActivity() {
 
         clearBackdropBlur()
         restoreDefaultTextColors()
+        hideComposeGlow() // подсветка-реакция — только glass, в классике её быть не должно
         // Без обоев — обычная surface-карточка с токенами темы.
         styleNotifEmptyCard(overWallpaper = false)
         stylePinnedBar(overWallpaper = false)
@@ -2111,20 +2192,177 @@ class ChatActivity : SecureActivity() {
         }
     }
 
-    private fun clearBackdropBlur() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            try {
-                val blurMethod = android.view.View::class.java
-                    .getMethod("setBackgroundBlurRadius", Int::class.javaPrimitiveType)
-                blurMethod.invoke(binding.chatHeader, 0)
-                blurMethod.invoke(binding.inputPill, 0)
-            } catch (_: Throwable) { /* not available on this device */ }
+    /**
+     * Отступы шапки чата. В glass-режиме шапка — плавающая капсула НЕ во всю ширину (вариант А2 —
+     * тонкая, но НЕ край в край, см. мокап), в classic-режимах — прижата к краям, как раньше.
+     * dp переводится в px через плотность экрана.
+     *
+     * paddingVerticalDp — необязательно: сжимает внутренний вертикальный паддинг капсулы (в XML
+     * по умолчанию 10dp — многовато, отсюда жалоба «шапка слишком толстая»). null — не трогать,
+     * оставить как в XML (используется в classic, чтобы не менять её без явного запроса).
+     */
+    private fun setHeaderMargins(startEndDp: Int, topDp: Int, paddingVerticalDp: Int? = null) {
+        val density = resources.displayMetrics.density
+        (binding.chatHeader.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.apply {
+            marginStart = (startEndDp * density).toInt()
+            marginEnd   = (startEndDp * density).toInt()
+            topMargin   = (topDp * density).toInt()
+        }?.also { binding.chatHeader.layoutParams = it }
+        if (paddingVerticalDp != null) {
+            val padV = (paddingVerticalDp * density).toInt()
+            binding.chatHeader.setPadding(
+                binding.chatHeader.paddingLeft, padV,
+                binding.chatHeader.paddingRight, padV
+            )
         }
+    }
+
+    /**
+     * Внутренний отступ бейджа — расстояние от края стеклянной капсулы до кнопки внутри.
+     * Отступ РАВНОМЕРНЫЙ по всем сторонам: только тогда сходится concentricity, ведь
+     * радиус вложенной кнопки считается как «радиус капсулы − отступ» и обязан совпасть
+     * с половиной кнопки (26 − 5 = 21 = 42/2). Разный отступ по осям ломает это равенство.
+     *
+     * Заодно этот отступ задаёт высоту капсулы: 42dp кнопка + 2×5dp = 52dp, r = 26dp.
+     * В classic отступ 0 — бейдж там прозрачный, капсулы нет.
+     */
+    private fun setHeaderBadgeInset(insetDp: Int) {
+        val p = (insetDp * resources.displayMetrics.density).toInt()
+        binding.headerBadge.setPadding(p, p, p, p)
+    }
+
+    /**
+     * Боковой отступ панели ввода.
+     *
+     * Держим его РАВНЫМ жёлобу шапки, иначе пилюля кажется шире всего остального на
+     * экране: у шапки до стеклянных кнопок 16dp отступа строки + 6dp её внутреннего
+     * паддинга = 22dp, а у панели ввода в XML стояло 12dp. Разница в 10dp на глаз
+     * читается именно как «пилюля слишком широкая».
+     *
+     * При совпадении левый край пилюли встаёт ровно под стрелку назад, правый — под три
+     * точки: весь плавающий слой выстраивается по одной вертикали.
+     */
+    private fun setInputAreaInset(startEndDp: Int) {
+        val p = (startEndDp * resources.displayMetrics.density).toInt()
+        binding.inputArea.setPadding(
+            p, binding.inputArea.paddingTop,
+            p, binding.inputArea.paddingBottom
+        )
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    //  ATMOSPHERIC GLASS — сборка материала на экране чата
+    //  25.08.2026: материал откатан до плоской заливки (история — в AtmosphericGlass.kt).
+    //  Здесь только проводка: что, куда и с какой геометрией вешаем — не изменилась.
+    // ════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Навешивает материал. Вызывается из applyGlassStyle() ПОСЛЕ выставления отступов —
+     * поверхности опираются на уже готовую геометрию.
+     *
+     * Радиусы поверхностей НЕ задаём числом: null = честная капсула, радиус считается как
+     * половина фактической высоты на каждой отрисовке. Раньше здесь стояло жёсткое 26dp,
+     * и стоило бейджу оказаться выше 52dp (двухстрочный текст со своими метриками) —
+     * скругление переставало быть половиной высоты, капсула превращалась в скруглённый
+     * прямоугольник и выглядела кривой. Теперь форма верна при любой высоте.
+     *
+     * Радиусы ВЛОЖЕННЫХ кнопок остаются по concentricity (внешний − отступ).
+     */
+    private fun attachAtmosphericGlass() {
+        val headerBtnRadius = AtmosphericGlass.concentricRadiusDp(HEADER_CAPSULE_RADIUS_DP, HEADER_BTN_INSET_DP)
+        val pillBtnRadius = AtmosphericGlass.concentricRadiusDp(PILL_CAPSULE_RADIUS_DP, PILL_BTN_INSET_DP)
+        val surface = AtmosphericGlassSurface.Style.SURFACE
+        val nested = AtmosphericGlassSurface.Style.NESTED
+
+        // 25.08.2026 — ОТКАТ: AtmosphericGlassBackdrop теперь пустая заглушка (материал
+        // больше не преломляет живой кадр, см. историю в AtmosphericGlass.kt) — вызовы
+        // ниже и bindGlassBackdropInvalidation() ничего не делают. Оставлены как есть,
+        // а не вычищены: трогать слушатель скролла ленты и жизненный цикл экрана ради
+        // отдельно взятого отката материала — лишний риск для несвязанного кода.
+        AtmosphericGlassBackdrop.attach(
+            binding.chatMainRoot,
+            listOf(binding.ivChatWallpaper, binding.viewScrimTop, binding.viewScrimBottom, binding.rvMessages)
+        )
+        bindGlassBackdropInvalidation()
+
+        AtmosphericGlass.attach(binding.headerBadge, surface, interactive = false)
+        // View.setBackground() умеет перетирать padding фоном drawable. Наш материал своего
+        // padding не объявляет, так что штатно ничего не теряется, — но именно этот отступ
+        // задаёт высоту капсулы, и молча потерять его нельзя. Переставляем после привязки.
+        setHeaderBadgeInset(GLASS_BADGE_INSET_DP)
+        AtmosphericGlass.attach(binding.inputPill, surface, interactive = false)
+        // Стрелка назад и три точки стоят СНАРУЖИ бейджа, на голых обоях → обе полноценные
+        // поверхности. Держим их симметричными: одинаковый радиус, одинаковый материал.
+        AtmosphericGlass.attach(binding.btnBack, surface, interactive = true, cornerRadiusDp = headerBtnRadius)
+        AtmosphericGlass.attach(binding.btnMore, surface, interactive = true, cornerRadiusDp = headerBtnRadius)
+
+        // Кнопки ВНУТРИ стекла — только свечение от касания, без своего фона и кромки:
+        // стекло на стекле запрещено документацией Apple.
+        AtmosphericGlass.attach(binding.btnAttach, nested, interactive = true, cornerRadiusDp = pillBtnRadius)
+        AtmosphericGlass.attach(binding.btnSend, nested, interactive = true, cornerRadiusDp = pillBtnRadius)
+        // btnVoice — материал без слушателя: у кнопки уже есть свой OnTouchListener
+        // (жест записи голоса). Перебить его = сломать голосовые сообщения.
+        AtmosphericGlass.attach(binding.btnVoice, nested, interactive = false, cornerRadiusDp = pillBtnRadius)
+    }
+
+    /** Слушатель прокрутки ленты — по нему задник понимает, что снимок устарел. */
+    private var glassScrollListener: androidx.recyclerview.widget.RecyclerView.OnScrollListener? = null
+
+    /**
+     * Живой задник пересобирается НЕ каждый кадр, а только когда содержимое под стеклом
+     * действительно поменялось: прокрутка, новые сообщения, перекладка. Иначе экран
+     * перерисовывался бы 60 раз в секунду даже в покое — это заметный расход батареи
+     * ради картинки, которая не меняется.
+     */
+    private fun bindGlassBackdropInvalidation() {
+        if (glassScrollListener != null) return
+        val l = object : androidx.recyclerview.widget.RecyclerView.OnScrollListener() {
+            override fun onScrolled(rv: androidx.recyclerview.widget.RecyclerView, dx: Int, dy: Int) {
+                AtmosphericGlassBackdrop.invalidate()
+            }
+        }
+        glassScrollListener = l
+        binding.rvMessages.addOnScrollListener(l)
+    }
+
+    private fun unbindGlassBackdropInvalidation() {
+        glassScrollListener?.let { runCatching { binding.rvMessages.removeOnScrollListener(it) } }
+        glassScrollListener = null
+    }
+
+    /** Снимает материал целиком: аниматоры, слои, задник. */
+    private fun detachAtmosphericGlass() {
+        AtmosphericGlass.detach(binding.headerBadge)
+        AtmosphericGlass.detach(binding.chatHeader)   // на случай слоя от прежних версий
+        AtmosphericGlass.detach(binding.inputPill)
+        AtmosphericGlass.detach(binding.btnBack)
+        AtmosphericGlass.detach(binding.btnMore)
+        AtmosphericGlass.detach(binding.btnAttach)
+        AtmosphericGlass.detach(binding.btnSend)
+        // hadOwnTouchListener = true → НЕ обнуляем слушатель записи голоса.
+        AtmosphericGlass.detach(binding.btnVoice, hadOwnTouchListener = true)
+        unbindGlassBackdropInvalidation()
+        AtmosphericGlassBackdrop.detach()
+    }
+
+    /**
+     * Сброс размытия при уходе из glass-режима.
+     *
+     * Раньше здесь снималось «размытие», которого на самом деле не существовало:
+     * View.setBackgroundBlurRadius нет в публичном API, рефлексия всегда падала в catch
+     * (см. подробности в applyGlassStyle). Теперь размытие рисует сам материал из копии
+     * обоев, и сбросить его — значит освободить эту копию.
+     */
+    private fun clearBackdropBlur() {
+        AtmosphericGlassBackdrop.detach()
     }
 
     private fun restoreDefaultTextColors() {
         binding.tvDisplayName.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
         binding.tvChatSubtitle.setTextColor(ContextCompat.getColor(this, R.color.text_tertiary))
+        // Отменяем форс-белый из applyGlassStyle — возвращаем тему (см. §16 багфикс там же).
+        binding.btnBack.setColorFilter(ContextCompat.getColor(this, R.color.text_primary))
+        binding.btnMore.setColorFilter(ContextCompat.getColor(this, R.color.text_secondary))
     }
 
     override fun onResume() {
@@ -2279,6 +2517,9 @@ class ChatActivity : SecureActivity() {
         // Освобождаем видео-плееры webm-стикеров (ExoPlayer/GL). Без этого они продолжают
         // крутиться в фоне и утекают между чатами -> рост памяти и OOM (в т.ч. при Argon2).
         try { binding.rvMessages.adapter = null } catch (_: Exception) {}
+        // Материал стекла: снимаем слушатель перекладки и гасим аниматоры, иначе
+        // ViewTreeObserver держит ссылку на Activity после её смерти (утечка).
+        runCatching { detachAtmosphericGlass() }
         VoicePlayer.stop()
         runCatching { if (voiceRecorder.isRecording) voiceRecorder.cancel() }
         stickerPanel?.destroy()
@@ -2335,6 +2576,11 @@ class ChatActivity : SecureActivity() {
         // остановлен, подтверждать публикацию нечем. onResume → syncProfiles() запустит заново.
         profilePublishGuardJob?.cancel(); profilePublishGuardJob = null
         lastPartnerProfile = null
+        // Наблюдения о присутствии — вместе с экраном. Иначе, зайдя в чат через час, я бы
+        // увидел «в сети» по замеру прошлой сессии: Presence держит статус по СВОИМ часам и
+        // без сброса ему нечем отличить «heartbeat только что» от «heartbeat в прошлый раз».
+        // Guard на lateinit: сюда попадают и падения до загрузки чата из Room.
+        if (::chat.isInitialized) Presence.forgetChat(chat.chatId)
         if (::transport.isInitialized) {
             val capturedTransport  = transport
             val capturedPassword   = chat.chatPassword
@@ -2452,7 +2698,25 @@ class ChatActivity : SecureActivity() {
         syncCollectorJob?.cancel()
         syncCollectorJob = lifecycleScope.launch {
             syncEngine.events.collect { data ->
-                processChannelData(data)
+                // ⚠️ runCatching ОБЯЗАТЕЛЕН (репорт: «у заглушённого не обновляются сообщения»).
+                //
+                // Это единственный вход входящих данных в экран. Исключение внутри collect
+                // роняет весь syncCollectorJob НАВСЕГДА: опрос при этом продолжается и честно
+                // двигает свой хэш прочитанного (SyncEngine.updateChatContentHint), поэтому
+                // пропущенные снимки уже не вернутся — лечит только перезаход, пересоздающий
+                // коллектор. Ровно тот симптом, на который была жалоба.
+                //
+                // Почему било именно по заглушённым: внутри обработки снимка вызывается UI
+                // мута, и у НЕзаглушённого он не делает ничего (значения не меняются), а у
+                // заглушённого разворачивает карточку с основаниями — надувает разметку,
+                // грузит вложения. Единственный участок, исполняемый только у него, — и он
+                // оказался внутри незащищённого конвейера.
+                //
+                // Молча не глотаем, но и экран падения не показываем: сбой одного тика — не
+                // повод выкидывать человека из беседы (CrashHandler.report поднимает
+                // CrashActivity, здесь это было бы лекарством хуже болезни). След в логе.
+                runCatching { processChannelData(data) }
+                    .onFailure { android.util.Log.e("ATRUM", "processChannelData failed", it) }
             }
         }
 
@@ -2520,7 +2784,11 @@ class ChatActivity : SecureActivity() {
         if (rawEncrypted.isBlank()) return
         val newHash = rawEncrypted.hashCode()
         if (newHash == lastProfilesHash && lastKnownProfiles.isNotEmpty()) return
-        lastProfilesHash = newHash
+        // ⚠️ Отметку ставим ПОСЛЕ разбора, а не до (тот же класс отказа, что чинился для
+        // chat.txt и members.txt): между проверкой и применением лежат Argon2 и Room, а их
+        // может оборвать отмена корутины. Отметка «до» означала бы «снимок учтён», хотя он ни
+        // разу не применился, и следующий такой же снимок был бы молча пропущен — состав
+        // участников, presence и галочки замирали до переоткрытия чата.
         // fullSnapshot = false: сюда приходит ОДИН слот — либо чужой из стрима (watchProfiles
         // отфильтровывает мой pubkey), либо единственный блоб из фолбэка. Полной картиной
         // канала он не является, поэтому ни затирать снимок, ни судить по нему о публикации
@@ -2529,6 +2797,7 @@ class ChatActivity : SecureActivity() {
             ProfileSync.parseProfiles(rawEncrypted, chat.chatPassword, transport.chatId),
             fullSnapshot = false
         )
+        lastProfilesHash = newHash
     }
 
     /** Фаза 1: union-чтение всех слотов profiles.txt (по одному на участника) — убирает lost-update. */
@@ -2536,13 +2805,18 @@ class ChatActivity : SecureActivity() {
         if (slots.isEmpty()) return
         val newHash = slots.hashCode()
         if (newHash == lastProfilesHash && lastKnownProfiles.isNotEmpty()) return
-        lastProfilesHash = newHash
+        // ⚠️ Отметку ставим ПОСЛЕ разбора, а не до (тот же класс отказа, что чинился для
+        // chat.txt и members.txt): между проверкой и применением лежат Argon2 и Room, а их
+        // может оборвать отмена корутины. Отметка «до» означала бы «снимок учтён», хотя он ни
+        // разу не применился, и следующий такой же снимок был бы молча пропущен — состав
+        // участников, presence и галочки замирали до переоткрытия чата.
         // fullSnapshot = true: union ВСЕХ слотов канала — единственное чтение, по которому
         // можно судить и о составе участников, и о том, лежит ли на реле мой собственный слот.
         processParsedProfiles(
             ProfileSync.unionProfileSlots(slots, chat.chatPassword, transport.chatId),
             fullSnapshot = true
         )
+        lastProfilesHash = newHash
     }
 
     /**
@@ -2641,8 +2915,15 @@ class ChatActivity : SecureActivity() {
         // processParsedProfiles() уже вызывается на КАЖДОМ тике (тот же принцип, что уже
         // применён к групповым чатам, см. processChannelData) — считаем джойн здесь же.
         if (!chat.isGroup && !chat.partnerJoined) {
-            db.chatDao().markPartnerJoined(chat.id)
+            // ⚠️ ФЛАГ ЗАКРЫВАЕМ ПЕРВЫМ, до похода в Room (репорт: десятки одинаковых
+            // «X присоединился к чату» подряд). Раньше сначала шёл suspend-вызов
+            // markPartnerJoined, и только потом обновлялось локальное chat.partnerJoined —
+            // а между этими строками лежит точка приостановки. Опрос идёт раз в секунду, чтение
+            // по Tor занимает дольше, проходы перекрываются: каждый успевал увидеть
+            // partnerJoined = false и добавить свою плашку. Присваивание в поле — не
+            // suspend-операция, поэтому выполненное ПЕРВЫМ оно закрывает окно целиком.
             chat = chat.copy(partnerJoined = true)
+            db.chatDao().markPartnerJoined(chat.id)
             val joinedName = chat.partnerNickname?.takeIf { it.isNotBlank() }
                 ?: partner.name.takeIf { it.isNotBlank() }
                 ?: chat.partnerName.takeIf { it.isNotBlank() }
@@ -2876,6 +3157,20 @@ class ChatActivity : SecureActivity() {
     private val localRenderBusy = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
+     * «Пока я рендерил, пришло ещё» (репорт: «изменение сообщения у собеседника отображается
+     * долго»). Раньше событие, заставшее рендер занятым, просто выбрасывалось — без ретрая.
+     *
+     * Для правки это отказ, а не мелочь: правка порождает ДВА события (новый текст и надгробие
+     * старого), каждое реле шлёт оба, и они приходят почти одновременно. Первое захватывало
+     * рендер на сотни миллисекунд Argon2, остальные терялись. Если первым успевало надгробие,
+     * собеседник видел, что сообщение ПРОПАЛО, а новый текст ждал следующего удачного тика.
+     *
+     * Флаг булев намеренно: сколько бы событий ни отбросилось, повторить нужно ровно один раз —
+     * рендер всё равно строится из полного снимка, а не из отдельного события.
+     */
+    private val localRenderPending = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
      * МГНОВЕННЫЙ показ пришедшего сообщения — без ожидания сетевого тика.
      *
      * ⚠️ Репорт: «в беседе первые сообщения не такие быстрые, как в 1:1». Реле пушит событие
@@ -2897,8 +3192,14 @@ class ChatActivity : SecureActivity() {
      */
     private fun renderLocalMessagesNow() {
         if (!::transport.isInitialized || !::chat.isInitialized || chat.isFavorites) return
-        if (!localRenderBusy.compareAndSet(false, true)) return
+        // Занято — не выбрасываем событие, а просим повторить рендер после текущего
+        // (см. localRenderPending): иначе второе событие правки терялось безвозвратно.
+        if (!localRenderBusy.compareAndSet(false, true)) {
+            localRenderPending.set(true)
+            return
+        }
         lifecycleScope.launch {
+            var repeat = false
             try {
                 val snapshot = withContext(Dispatchers.IO) {
                     val local = runCatching { transport.loadLocalSnapshotOrNull() }.getOrNull()
@@ -2907,11 +3208,16 @@ class ChatActivity : SecureActivity() {
                         val base = runCatching { ChatSnapshotCache.get(chat.chatId) }.getOrNull()
                         base?.copy(chatContent = local.chatContent) ?: local
                     }
-                } ?: return@launch
-                runCatching { processChannelData(snapshot) }
+                }
+                if (snapshot != null) runCatching { processChannelData(snapshot) }
             } finally {
+                repeat = localRenderPending.getAndSet(false)
                 localRenderBusy.set(false)
             }
+            // Повтор ПОСЛЕ снятия занятости, иначе рекурсивный вызов упрётся в собственный
+            // флаг и снова всё потеряет. Один уровень: повторный проход своей занятости уже
+            // не застанет, а новые события снова взведут флаг.
+            if (repeat) renderLocalMessagesNow()
         }
     }
 
@@ -2953,8 +3259,10 @@ class ChatActivity : SecureActivity() {
             // Дешёвая ранняя проверка: изменился ли вообще набор слотов (pubkey+шифртекст).
             val slotsSig = data.reactionSlotsSigned.joinToString("") { it.signerPubkey + "" + it.content }
             if (slotsSig != lastReactionsRaw) {
-                lastReactionsRaw = slotsSig
+                // Отметка — после разбора (см. тот же приём у профилей/members.txt): union
+                // реакций идёт на другом диспетчере и может быть оборван отменой.
                 val (map, fullContent) = withContext(Dispatchers.Default) { unionReactions(data.reactionSlotsSigned) }
+                lastReactionsRaw = slotsSig
                 // fullContent — полный набор ВСЕХ авторов; база для read-modify-write в
                 // handleReactionToggle. Свой слот продолжаем писать полным набором, чтобы
                 // старые клиенты (latestFile, один слот) видели всё (обратная совместимость §17).
@@ -2974,12 +3282,12 @@ class ChatActivity : SecureActivity() {
             // (иначе вернулось бы мигание при отказе реле).
             val reactionsRaw = data.reactionsContent
             if (reactionsRaw != lastReactionsRaw) {
-                lastReactionsRaw = reactionsRaw
                 val decrypted = withContext(Dispatchers.Default) {
                     if (reactionsRaw.isBlank()) ""
                     else CryptoHelper.decrypt(reactionsRaw, chat.chatPassword, chat.chatId) ?: ""
                 }
                 val parsed = withContext(Dispatchers.Default) { parseReactions(decrypted) }
+                lastReactionsRaw = reactionsRaw
                 lastReactionsContent = decrypted
                 val canon = canonReactions(parsed)
                 if (canon != lastReactionsCanon) {
@@ -3032,8 +3340,21 @@ class ChatActivity : SecureActivity() {
             val membersRaw = data.membersContent
             val slotsSig2 = memberSlotsSig(data.memberSlots)
             if (membersRaw.isNotBlank() && (membersRaw != lastMembersRaw || slotsSig2 != lastMemberSlotsSig)) {
-                lastMembersRaw = membersRaw
-                lastMemberSlotsSig = slotsSig2
+                // ⚠️ ОТМЕТКА «ЭТОТ members.txt УЖЕ УЧТЁН» СТАВИТСЯ НИЖЕ, ПОСЛЕ УСПЕШНОГО
+                // ПРИМЕНЕНИЯ (репорт: «мут срабатывает только после его перезахода»).
+                //
+                // Раньше она стояла здесь — до расшифровки и до applyIncoming. Между этими
+                // точками есть и отмена корутины, и исключение, и штатный отказ применить
+                // (анти-откат по версии, отвергнутый ростер отозванного создателя). В любом
+                // из этих случаев контент числился учтённым, ни разу не применившись, а сам
+                // он больше НЕ МЕНЯЕТСЯ: мут — это разовая правка members.txt, после неё в
+                // канале по этой части не происходит ничего. Каждый следующий тик честно
+                // упирался в проверку «то же самое, что и в прошлый раз» и уходил дальше.
+                // Лечило только переоткрытие чата, обнулявшее отметку.
+                //
+                // Теперь отметка означает то, чем притворялась. Цена отказа — повторный разбор
+                // на следующем тике: расшифровка идёт по уже тёплому ключу, файл маленький,
+                // сети это не касается вовсе.
                 // Снимок того, что лежит на реле, — для самопочинки админа ниже
                 // (maybeAdminRepairMembersFile). Расшифровка дёшева: метаданные идут
                 // V4 с детерминированной солью, ключ уже в тёплом кэше CryptoHelper.
@@ -3064,6 +3385,8 @@ class ChatActivity : SecureActivity() {
                     }
                 }
                 if (applied) {
+                    lastMembersRaw = membersRaw
+                    lastMemberSlotsSig = slotsSig2
                     // membersVersion уже обновлена в БД (анти-откат внутри applyIncoming) —
                     // подтягиваем свежее значение в in-memory chat, чтобы повторные
                     // проверки версии в этой же сессии видели актуальное число.
@@ -3181,9 +3504,15 @@ class ChatActivity : SecureActivity() {
             val myEntryNow = activeParticipants.firstOrNull { it.userId == prefs.myUserId }
             val untilNow = myEntryNow?.mutedUntilMs
             val amMutedNow = untilNow != null && untilNow > System.currentTimeMillis()
-            withContext(Dispatchers.Main) {
-                applySelfMuteState(amMutedNow, untilNow, myEntryNow?.mutedReason,
-                    MembersSync.evidenceIdsFromStore(myEntryNow?.mutedEvidenceIds))
+            // Отдельной корутиной, а НЕ withContext: разворачивание карточки мута (надувание
+            // разметки, загрузка вложений-оснований) больше не стоит в конвейере приёма и не
+            // может ни задержать его, ни уронить. Состояние от этого не теряется — тот же
+            // вызов дублирует тикер refreshSelfModerationState, он идемпотентен.
+            lifecycleScope.launch {
+                runCatching {
+                    applySelfMuteState(amMutedNow, untilNow, myEntryNow?.mutedReason,
+                        MembersSync.evidenceIdsFromStore(myEntryNow?.mutedEvidenceIds))
+                }
             }
 
             // Баннер «X присоединился к чату» (найдено и исправлено по репорту
@@ -3226,7 +3555,6 @@ class ChatActivity : SecureActivity() {
         }
         hideChatWarning()
         consecutiveFailures = 0
-        lastContent = chatContent
 
         val me      = prefs.myName
         val myUid   = prefs.myUserId
@@ -3296,10 +3624,12 @@ class ChatActivity : SecureActivity() {
             .filter { !it.banned && it.mutedUntilMs != null && it.mutedUntilMs > nowMs && it.userId != myUid && it.userId !in verifiedSenderIds }
             .map { it.userId }
             .toSet()
-        // Держим сигнатуру refreshOthersModerationFilter() в курсе: раз фильтр только что
-        // применился обычным (тяжёлым) путём, лёгкому тикеру незачем повторять то же самое
-        // на ближайшем тике — формат сигнатуры ДОЛЖЕН совпадать с тем, что считает функция.
-        lastOthersModerationSig = bannedIds.sorted().joinToString(",") + "||" + mutedIds.sorted().joinToString(",")
+        // Сигнатуру фильтра ставим НЕ здесь, а после реального применения ленты (ищи
+        // lastOthersModerationSig ниже): между этой точкой и reconcile лежит декодирование
+        // с Argon2 на каждую строку — самый долгий и самый отменяемый участок тика. Отметка
+        // «до» означала бы, что лёгкий тикер тоже не станет применять фильтр, считая его уже
+        // наложенным, — и мут/бан участника висел бы неприменённым до следующего сообщения.
+        // Тот же класс отказа, что уже чинился здесь для lastContent и lastMembersRaw.
         fun List<Message>.withoutBanned(): List<Message> =
             if (bannedIds.isEmpty() && mutedIds.isEmpty()) this
             else filterNot { msg ->
@@ -3357,6 +3687,27 @@ class ChatActivity : SecureActivity() {
         // reconcile() сохраняет pending-сообщения, убирает tombstones.
         // НЕ делает messages = remoteMessages (это источник бага с исчезновением).
         chatStore.reconcile(messages)
+        // Теперь фильтр действительно наложен — можно отметить его сигнатуру (формат ДОЛЖЕН
+        // совпадать с тем, что считает refreshOthersModerationFilter).
+        lastOthersModerationSig = bannedIds.sorted().joinToString(",") + "||" + mutedIds.sorted().joinToString(",")
+
+        // ⚠️ ОТМЕТКА «ЭТОТ КОНТЕНТ УЖЕ ПОКАЗАН» — СТРОГО ПОСЛЕ reconcile (репорт:
+        // «изменение сообщения у собеседника отображается долго»).
+        //
+        // Раньше она ставилась сразу после проверки на изменение, ДО декодирования и до
+        // reconcile. Между этими точками лежат отмены и тяжёлые suspend-и (Argon2 на каждую
+        // строку, чтение Room, переход на Main). Если хоть одна из них не доходила до конца —
+        // а вызывающий renderLocalMessagesNow глотает исключения через runCatching — контент
+        // числился показанным, ни разу не появившись на экране. Дальше каждый тик честно
+        // упирался в ранний выход по совпадению, и экран не чинился до тихого обновления
+        // (SILENT_REFRESH_MS = 45 с).
+        //
+        // Почему это било именно по правкам. Обычная переписка меняет chat.txt снова и снова,
+        // и следующее же сообщение чинит экран за секунду. Правка меняет его РОВНО ОДИН РАЗ:
+        // больше в канале не происходит ничего (heartbeat трогает profiles.txt, не chat.txt),
+        // поэтому потерянная правка висела невидимой до сорока пяти секунд. Теперь отметка
+        // означает то, чем притворялась: «дошли до конца и показали».
+        lastContent = chatContent
 
         // ── Preview в Room ────────────────────────────────────────────────────
         if (messages.isNotEmpty()) {
@@ -4070,14 +4421,28 @@ class ChatActivity : SecureActivity() {
             val rawBlob = withContext(Dispatchers.IO) { transport.loadRevokes() }.trim()
             if (rawBlob.isEmpty()) return
             val plain = CryptoHelper.decrypt(rawBlob, chat.chatPassword, chat.chatId) ?: return
-            val changed = withContext(Dispatchers.IO) {
+            val applied = withContext(Dispatchers.IO) {
                 RevokeSync.applyRevokes(chat, plain, db.chatDao(), db.chatParticipantDao(), prefs)
             }
-            if (changed) {
+            val ownerNow = withContext(Dispatchers.IO) { db.chatDao().getById(chat.id)?.adminUserId }
+            // ⚠️ ПЕРЕСБОР ПРИ ЛЮБОМ РАСХОЖДЕНИИ ВЛАДЕЛЬЦА, а не только когда отзыв применился
+            // прямо сейчас (репорт: «мут бывшего создателя происходит только после перезахода»).
+            //
+            // Транспорт фильтрует members.txt по ключу, выведенному из adminUserId, и этот ключ
+            // фиксируется в момент создания транспорта — то есть при открытии чата. Если владелец
+            // сменился ПОЗЖЕ (в том числе когда я сам отозвал права с этого же устройства через
+            // экран участников — там applyRevokes отработал напрямую, и сюда изменение уже не
+            // «прилетает»), открытый экран продолжает слушать ростер СТАРОГО владельца. Мут и
+            // бан от нового владельца в него не попадают вовсе — отсюда и «только после
+            // перезахода». Сверка с Room ловит все такие случаи одним правилом.
+            val ownerDrifted = (ownerNow ?: "") != (chat.adminUserId ?: "")
+            if (applied.ownerChanged || ownerDrifted) {
                 // Вместо резкого recreate() — полноэкранный переход с описанием (мокап одобрен).
-                // revoke → adminUserId очистился (пусто); restore → вернулся непустым.
-                val ownerNow = withContext(Dispatchers.IO) { db.chatDao().getById(chat.id)?.adminUserId }
-                val wasRevoke = ownerNow.isNullOrBlank()
+                // ⚠️ Направление берём У СЕРТИФИКАТА (applied.revoked), а НЕ по признаку «пуст ли
+                // теперь adminUserId». Прежняя догадка сломалась ровно тогда, когда отзыв перестал
+                // обнулять владельца и стал передавать его root'у: adminUserId оставался непустым,
+                // и человеку на той стороне показывали «права восстановлены» вместо «отозваны».
+                val wasRevoke = applied.revoked
                 // Возврат создателя и это Я — сразу публикую свой members.txt: пока владельца
                 // отзывали, беседа его файл не принимала, а после возврата гейт снова ждёт
                 // ростер, подписанный МОИМ ключом (тот же случай, что и передача владения, §16).
@@ -4086,11 +4451,17 @@ class ChatActivity : SecureActivity() {
                 }
                 withContext(Dispatchers.Main) {
                     runCatching {
-                        // Окно перехода поверх, а чат СРАЗУ перезагружается ПОД ним (recreate).
-                        startActivity(android.content.Intent(this@ChatActivity, RevokeTransitionActivity::class.java).apply {
-                            putExtra(RevokeTransitionActivity.EXTRA_CHAT_ID, chat.id)
-                            putExtra(RevokeTransitionActivity.EXTRA_REVOKE, wasRevoke)
-                        })
+                        // Окно перехода — ТОЛЬКО когда сертификат применился именно сейчас. При
+                        // простом расхождении владельца его показывать нельзя: этот случай — это
+                        // я сам, только что отозвавший права с экрана участников. Объявлять
+                        // инициатору «права изменены» бессмысленно, ему нужен лишь пересбор
+                        // транспорта под экраном.
+                        if (applied.ownerChanged) {
+                            startActivity(android.content.Intent(this@ChatActivity, RevokeTransitionActivity::class.java).apply {
+                                putExtra(RevokeTransitionActivity.EXTRA_CHAT_ID, chat.id)
+                                putExtra(RevokeTransitionActivity.EXTRA_REVOKE, wasRevoke)
+                            })
+                        }
                         recreate()
                     }
                 }
@@ -5243,7 +5614,13 @@ class ChatActivity : SecureActivity() {
         presenceJob?.cancel()
         presenceJob = lifecycleScope.launch {
             while (true) {
-                val typingTs = if (isCurrentlyTyping) System.currentTimeMillis() else 0L
+                // ⚠️ Время ПОСЛЕДНЕГО НАЖАТИЯ, а не время публикации (репорт: «статус печатает
+                // держится долго после печати»). Раньше сюда шло System.currentTimeMillis(), то
+                // есть штамп двигался просто оттого, что настал очередной тик heartbeat, — и на
+                // той стороне это неотличимо от «человек продолжает печатать». Пришпиленный к
+                // клавише штамп замирает ровно тогда, когда пальцы остановились, и получателю
+                // становится видно, что печать кончилась, даже если явный стоп-сигнал не доехал.
+                val typingTs = if (isCurrentlyTyping) lastKeystrokeMs else 0L
                 val recTs = if (isRecordingVoice) System.currentTimeMillis() else 0L
                 doPushPresence(typingTs, System.currentTimeMillis(), recTs)
                 // ±20% джиттер скрывает ритм presence-пульса от анализа трафика
@@ -5348,6 +5725,7 @@ class ChatActivity : SecureActivity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(s: Editable?) {
                 if (s.isNullOrEmpty()) stopTypingSignal() else onTypingDetected()
+                if (s.isNullOrEmpty()) hideComposeGlow() else showComposeGlow()
                 updateStickerSuggestions(s?.toString() ?: "")
                 updateSendVoiceButtons(s?.toString() ?: "")
                 updateMentionStrip() // автодополнение @ (Этап упоминаний)
@@ -5356,16 +5734,23 @@ class ChatActivity : SecureActivity() {
     }
 
     /**
-     * Вызывается при каждом изменении текста.
-     * Перезапускает таймер остановки (TYPING_STOP_DELAY_MS → stopTypingSignal).
-     * Флаг isCurrentlyTyping подхватывается presenceJob на следующем тике (≤12 сек).
-     * Убран немедленный push при начале печати: он давал +1 GET+PATCH на каждый
-     * раз когда пользователь начинал набирать текст и сильно нагружал GitHub API
-     * при активном общении. TYPING_EXPIRY_MS=20s перекрывает presence interval с запасом.
+     * Время последнего изменения текста в поле ввода — то есть последнего реального нажатия.
+     * Именно оно публикуется в [Profile.typingTs] (см. startPresence): штамп обязан замирать
+     * вместе с пальцами, иначе получатель не может отличить «печатает» от «просто пришёл
+     * очередной heartbeat».
+     */
+    private var lastKeystrokeMs: Long = 0L
+
+    /**
+     * Вызывается при каждом изменении текста: запоминает время нажатия ([lastKeystrokeMs]) и
+     * перезапускает таймер остановки (TYPING_STOP_DELAY_MS → stopTypingSignal). При НАЧАЛЕ
+     * набора — немедленная публикация, чтобы надпись у собеседника не ждала heartbeat;
+     * продолжение набора отдельных публикаций не требует, его несёт обычный presence-цикл.
      */
     private fun onTypingDetected() {
         val wasTyping = isCurrentlyTyping
         isCurrentlyTyping = true
+        lastKeystrokeMs = System.currentTimeMillis()
         stopTypingJob?.cancel()
         stopTypingJob = lifecycleScope.launch {
             delay(TYPING_STOP_DELAY_MS)
@@ -5373,18 +5758,22 @@ class ChatActivity : SecureActivity() {
         }
         // Telegram-like: при НАЧАЛЕ печати — мгновенный push (не ждём heartbeat).
         if (!wasTyping) {
+            val ks = lastKeystrokeMs
             lifecycleScope.launch {
-                doPushPresence(System.currentTimeMillis(), System.currentTimeMillis())
+                doPushPresence(ks, System.currentTimeMillis())
             }
         }
     }
 
     /**
-     * Останавливает typing-сигнал: сбрасывает флаг.
-     * Presense-цикл на следующем тике отправит typingTs=0 партнёру.
-     * Убран немедленный push: экономит один GET+PATCH при каждой паузе в наборе.
-     * Партнёр увидит конец печати максимум через PRESENCE_INTERVAL_MS (12 сек),
-     * что вполне приемлемо и не нагружает API.
+     * Останавливает typing-сигнал: сбрасывает флаг и сразу шлёт typingTs = 0.
+     *
+     * ⚠️ Сам этот ноль до собеседника не доезжает: слоты profiles.txt сливаются максимумом, и
+     * ноль всегда проигрывает копии моего профиля с ненулевым штампом, которую собеседник же и
+     * опубликовал раньше (см. ProfileSync.mergeParsedSlots). Публикация всё равно нужна, но
+     * работает она иначе, чем задумывалось: она двигает onlineTs, НЕ двигая typingTs, — а по
+     * этому расхождению получатель и опознаёт остановку (см. Presence.signal). То есть ценен
+     * здесь не ноль, а сам факт свежей публикации без нового нажатия.
      */
     private fun stopTypingSignal() {
         val wasTyping = isCurrentlyTyping
@@ -5400,17 +5789,63 @@ class ChatActivity : SecureActivity() {
     }
 
     /**
+     * Линия-подсветка под текстом при наборе (glass, вариант Г "Контур без заливки").
+     * Локальная, мгновенная, без сетевого дебаунса — см. composeGlowJob.
+     */
+    private fun showComposeGlow() {
+        if (prefs.chatUiStyle != Prefs.CHAT_UI_GLASS) return
+        val v = binding.viewInputUnderline
+        v.animate().cancel()
+        v.visibility = android.view.View.VISIBLE
+        v.animate().alpha(1f).setDuration(280).start()
+        composeGlowJob?.cancel()
+        composeGlowJob = lifecycleScope.launch {
+            delay(650)
+            hideComposeGlowInner()
+        }
+    }
+
+    private fun hideComposeGlow() {
+        composeGlowJob?.cancel()
+        composeGlowJob = null
+        hideComposeGlowInner()
+    }
+
+    private fun hideComposeGlowInner() {
+        val v = binding.viewInputUnderline
+        v.animate().cancel()
+        v.animate().alpha(0f).setDuration(280).withEndAction {
+            v.visibility = android.view.View.GONE
+        }.start()
+    }
+
+    /**
      * Показывает / скрывает индикатор «печатает» в subtitle шапки чата.
      * «Печатает» — акцентный цвет; обычное состояние — tertiary.
      */
+    /** Момент (монотонный), когда надпись «печатает» была показана. См. updateTypingIndicator. */
+    private var typingShownAtMs: Long = 0L
+
     private fun updateTypingIndicator(isTyping: Boolean) {
+        val nowMono = android.os.SystemClock.elapsedRealtime()
         if (isTyping) {
+            if (typingShownAtMs == 0L) typingShownAtMs = nowMono
             binding.tvChatSubtitle.text = getString(R.string.typing_indicator)
             binding.tvChatSubtitle.setTextColor(
                 ContextCompat.getColor(this, R.color.accent)
             )
             binding.tvChatSubtitle.setOnClickListener(null)
         } else {
+            // ⚠️ ГИСТЕРЕЗИС (репорт: «статус печатает мигает»). Решение о печати пересчитывается
+            // раз в секунду, а данные приходят рывками: пропущенный тик, слипшиеся обновления,
+            // эхо вместо оригинала — и надпись успевает моргнуть, хотя человек не переставал
+            // печатать. Глазу это заметно куда сильнее, чем лишняя секунда надписи.
+            //
+            // Показали — держим минимум TYPING_MIN_SHOW_MS. Это не «липкость» присутствия:
+            // потолок по возрасту сигнала (Presence.TYPING_MAX_AGE_MS) продолжает работать,
+            // просто его вердикт применяется не раньше, чем надпись побыла на экране.
+            if (typingShownAtMs != 0L && nowMono - typingShownAtMs < TYPING_MIN_SHOW_MS) return
+            typingShownAtMs = 0L
             updateSubtitle()
         }
     }
@@ -5429,11 +5864,13 @@ class ChatActivity : SecureActivity() {
             return
         }
         val p = lastPartnerProfile
-        val now = System.currentTimeMillis()
         val alive = p != null && !p.deleted
-        val isRecording = alive && p!!.recordingTs > 0L && now - p.recordingTs < RECORDING_EXPIRY_MS
-        val isTyping    = alive && p!!.typingTs   > 0L && now - p.typingTs   < TYPING_EXPIRY_MS
-        val isOnline    = alive && p!!.onlineTs   > 0L && now - p.onlineTs   < ONLINE_EXPIRY_MS
+        // ВСЕ три статуса — через Presence, а не «now - штамп»: штамп снят ЧУЖИМИ часами, и
+        // сравнивать его с моими нельзя (см. докстринг Presence). «Печатает» страдало от этого
+        // сильнее всего — при отставших часах партнёра оно не загоралось вообще.
+        val isRecording = alive && Presence.isRecording(chat.chatId, p!!.userId, p.recordingTs, p.onlineTs)
+        val isTyping    = alive && Presence.isTyping(chat.chatId, p.userId, p.typingTs, p.onlineTs)
+        val isOnline    = alive && Presence.isOnline(chat.chatId, p!!.userId, p.onlineTs)
         if (isRecording) {
             binding.tvChatSubtitle.text = getString(R.string.recording_indicator)
             binding.tvChatSubtitle.setTextColor(ContextCompat.getColor(this, R.color.accent))
@@ -5452,11 +5889,10 @@ class ChatActivity : SecureActivity() {
      * эта функция только читает его, ничего не меняет.
      */
     private fun applyGroupPresence() {
-        val now = System.currentTimeMillis()
         val others = lastKnownProfiles.values.filter { it.userId != prefs.myUserId && !it.deleted }
-        val isRecording = others.any { it.recordingTs > 0L && now - it.recordingTs < RECORDING_EXPIRY_MS }
-        val isTyping    = others.any { it.typingTs   > 0L && now - it.typingTs   < TYPING_EXPIRY_MS }
-        val isOnline    = others.any { it.onlineTs   > 0L && now - it.onlineTs   < ONLINE_EXPIRY_MS }
+        val isRecording = others.any { Presence.isRecording(chat.chatId, it.userId, it.recordingTs, it.onlineTs) }
+        val isTyping    = others.any { Presence.isTyping(chat.chatId, it.userId, it.typingTs, it.onlineTs) }
+        val isOnline    = others.any { Presence.isOnline(chat.chatId, it.userId, it.onlineTs) }
         when {
             isRecording -> {
                 binding.tvChatSubtitle.text = getString(R.string.recording_indicator)
@@ -7001,6 +7437,13 @@ class ChatActivity : SecureActivity() {
                     }
                     // Сбрасываем кэш для SyncEngine
                     lastContent = ""
+                    // ⚠️ И сразу перечитываем канал. Отправка обычного сообщения и реакция
+                    // это делают давно (см. forceSync после doSend / после реакции), а правка —
+                    // единственная операция, которая молча полагалась на очередной тик опроса.
+                    // На своей стороне правка и так уже показана оптимистично, но без этого
+                    // вызова серверная версия не подтверждалась секундами, и правка оставалась
+                    // «моей локальной» дольше, чем нужно.
+                    if (::syncEngine.isInitialized) syncEngine.forceSync(0L)
                 }
             ))
         }
@@ -7451,15 +7894,49 @@ class ChatActivity : SecureActivity() {
         // мерцание аватара/presence). ВЫКЛ по умолчанию: включить на ОБОИХ телефонах для
         // теста; после подтверждения сделать дефолтом. (см. SYNC_AUDIT.md)
         const val SLOT_UNION_PROFILES = true
-        /** Через сколько мс без обновления партнёр считается офлайн. */
-        const val ONLINE_EXPIRY_MS = 12_000L
-        /** Через сколько мс без обновления статус «записывает голосовое» считается устаревшим. */
-        const val RECORDING_EXPIRY_MS = 8_000L
+        /**
+         * Через сколько мс без heartbeat участник считается офлайн.
+         *
+         * ⚠️ Само окно живёт теперь в [Presence] (там же — почему сравнивать чужой штамп с
+         * моими часами нельзя). Константа оставлена как единственное имя для этого числа,
+         * чтобы оно не разъехалось по экранам, как это уже случилось: в списке участников
+         * лежала собственная копия на 20 с, и один и тот же человек мог быть «в сети» в
+         * профиле беседы и «не в сети» в шапке чата.
+         */
+        const val ONLINE_EXPIRY_MS = Presence.ONLINE_WINDOW_MS
+        /**
+         * Через сколько мс без обновления статус «записывает голосовое» считается устаревшим.
+         * Реальное окно живёт в [Presence.TYPING_WINDOW_MS] — там же объяснено, почему решение
+         * нельзя принимать сравнением чужого штампа с моими часами. Константа оставлена одним
+         * именем для этого числа, чтобы копии не расползлись по экранам.
+         */
+        const val RECORDING_EXPIRY_MS = Presence.TYPING_WINDOW_MS
         /** Период локального тикера пере-вычисления presence по таймауту. */
         const val PRESENCE_TICK_MS = 1_000L
-        /** Через сколько мс без обновления typing-сигнал считается устаревшим. */
-        const val TYPING_EXPIRY_MS = 14_000L
-        /** Задержка после последнего нажатия клавиши до отправки «перестал печатать». */
+        /** Через сколько мс без обновления typing-сигнал считается устаревшим. См. [RECORDING_EXPIRY_MS]. */
+        const val TYPING_EXPIRY_MS = Presence.TYPING_WINDOW_MS
+        /**
+         * Сколько минимум надпись «печатает» остаётся на экране после того, как загорелась.
+         * Только против мигания: за секунду человек всё равно не успевает прочитать смену
+         * статуса, а рывки в доставке дают ложные погасания именно на таком масштабе.
+         */
+        const val TYPING_MIN_SHOW_MS = 1_200L
+
+        /**
+         * Задержка после последнего нажатия клавиши до отправки «перестал печатать».
+         *
+         * ⚠️ ВОЗВРАЩЕНО К 3 с (репорт: «статус печатает мигает»). Я снижал её до полутора
+         * секунд, чтобы надпись быстрее гасла, — и получил ровно то, от чего защищала исходная
+         * величина: пауза между словами, когда человек думает над формулировкой, спокойно
+         * превышает полторы секунды, и каждая такая пауза выдавала стоп-сигнал — надпись гасла
+         * и тут же зажигалась снова. Три секунды отделяют паузу внутри мысли от конца набора.
+         *
+         * Сокращать хвост за счёт этой величины нельзя: это торг между миганием и хвостом, а
+         * мигание заметнее и раздражает сильнее. По-настоящему хвост укорачивается только
+         * учащением публикаций presence, а оно упирается в то, что каждая публикация
+         * переписывает profiles.txt целиком (см. заметку: presence нужно вынести в отдельное
+         * маленькое событие).
+         */
         const val TYPING_STOP_DELAY_MS = 3_000L
 
         /** Мягкий фоллбек «Соединение с {ник}…»: через сколько раскрыть пустое состояние,
@@ -7505,5 +7982,32 @@ class ChatActivity : SecureActivity() {
          *  обязан уложиться внутрь текущего цикла и не наезжать на следующий. */
         const val PRESENCE_PUSH_RETRY_MS = 1_200L
 
+        // ── Atmospheric Glass: геометрия материала ────────────────────────────────
+        // Держим числа ЗДЕСЬ, а не россыпью по коду и drawable: радиусы связаны
+        // формулой concentricity (внутренний = внешний − отступ), и правка одного
+        // без другого ломает вложенность контуров. Значения продублированы
+        // комментариями в bg_glass_toolbar.xml / bg_glass_input_pill.xml.
+
+        /** Радиус капсулы шапки. Высота = 42dp кнопка + 2×5dp паддинг = 52dp → r = 26dp. */
+        const val HEADER_CAPSULE_RADIUS_DP = 26f
+        /** Насколько кнопка утоплена от края капсулы шапки — равномерно по всем сторонам. */
+        const val HEADER_BTN_INSET_DP = 5f
+        /** То же число для setHeaderBadgeInset (там нужен Int). Держим рядом, чтобы не разъехались. */
+        const val GLASS_BADGE_INSET_DP = 5
+
+        /** Отступ строки шапки от краёв экрана в glass-режиме. */
+        const val GLASS_HEADER_MARGIN_DP = 16
+        /** Внутренний горизонтальный паддинг строки шапки (задан в activity_chat.xml). */
+        const val CHAT_HEADER_PADDING_DP = 6
+        /** Боковой отступ панели ввода в classic — XML-дефолт, возвращаем его явно. */
+        const val CLASSIC_INPUT_INSET_DP = 12
+        /** Радиус пилюли ввода. Высота = 44dp кнопка + 2×4dp паддинг = 52dp → r = 26dp. */
+        const val PILL_CAPSULE_RADIUS_DP = 26f
+        /** Насколько кнопка утоплена от края пилюли (её вертикальный паддинг). */
+        const val PILL_BTN_INSET_DP = 4f
+
+        // 25.08.2026: преломления (и самого LENS_*, на который ссылалась эта строка) в
+        // материале больше нет — AtmosphericGlassSurface рисует плоскую заливку
+        // @color/glass_tint, см. историю отката в AtmosphericGlass.kt.
     }
 }

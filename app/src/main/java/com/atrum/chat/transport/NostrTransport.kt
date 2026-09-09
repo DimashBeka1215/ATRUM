@@ -15,6 +15,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
@@ -106,7 +108,14 @@ class NostrTransport(
      * тогда members.txt нигде не проверяется и не применяется (безопасный дефолт).
      */
     private val adminPubkeyHex: String? by lazy {
-        adminUserId?.let { uid ->
+        // ⚠️ ПУСТАЯ строка — это НЕ «админ с пустым id», а «админа нет» (§16). Отзыв создателя
+        // (RevokeSync.applyRevakes → updateAdminUserId(chat.id, "")) оставляет именно "".
+        // Раньше проверялся только null, поэтому из "" выводился вполне рабочий ключ —
+        // а вывести его мог КТО УГОДНО в беседе (деривация из общего пароля + userId).
+        // Любой участник отозванной беседы мог подписать таким ключом members.txt и стать
+        // для всех «главным»: ростер, роли, баны, имя беседы. Пусто → админа нет и
+        // members.txt не применяется вовсе (безопасный дефолт, как и при null).
+        adminUserId?.takeIf { it.isNotBlank() }?.let { uid ->
             val adminPriv = sha256("atrum_nostr_v1_${chatPassword}_$uid")
             com.atrum.chat.nostr.Schnorr.pubkeyFromPrivkey(adminPriv).toHex()
         }
@@ -446,12 +455,42 @@ class NostrTransport(
      */
     private fun latestVerifiedAdminFile(events: List<NostrEvent>, name: String): String {
         val trustedPubkey = adminPubkeyHex ?: return ""
-        return events
+        val fresh = events
             .filter { ev -> eventHasFileName(ev, name) }
             .filter { ev -> ev.pubkey.equals(trustedPubkey, ignoreCase = true) }
             .filter { ev -> NostrEvent.verifySignature(ev) }
             .maxByOrNull { it.created_at }
-            ?.content ?: ""
+        // ⭐ ЛИПКОСТЬ (репорт: «закрепы не синхронятся, баны и права доезжают через раз»).
+        //
+        // Здесь была асимметрия, из-за которой ВСЯ модерация беседы работала через раз.
+        // Слоты делегатов ([verifiedMemberSlots]) давно липкие: реле, не вернувшее чей-то
+        // слот на конкретном тике, его не роняет. А файл ГЛАВНОГО читался строго из событий
+        // ЭТОГО чтения, без липкости — хотя именно он якорь всего применения:
+        // MembersSync.applyIncoming первой же строкой делает `if (membersContent.isBlank())
+        // return false`. То есть один флаки-тик, на котором реле не вернули событие главного,
+        // отбрасывал ЦЕЛИКОМ и его ростер с ролями, и вклады делегатов, и закрепы
+        // верифицированного слота — они даже не разбирались. Через Tor и на публичных реле
+        // такой тик — обычное дело, отсюда «поставил закреп, у второго не появился»,
+        // «права не выдаются», «бан доехал только после перезахода».
+        //
+        // Тот же приём, что у слотов: помним последний ПОДЛИННЫЙ файл главного по каналу и
+        // отдаём его, если свежее чтение ничего не принесло. Кэш статический (переживает
+        // пересоздание транспорта при перезаходе), заменяется только событием с бОльшим
+        // created_at. Безопасность не страдает: в кэш попадает ТОЛЬКО файл, уже прошедший обе
+        // проверки — pubkey главного и валидную подпись события.
+        val sticky = stickyAdminFilesByChannel.getOrPut(channelId) { java.util.concurrent.ConcurrentHashMap() }
+        // ⚠️ Ключ ВКЛЮЧАЕТ pubkey главного (§16, найдено при разборе передачи владения):
+        // кэш статический и переживает смену владельца, а после передачи/отзыва главным
+        // становится ДРУГОЙ ключ. С ключом без pubkey сюда возвращался бы файл ПРЕЖНЕГО
+        // владельца — то есть его ростер, роли и закрепы продолжали бы применяться уже
+        // после того, как беседа перестала ему доверять, ровно до первой публикации нового.
+        val key = channelId + '#' + trustedPubkey + '#' + name
+        if (fresh != null) {
+            val cur = sticky[key]
+            if (cur == null || fresh.created_at >= cur.created_at) sticky[key] = fresh
+            return fresh.content
+        }
+        return sticky[key]?.content ?: ""
     }
 
     /**
@@ -525,10 +564,28 @@ class NostrTransport(
             }
         }
 
+        publishMessageEvent(encryptedLine)
+    }
+
+    /**
+     * Публикация ОДНОЙ строки чата (kind:1).
+     *
+     * [editsHash] — delHash строки, которую эта заменяет (правка). Тогда событие несёт
+     * теги "edit" + "auth": получатель, увидев новый текст, тем же событием скрывает
+     * старый (см. NostrMessageStore.Entry.editsHash). Клиент, который тега не знает,
+     * ведёт себя как раньше и дождётся обычного надгробия — формат обратносовместим (§17).
+     */
+    private suspend fun publishMessageEvent(encryptedLine: String, editsHash: String? = null) {
+        val tags = ArrayList<List<String>>(3)
+        tags.add(listOf("t", channelId))
+        if (!editsHash.isNullOrEmpty()) {
+            tags.add(listOf("edit", editsHash))
+            tags.add(listOf("auth", NostrMessageStore.ctrlToken(chatPassword, "del|$channelId|$editsHash")))
+        }
         val ev = NostrEvent.create(
             privkeyBytes = privkey,
             kind = 1,
-            tags = listOf(listOf("t", channelId)),
+            tags = tags,
             content = encryptedLine
         )
         publishToAnyRelay(ev)
@@ -554,17 +611,92 @@ class NostrTransport(
 
     /** Сырая публикация одного файла-события (kind:1, тег ["file", name]) без чанкинга. */
     private suspend fun publishFile(name: String, content: String) {
-        publishToAnyRelay(
-            NostrEvent.create(
-                privkeyBytes = privkey,
-                // Параметризованное replaceable-событие (NIP-78): реле хранит только
-                // ПОСЛЕДНЮЮ версию на (pubkey, kind, d=name). Так profiles.txt/reactions.txt,
-                // переписываемые каждые ~2с, НЕ копятся и не забивают ленту сообщений.
-                kind = FILE_KIND,
-                tags = listOf(listOf("t", channelId), listOf("file", wireName(name)), listOf("d", wireName(name))),
-                content = content
-            )
+        val ev = NostrEvent.create(
+            privkeyBytes = privkey,
+            // Параметризованное replaceable-событие (NIP-78): реле хранит только
+            // ПОСЛЕДНЮЮ версию на (pubkey, kind, d=name). Так profiles.txt/reactions.txt,
+            // переписываемые каждые ~2с, НЕ копятся и не забивают ленту сообщений.
+            kind = FILE_KIND,
+            tags = listOf(listOf("t", channelId), listOf("file", wireName(name)), listOf("d", wireName(name))),
+            content = content
         )
+        // Достраховка реплик — ТОЛЬКО для неповторимого медиа (img_/stk_/lp_ и их чанки:
+        // ImageChunker.chunkName сохраняет префикс имени). profiles.txt/reactions.txt сюда
+        // не попадают и не должны: они переписываются каждые несколько секунд, их «потеря»
+        // самолечится ближайшей же перезаписью.
+        if (isImmutableFile(name)) {
+            publishToAnyRelay(ev) { ok, failed -> scheduleMediaReplication(name, ev, ok, failed) }
+        } else {
+            publishToAnyRelay(ev)
+        }
+    }
+
+    /**
+     * ДОСТРАХОВКА РЕПЛИК НЕПОВТОРИМОГО МЕДИА.
+     *
+     * ⚠️ Отчёт пользователя: «чанки=5 длины=[48000, 48000, -1, 48000, -1]» — две части фото
+     * не нашлись НИ НА ОДНОМ ответившем реле, хотя при отправке публикация прошла успешно.
+     * Причина в асимметрии: [publishToAnyRelay] отпускает отправителя, как только событие
+     * приняли ДВА реле (кворум) — для текста этого достаточно, он крошечный и ляжет почти
+     * везде, а вот 48-килобайтная часть медиа принимается далеко не каждым публичным реле
+     * (мягкие лимиты на размер события). В итоге неповторимый кусок мог держаться всего на
+     * паре узлов, и стоило им подрезать хранение или просто не ответить читателю — часть
+     * исчезала НАВСЕГДА: переотправка (scheduleRebroadcast) была заведена только для
+     * текстовых сообщений, для медиа-частей её не было вообще.
+     *
+     * Что делаем: после того как отстрелялись ВСЕ реле, смотрим честное число принявших.
+     * Если их меньше [MEDIA_MIN_REPLICAS] — в фоне повторяем публикацию, причём ТОЛЬКО тем
+     * реле, которые отказали (события Nostr идемпотентны по id, принявшим повторять нечего).
+     * Останавливаемся, как только реплик хватает, или когда кончились попытки.
+     *
+     * Цена ровно там, где риск: часть, легшая широко с первого раза, не переотправляется
+     * никогда, и скорость отправки не меняется — вся работа идёт в фоновом publishScope
+     * уже после того, как отправитель разблокирован.
+     */
+    private fun scheduleMediaReplication(
+        name: String,
+        event: NostrEvent,
+        initialOk: Int,
+        failedRelays: List<String>
+    ) {
+        if (initialOk >= MEDIA_MIN_REPLICAS || failedRelays.isEmpty()) return
+        publishScope.launch {
+            var replicas = initialOk
+            var targets = failedRelays
+            for (delayMs in MEDIA_REPLICATION_BACKOFF_MS) {
+                if (replicas >= MEDIA_MIN_REPLICAS || targets.isEmpty()) return@launch
+                delay(delayMs)
+                val stillFailed = ConcurrentLinkedQueue<String>()
+                val ok = AtomicInteger(0)
+                // ⚠️ ПОТОЛОК ПАРАЛЛЕЛИЗМА берём ТОЛЬКО на время сетевого раунда, а не на
+                // паузы. Длинное голосовое — это СОТНИ частей: без потолка они полезли бы к
+                // реле разом и получили троттлинг, то есть сломали бы синхронизацию ровно
+                // тем, чем её чинят (§1). Но и держать слот во время шестидесятисекундной
+                // паузы нельзя — очередь из сотен частей встала бы на часы.
+                mediaReplicationGate.withPermit {
+                    coroutineScope {
+                        targets.map { url ->
+                            launch {
+                                if (runCatching { NostrRelayPool.publish(url, event, useTor) }.isSuccess) {
+                                    ok.incrementAndGet()
+                                } else {
+                                    stillFailed.add(url)
+                                }
+                            }
+                        }.joinAll()
+                    }
+                }
+                replicas += ok.get()
+                targets = stillFailed.toList()
+            }
+            if (replicas < MEDIA_MIN_REPLICAS) {
+                // Не ошибка отправки: у получателя часть, скорее всего, соберётся — но запас
+                // прочности мал, и это стоит видеть в логе при разборе «пустых» фото.
+                android.util.Log.w("AtrumNostr",
+                    "Медиа '$name' закрепилось лишь на $replicas реле из желаемых " +
+                        "$MEDIA_MIN_REPLICAS — часть может пропасть при подрезке хранения")
+            }
+        }
     }
 
     /**
@@ -722,6 +854,26 @@ class NostrTransport(
         emptyList()
     }
 
+    /**
+     * Слоты файла С ПОДПИСАНТОМ — тот же ТОЧЕЧНЫЙ запрос, что и [loadFileSlots] (фильтр по
+     * тегу #d конкретного файла), просто не выбрасывается pubkey автора события. По одному
+     * НОВЕЙШЕМУ слоту на автора: старые копии того же автора для проверки «мой слот на реле»
+     * бесполезны и только заставили бы вызывающую сторону лишний раз платить за расшифровку.
+     *
+     * Дополнительного трафика к [loadFileSlots] не добавляет ни байта (§1: лишние запросы
+     * ломают синхронизацию) — это ровно тот же REQ.
+     */
+    override suspend fun loadFileSlotsSigned(name: String): List<ProfileSlotSigned> = try {
+        val events = queryAllRelays(fileFilter(name)) ?: emptyList()
+        events.filter { ev -> eventHasFileName(ev, name) && ev.content.isNotBlank() }
+            .groupBy { it.pubkey.lowercase() }
+            .mapNotNull { (_, evs) -> evs.maxByOrNull { it.created_at } }
+            .sortedByDescending { it.created_at }
+            .map { ProfileSlotSigned(it.pubkey, it.content) }
+    } catch (_: Exception) {
+        emptyList()
+    }
+
     override suspend fun loadFile(name: String): String {
         if (isImmutableFile(name)) {
             mediaCache.get(wireName(name))?.let { return it }
@@ -760,18 +912,51 @@ class NostrTransport(
         throw RuntimeException("Файл '$name' не найден в Nostr (channel=$channelId): $reason")
     }
 
-    /** Замена строки: надгробие старой + публикация новой. */
+    /**
+     * Замена строки (правка сообщения).
+     *
+     * ⚠️ ПОРЯДОК ВАЖЕН (§16, найдено при разборе «правка иногда съедает сообщение»):
+     * раньше сначала публиковалось надгробие старой строки, и только потом новая. Если
+     * вторая публикация не проходила (реле не подтвердили / таймаут действия очереди —
+     * PatchQueue.NOSTR_ACTION_TIMEOUT_MS), сообщение оказывалось удалённым У ВСЕХ, а нового
+     * текста не появлялось НИГДЕ: правка молча уничтожала сообщение, причём откат в UI
+     * (dropPending) возвращал автору текст, которого на реле уже нет — расхождение навсегда.
+     *
+     * Теперь сначала уходит НОВАЯ строка (она же несёт ссылку на заменяемую — тег "edit"),
+     * и только потом надгробие старой. Что даёт:
+     *   • сбой на первом шаге → на реле не изменилось ничего, откат в UI честный;
+     *   • сбой на втором → у клиентов, понимающих тег "edit", старая версия уже скрыта
+     *     ПЕРВЫМ событием, у остальных (§17) видны обе до доотправки надгробия — но
+     *     НИЧЕГО не потеряно ни в одном из случаев;
+     *   • оба шага идемпотентны, поэтому повтор из очереди безопасен: строка-дубль
+     *     схлопывается по контенту (render → distinct), надгробие адресуется хешем.
+     *
+     * Результат = успех ПЕРВОГО шага: правка считается доставленной, когда на реле лежит
+     * новый текст. Иначе очередь (PatchQueue) откатывала бы в UI правку, которая на самом
+     * деле прошла, — только из-за необязательного второго шага.
+     */
     override suspend fun replaceLine(oldLine: String, newLine: String): Boolean {
-        deleteLine(oldLine)
-        appendLine(newLine)
+        publishMessageEvent(newLine, editsHash = delHash(oldLine))
+        // Надгробие — ради старых клиентов; NIP-09-поиск исходного события сюда НЕ
+        // включаем намеренно: это лишний queryAllRelays (до 15с через Tor) внутри
+        // действия очереди с бюджетом 30с — он и был главной причиной таймаутов правки.
+        if (runCatching { publishTombstone(oldLine) }.isFailure) {
+            publishScope.launch {
+                for (delayMs in longArrayOf(15_000L, 45_000L)) {
+                    delay(delayMs)
+                    if (runCatching { publishTombstone(oldLine) }.isSuccess) break
+                }
+            }
+        }
         return true
     }
 
     /**
-     * Удаление строки: публикуем «надгробие» (тег "del" с хешем шифртекста) — оба
-     * клиента скрывают сообщение детерминированно. Плюс best-effort NIP-09 удаление.
+     * «Надгробие» строки: событие с тегом "del" (хеш шифртекста) + токен пароля.
+     * Оба клиента скрывают сообщение детерминированно. Идемпотентно: повтор даёт ещё
+     * одно надгробие с тем же хешем, а хеши складываются в множество (см. render).
      */
-    override suspend fun deleteLine(line: String): Boolean {
+    private suspend fun publishTombstone(line: String) {
         val h = delHash(line)
         val marker = NostrEvent.create(
             privkeyBytes = privkey,
@@ -786,6 +971,14 @@ class NostrTransport(
         )
         publishToAnyRelay(marker)
         NostrMessageStore.merge(channelId, listOf(marker)) // надгробие сразу локально
+    }
+
+    /**
+     * Удаление строки: надгробие (детерминированно скрывает сообщение у всех) плюс
+     * best-effort NIP-09 удаление самого события на реле.
+     */
+    override suspend fun deleteLine(line: String): Boolean {
+        publishTombstone(line)
         findMessageEvent(line)?.let { ev ->
             runCatching { publishToAnyRelay(NostrEvent.createDeletion(privkey, ev.id)) }
         }
@@ -948,15 +1141,29 @@ class NostrTransport(
     override fun watchMessages(fastReopen: Boolean, onNew: () -> Unit): AutoCloseable {
         if (!fastReopen) return watchMessages(onNew)
         val subId = "atrumw_$channelId"
+        val subIdMembers = "atrumm_$channelId"
         val onEvent: (NostrEvent) -> Unit = { ev ->
             if (ev.kind == 1) {
                 NostrMessageStore.merge(channelId, listOf(ev))
                 onNew()
             }
         }
+        // ⚠️ ДОБАВЛЕНО: стрим members.txt/groupprofile.txt/revoke.txt есть и в этом варианте.
+        // Раньше самолечащийся вариант вёл ТОЛЬКО подписку на сообщения, поэтому включить его
+        // в открытом чате было нельзя: беседа потеряла бы мгновенные закрепы, модерацию и смену
+        // имени/аватара беседы. Теперь оба стрима живут рядом, и открытый чат может пользоваться
+        // самолечением, не жертвуя ничем.
+        val onEventMembers: (NostrEvent) -> Unit = { ev ->
+            if (ev.kind == FILE_KIND) {
+                if (ev.tags.any { it.size >= 2 && it[0] == "d" && it[1] == wireName("revoke.txt") }) revokeDirty = true
+                onNew()
+            }
+        }
         val job = watchScope.launch {
+            var lastMembersReopenMs = 0L
             while (isActive) {
-                val sinceSec = (System.currentTimeMillis() / 1000) - STREAM_REOPEN_LOOKBACK_SEC
+                val now = System.currentTimeMillis()
+                val sinceSec = (now / 1000) - STREAM_REOPEN_LOOKBACK_SEC
                 activeRelays().forEach { url ->
                     val key = "reopen_$url$subId"
                     if (connectingRelays.add(key)) {
@@ -970,12 +1177,40 @@ class NostrTransport(
                         }
                     }
                 }
+                // Членство/профиль беседы переоткрываем ЗАМЕТНО реже сообщений: такие события
+                // редки (закреп, бан, переименование), а REQ по ним стоит столько же. Своя
+                // оглядка назад — чтобы событие, случившееся между переоткрытиями, не потерялось.
+                val membersInterval = if (useTor) MEMBERS_REOPEN_TOR_MS else MEMBERS_REOPEN_MS
+                if (now - lastMembersReopenMs >= membersInterval) {
+                    lastMembersReopenMs = now
+                    val sinceMembers = (now / 1000) - MEMBERS_REOPEN_LOOKBACK_SEC
+                    activeRelays().forEach { url ->
+                        val key = "reopenm_$url$subIdMembers"
+                        if (connectingRelays.add(key)) {
+                            launch {
+                                try {
+                                    runCatching { NostrRelayPool.unsubscribe(url, subIdMembers, useTor) }
+                                    runCatching {
+                                        NostrRelayPool.subscribe(
+                                            url, subIdMembers, membersStreamFilter(sinceMembers), useTor, onEventMembers
+                                        )
+                                    }
+                                } finally {
+                                    connectingRelays.remove(key)
+                                }
+                            }
+                        }
+                    }
+                }
                 delay(if (useTor) STREAM_REOPEN_TOR_MS else STREAM_REOPEN_MS)
             }
         }
         return AutoCloseable {
             job.cancel()
-            for (url in activeRelays()) runCatching { NostrRelayPool.unsubscribe(url, subId, useTor) }
+            for (url in activeRelays()) {
+                runCatching { NostrRelayPool.unsubscribe(url, subId, useTor) }
+                runCatching { NostrRelayPool.unsubscribe(url, subIdMembers, useTor) }
+            }
         }
     }
 
@@ -1000,20 +1235,51 @@ class NostrTransport(
         put("since", sinceSec)
     }
 
+    /**
+     * Живой стрим чужих слотов profiles.txt (ник, аватар, presence, эфемерный ключ).
+     *
+     * ⚠️ ПЕРЕПИСАНО (репорт: «аватарка у того, кто создал чат, не приходит, а если и доходит,
+     * то очень поздно»). Прежняя версия имела две дыры, из-за которых профиль собеседника мог
+     * не доехать ВООБЩЕ — при живом на вид соединении:
+     *
+     *  1. `since` фиксировался ОДИН раз в момент подписки. Слот, опубликованный собеседником
+     *     ДО того, как я открыл экран, под фильтр не попадал никогда — оставалась надежда
+     *     только на обычный опрос. Теперь при каждом переоткрытии `since` берётся с
+     *     оглядкой назад ([PROFILE_REOPEN_LOOKBACK_SEC]), и реле повторно отдаёт слоты,
+     *     опубликованные в этом окне.
+     *  2. Переподписка происходила ТОЛЬКО когда `hasSub == false`. Публичное реле умеет
+     *     «тихо убивать» подписку: сокет жив, hasSub=true, а события не идут. Такая подписка
+     *     не чинилась до пересоздания экрана. Теперь REQ ПРИНУДИТЕЛЬНО переоткрывается раз в
+     *     [PROFILE_REOPEN_MS] — тот же приём, что уже спасает поток сообщений в списке чатов
+     *     (см. watchMessages(fastReopen = true)).
+     *
+     * Интервал переоткрытия намеренно НЕ такой частый, как у сообщений (4с): слоты профилей
+     * дороже в обработке (Argon2 на расшифровку), и будить их чаще незачем — presence всё
+     * равно публикуется раз в ~5с. §1: это НЕ новый polling-цикл, а сторож существующей
+     * подписки; сеть опрашивается тем же REQ, что и раньше.
+     *
+     * Дедуп по (pubkey → хеш содержимого): при переоткрытии с оглядкой назад реле честно
+     * пришлёт те же слоты снова, а каждый повтор стоил бы получателю тяжёлой расшифровки.
+     * Отдаём наверх только РЕАЛЬНО изменившийся слот.
+     */
     override fun watchProfiles(onProfile: (String) -> Unit): AutoCloseable {
         val subId = "atrump_$channelId"
-        val sinceSec = System.currentTimeMillis() / 1000
+        val seenByPubkey = java.util.concurrent.ConcurrentHashMap<String, Int>()
         val onEvent: (NostrEvent) -> Unit = { ev ->
-            if (ev.kind == FILE_KIND && ev.pubkey != myPubkeyHex) onProfile(ev.content)
+            if (ev.kind == FILE_KIND && ev.pubkey != myPubkeyHex && ev.content.isNotBlank()) {
+                val h = ev.content.hashCode()
+                if (seenByPubkey.put(ev.pubkey, h) != h) onProfile(ev.content)
+            }
         }
         val job = watchScope.launch {
             while (isActive) {
+                val sinceSec = (System.currentTimeMillis() / 1000) - PROFILE_REOPEN_LOOKBACK_SEC
                 activeRelays().forEach { url ->
-                    if (!NostrRelayPool.hasSub(url, subId, useTor) && !connectingRelays.contains(url + subId)) {
+                    val key = "reopenp_$url$subId"
+                    if (connectingRelays.add(key)) {
                         launch {
-                            val key = url + subId
-                            connectingRelays.add(key)
                             try {
+                                runCatching { NostrRelayPool.unsubscribe(url, subId, useTor) }
                                 runCatching { NostrRelayPool.subscribe(url, subId, profileStreamFilter(sinceSec), useTor, onEvent) }
                             } finally {
                                 connectingRelays.remove(key)
@@ -1021,7 +1287,7 @@ class NostrTransport(
                         }
                     }
                 }
-                delay(if (useTor) RESUBSCRIBE_TOR_MS else RESUBSCRIBE_MS)
+                delay(if (useTor) PROFILE_REOPEN_TOR_MS else PROFILE_REOPEN_MS)
             }
         }
         return AutoCloseable {
@@ -1190,9 +1456,20 @@ class NostrTransport(
      * отправителя. Это скрывает, какое именно реле является «ведущим» или ближайшим.
      * Также добавлен небольшой джиттер (случайная задержка) перед отправкой.
      */
-    private suspend fun publishToAnyRelay(event: NostrEvent) {
+    /**
+     * @param onAllSettled вызывается, когда ОТСТРЕЛЯЛИСЬ все реле (а не когда собран кворум):
+     *        отдаёт итоговое число принявших и адреса тех, кто отказал. Нужно для достраховки
+     *        реплик неповторимого медиа — см. [scheduleMediaReplication]. Вызывается из
+     *        фонового publishScope уже ПОСЛЕ возврата управления отправителю, поэтому на
+     *        скорость отправки не влияет никак.
+     */
+    private suspend fun publishToAnyRelay(
+        event: NostrEvent,
+        onAllSettled: ((okCount: Int, failedRelays: List<String>) -> Unit)? = null
+    ) {
         val firstSuccess = CompletableDeferred<Boolean>()
         val failures = ConcurrentLinkedQueue<String>()
+        val failedUrls = ConcurrentLinkedQueue<String>()
         val relays = activeRelays()
         val remaining = AtomicInteger(relays.size)
 
@@ -1212,11 +1489,13 @@ class NostrTransport(
                 } else {
                     val host = url.removePrefix("wss://")
                     failures.add("$host: ${r.exceptionOrNull()?.message?.take(60) ?: "?"}")
+                    failedUrls.add(url)
                 }
 
                 if (remaining.decrementAndGet() == 0) {
                     if (okCount.get() > 0) firstSuccess.complete(true)
                     else firstSuccess.complete(false)
+                    runCatching { onAllSettled?.invoke(okCount.get(), failedUrls.toList()) }
                 }
             }
         }
@@ -1271,7 +1550,15 @@ class NostrTransport(
          * не придёт более новый (created_at) слот того же pubkey. Симметрично stickyMemberEvents/
          * stickyReactionSlots.
          */
-        private val stickyProfileSlotsByChannel =
+/**
+         * ЛИПКИЙ кэш ПОДЛИННЫХ файлов ГЛАВНОГО админа по каналу (channelId#имя → событие) —
+         * members.txt и groupprofile.txt. Тот же приём, что у слотов участников и реакций,
+         * но для якорного файла: без него флаки-тик обнулял ВСЮ модерацию беседы разом
+         * (см. latestVerifiedAdminFile).
+         */
+        private val stickyAdminFilesByChannel =
+            java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<String, com.atrum.chat.nostr.NostrEvent>>()
+                private val stickyProfileSlotsByChannel =
             java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<String, com.atrum.chat.nostr.NostrEvent>>()
         private const val FILE_KIND = 1063
         /**
@@ -1311,6 +1598,37 @@ class NostrTransport(
          *  сама пауза тоже не должна быть узнаваемым паттерном. */
         private const val CHUNK_JITTER_MIN_MS = 250L
         private const val CHUNK_JITTER_MAX_MS = 700L
+
+        /**
+         * Желаемое число реле, на которых должна лежать КАЖДАЯ часть неповторимого медиа
+         * (см. scheduleMediaReplication). Кворума публикации (2) для этого мало: он выбран
+         * под текст, который крошечный и расходится сам, а часть фото/голосового весит
+         * десятки килобайт и принимается не каждым реле. Четыре — запас, переживающий
+         * подрезку хранения на паре узлов и несимметричную доступность реле у собеседника.
+         */
+        private const val MEDIA_MIN_REPLICAS = 4
+        /**
+         * Сколько частей медиа достраховываются ОДНОВРЕМЕННО (см. scheduleMediaReplication).
+         * Небольшой, потому что работа фоновая и торопиться ей некуда, а всплеск запросов к
+         * публичным реле оборачивается троттлингом.
+         */
+        private const val MEDIA_REPLICATION_PARALLELISM = 2
+        private val mediaReplicationGate = Semaphore(MEDIA_REPLICATION_PARALLELISM)
+        /**
+         * Паузы между фоновыми раундами достраховки.
+         *
+         * ⚠️ ПЕРВАЯ ПАУЗА НАМЕРЕННО ДЛИННАЯ (было 5с). Отправка фото или голосового — это не
+         * одно событие, а вереница: десятки чанков, файл хешей, манифест и только ПОТОМ
+         * строка-анонс, ради которой всё и затевалось. Достраховка, стартующая через пять
+         * секунд, влезала прямо в середину этой вереницы и отбирала у неё сокеты к реле —
+         * то есть мешала ровно той отправке, которую страхует. Тридцать секунд с запасом
+         * перекрывают типичную заливку; для страховки от подрезки хранения это ничего не
+         * меняет, она измеряется часами и днями.
+         *
+         * Дальше паузы растут: если реле отказало из-за размера события, оно откажет и через
+         * минуту, а вот временная недоступность за это время вполне проходит.
+         */
+        private val MEDIA_REPLICATION_BACKOFF_MS = longArrayOf(30_000L, 90_000L, 180_000L)
 
         /** Сколько раз пытаться опубликовать ОДИН чанк/файл, прежде чем сдаться (см.
          *  publishFileWithRetry) — надёжность важнее скорости по прямой просьбе пользователя. */
@@ -1354,6 +1672,36 @@ class NostrTransport(
         /** Lookback при переоткрытии: реле повторно пришлёт события «мёртвого окна» за это
          *  время (дедуп в NostrMessageStore.merge). Покрывает интервал переоткрытия с запасом. */
         private const val STREAM_REOPEN_LOOKBACK_SEC = 40L
+        /**
+         * Принудительное переоткрытие подписки на members.txt/groupprofile.txt/revoke.txt
+         * (см. watchMessages(fastReopen = true)). Реже, чем у сообщений: события редкие
+         * (закреп, бан/мут, переименование беседы), а лишние REQ по всем реле стоят столько же.
+         */
+        private const val MEMBERS_REOPEN_MS = 20_000L
+        private const val MEMBERS_REOPEN_TOR_MS = 45_000L
+        /** Оглядка назад для того же стрима — с запасом перекрывает интервал переоткрытия. */
+        private const val MEMBERS_REOPEN_LOOKBACK_SEC = 150L
+
+        /**
+         * Самолечение стрима ПРОФИЛЕЙ (см. watchProfiles): интервал принудительного
+         * переоткрытия подписки. Реже, чем у сообщений (STREAM_REOPEN_MS = 4с), потому что
+         * каждый слот профиля стоит получателю тяжёлой расшифровки, а presence и так
+         * публикуется раз в ~5с — чаще будить нечего.
+         *
+         * ⚠️ Интервал выбран с оглядкой на список чатов: там watchProfiles открывается на
+         * КАЖДЫЙ чат, и слишком частое переоткрытие превратилось бы в шторм REQ по всем реле
+         * (публичные реле на это отвечают троттлингом, что ломает синхронизацию — §1). При 20с
+         * «тихо умершая» подписка чинится максимум за 20 секунд, а сам ник/аватар и так
+         * приезжает с ближайшим presence-пушем собеседника.
+         */
+        private const val PROFILE_REOPEN_MS = 20_000L
+        private const val PROFILE_REOPEN_TOR_MS = 45_000L
+        /**
+         * Оглядка назад при переоткрытии подписки на профили. Должна с запасом покрывать
+         * интервал переоткрытия, иначе слот, опубликованный ровно между REQ, потеряется.
+         * Дороговизны в этом нет: повторы отсекаются дедупом по (pubkey → хеш содержимого).
+         */
+        private const val PROFILE_REOPEN_LOOKBACK_SEC = 120L
 
         /** LRU неизменяемых медиа-файлов (чанки/манифесты img_/stk_) — повторное чтение из памяти. */
         private const val MEDIA_CACHE_MAX_CHARS = 8 * 1024 * 1024

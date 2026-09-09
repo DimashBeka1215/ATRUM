@@ -900,6 +900,7 @@
     <string name="bt_peer_connecting">%1$s is connecting…</string>
     <string name="bt_peer_ready">%1$s is ready — you can create the chat</string>
     <string name="bt_failed">Couldn\'t connect over Bluetooth</string>
+    <string name="bt_invite_failed">Couldn\'t send the invite to your contact \u2014 check the connection and try creating the chat again</string>
     <string name="bt_perm_needed">Bluetooth permissions needed</string>
     <string name="voice_load_failed_fmt">Voice failed to load: %1$s</string>
     <string name="voice_load_failed">Couldn\'t load the voice message. Try again</string>
@@ -1070,6 +1071,7 @@
     <string name="gallery_add_cd">Add more</string>
     <string name="gallery_perm_needed">Allow photo access to pick images</string>
     <string name="verified_badge_cd">Verified</string>
+    <string name="bt_chat_badge_cd">Bluetooth chat</string>
     <string name="msg_auth_verified_cd">Authenticity verified</string>
     <string name="msg_auth_forged">Possibly forged — stop this conversation immediately</string>
     <string name="identity_copied">Identity key copied to clipboard</string>

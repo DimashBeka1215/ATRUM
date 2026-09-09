@@ -1,6 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Ultra-transparent glass toolbar background for Atmospheric mode -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="#1A000000"/>
-</shape>
+<!-- ШАПКА ЧАТА — подложка материала Atmospheric Glass (плавающая капсула, НЕ во всю ширину;
+     отступы задаёт setHeaderMargins в ChatActivity).
+
+     ЗДЕСЬ только СТАТИЧНАЯ часть материала: затемняющая подложка, заливка и контур.
+     Живые оптические слои — кромка-линза (lensing), «дышащий» блик (highlight) и
+     свечение от касания (illumination) — рисует AtmosphericGlassOverlay поверх, как
+     foreground (см. AtmosphericGlass.kt). Раньше блик был вклеен сюда статичным градиентом;
+     по документации Apple он обязан двигаться, поэтому отсюда он убран.
+
+     ГЕОМЕТРИЯ (concentricity, Apple HIG):
+       высота капсулы = 42dp кнопка + 2×5dp паддинг = 52dp  →  радиус капсулы 26dp
+       кнопка утоплена на 5dp  →  concentric = 26 − 5 = 21dp = ровно половина 42dp кнопки,
+       то есть идеальный круг. Совпадение и есть проверка, что геометрия сходится.
+
+     Цвета — токены @color/glass_* (§4/§5), см. комментарий в values/colors.xml. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Затемняющая подложка: отделяет стекло от произвольных обоев под ним -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/glass_tint"/>
+            <corners android:radius="26dp"/>
+        </shape>
+    </item>
+    <!-- Собственно «тело» стекла -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/glass_fill"/>
+            <corners android:radius="26dp"/>
+        </shape>
+    </item>
+    <!-- Контур по краю капсулы -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/transparent"/>
+            <corners android:radius="26dp"/>
+            <stroke android:width="1dp" android:color="@color/glass_stroke"/>
+        </shape>
+    </item>
+</layer-list>

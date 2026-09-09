@@ -362,7 +362,7 @@ class MessageWatchService : Service() {
                         val parsed = Message.fromDecrypted(dec, myUserId, myName, aliases)
                         // @упоминание меня в группе: собираем msgId (бейдж/кнопка) и уведомляем,
                         // если чат не открыт (иначе я и так вижу).
-                        if (MentionUtil.ENABLED && chat.isGroup && !parsed.isSelf && MentionUtil.mentionsMe(parsed.text, myTag, myName)) {
+                        if (MentionUtil.ENABLED && chat.isGroup && !parsed.isSelf && MentionUtil.mentionsMeAny(parsed.text, myUserId, myTag, myName)) {
                             if (parsed.msgId.isNotBlank()) mentionIds.add(parsed.msgId)
                             if (chat.chatId != App.currentOpenChatId) maybeNotifyMention(chat, parsed)
                         }
@@ -384,13 +384,19 @@ class MessageWatchService : Service() {
                     val lastDec = CryptoHelper.decrypt(lines.last(), password, chat.chatId)
                     if (lastDec != null) {
                         val pm = Message.fromDecrypted(lastDec, myUserId, myName, aliases)
+                        // ⚠️ Тот же класс бага, что и в ChatsListActivity: превью пишется в БД
+                        // и переживает этот тик, поэтому сырой pm.text с невидимой меткой
+                        // упоминания протечёт в список чатов при СЛЕДУЮЩЕМ открытии — чистим
+                        // здесь же (Message.stripMentionMarkers), а не полагаемся на то, что
+                        // ChatsListActivity перезапишет превью раньше, чем пользователь увидит.
+                        val cleanText = Message.stripMentionMarkers(pm.text)
                         val body = when {
-                            pm.isImage && pm.text.isBlank() -> getString(R.string.msg_preview_photo)
-                            pm.isImage -> getString(R.string.msg_preview_photo_format, pm.text)
+                            pm.isImage && cleanText.isBlank() -> getString(R.string.msg_preview_photo)
+                            pm.isImage -> getString(R.string.msg_preview_photo_format, cleanText)
                             pm.isVoice -> getString(R.string.msg_preview_voice)
                             pm.isSticker -> getString(R.string.msg_preview_sticker)
-                            pm.isReply -> getString(R.string.msg_preview_reply_format, pm.text)
-                            else -> pm.text
+                            pm.isReply -> getString(R.string.msg_preview_reply_format, cleanText)
+                            else -> cleanText
                         }
                         val preview = (if (pm.isSelf) getString(R.string.msg_preview_self_format, body) else body).take(80)
                         if (preview != chat.lastMessage) db.chatDao().updatePreview(chat.id, preview, chat.lastTimeMs)

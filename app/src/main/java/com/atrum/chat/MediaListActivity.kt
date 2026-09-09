@@ -67,6 +67,14 @@ class MediaListActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Галерея медиа чата — тоже часть переписки: скриншоты запрещены всегда, если
+        // тестер явно не снял блокировку в настройках (см. SecureActivity.chatContentScreen).
+        if (!prefs.isScreenshotsAllowed) {
+            window.setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+        }
         setContentView(R.layout.activity_media_list)
 
         mode         = intent.getStringExtra(EXTRA_MODE) ?: "links"

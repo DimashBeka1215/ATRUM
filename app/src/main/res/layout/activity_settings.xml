@@ -473,6 +473,66 @@
                     </LinearLayout>
                 </LinearLayout>
 
+                <!-- ВЛАДЕЛЕЦ — только личная сборка, видимость ставится в коде -->
+                <TextView
+                    android:id="@+id/sectionOwnerTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ВЛАДЕЛЕЦ"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp"
+                    android:fontFamily="sans-serif-medium"
+                    android:letterSpacing="0.08"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginBottom="8dp"
+                    android:visibility="gone" />
+
+                <LinearLayout
+                    android:id="@+id/cardOwner"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:background="@drawable/bg_settings_card"
+                    android:layout_marginBottom="20dp"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:id="@+id/itemOwner"
+                        android:layout_width="match_parent"
+                        android:layout_height="56dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:paddingHorizontal="16dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true">
+                        <ImageView android:layout_width="22dp" android:layout_height="22dp"
+                            android:src="@drawable/ic_shield_check" android:tint="@color/accent"
+                            android:layout_marginEnd="14dp" android:contentDescription="@null" />
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Владелец"
+                                android:textColor="@color/text_primary"
+                                android:textSize="15sp" />
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Ключ, копия, отзыв"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+                        <ImageView android:layout_width="18dp" android:layout_height="18dp"
+                            android:src="@drawable/ic_chevron_right" android:tint="@color/text_tertiary"
+                            android:contentDescription="@null" />
+                    </LinearLayout>
+                </LinearLayout>
+
                 <!-- СЕТЬ (NETWORK) -->
                 <TextView
                     android:id="@+id/sectionNetworkTitle"

@@ -14,7 +14,10 @@ import androidx.lifecycle.lifecycleScope
 import com.atrum.chat.data.AppDatabase
 import com.atrum.chat.databinding.ActivitySettingsBinding
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 import android.graphics.BitmapFactory
@@ -147,6 +150,9 @@ class SettingsActivity : SecureActivity() {
         binding.itemTester.setOnClickListener { showTesterPasswordDialog() }
         binding.btnLogout.setOnClickListener { confirmLogout() }
 
+        binding.itemOwner.setOnClickListener { OwnerCloud.openOwner(this) }
+        refreshOwnerSection()
+
         // Реле: скрытый вход в издателя — 7 нажатий подряд по строке, затем запрос пароля.
         binding.itemRelays.setOnClickListener { onRelayTap() }
         binding.itemConnection.setOnClickListener {
@@ -164,6 +170,20 @@ class SettingsActivity : SecureActivity() {
         setupProfile()
         setupBiometric()
         refreshRelaysSection()
+        // Пересчитываем при каждом возврате: вход в Google мог произойти только что, в окне
+        // восстановления, — и раздел обязан появиться без перезапуска настроек.
+        refreshOwnerSection()
+    }
+
+    /**
+     * Раздел владельца виден, только если это ЛИЧНАЯ сборка с инструментами владельца И
+     * выполнен вход в Google под аккаунтом владельца. В публичной сборке [OwnerCloud] —
+     * заглушка, всегда false, поэтому строка там не появляется никогда.
+     */
+    private fun refreshOwnerSection() {
+        val show = OwnerCloud.isOwnerAccount(this)
+        binding.sectionOwnerTitle.visibility = if (show) View.VISIBLE else View.GONE
+        binding.cardOwner.visibility = if (show) View.VISIBLE else View.GONE
     }
 
     private fun refreshRelaysSection() {
@@ -547,54 +567,86 @@ class SettingsActivity : SecureActivity() {
         Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()
     }
 
+    /**
+     * Разъезд нового имени/тега/аватара по ВСЕМ чатам.
+     *
+     * ⚠️ РАЗОСЛАНО ПАРАЛЛЕЛЬНО (репорт: «авы и ники меняются очень медленно»). Раньше это был
+     * обычный `for` по всем чатам, а внутри — [ProfileSync.pushMyProfile], то есть полный
+     * read-modify-write: прочитать profiles.txt со всех реле, слить, записать обратно. Один
+     * чат по Tor — это единицы секунд, и они СКЛАДЫВАЛИСЬ: при десятке чатов последний
+     * собеседник узнавал о новом нике почти через минуту после первого. Обидно вдвойне тем,
+     * что чаты друг от друга не зависят вообще — ждать между ними было незачем.
+     *
+     * Ограничение [PROFILE_BROADCAST_PARALLELISM] обязательно: без него N чатов открыли бы N
+     * соединений разом и подрались бы за те же сокеты к реле (и за Argon2 на расшифровке
+     * слотов), сделав каждую отдельную публикацию медленнее. Небольшой предел даёт выигрыш
+     * почти как у полного параллелизма, но не топит канал.
+     *
+     * Провалы по-прежнему уходят в персистентную очередь и добиваются в фоне — параллельность
+     * ускоряет удачный путь, она не заменяет надёжность.
+     */
     private fun broadcastProfileUpdate(profile: Profile) {
         val appContext = applicationContext
         val settingsPrefs = prefs
         AppScope.launch {
             val db = AppDatabase.get(appContext)
-            for (chat in db.chatDao().getAll()) {
-                try {
-                    val token = settingsPrefs.getChatToken(chat.chatId)
-                        .takeIf { it.isNotEmpty() }
-                        ?: @Suppress("DEPRECATION") chat.transportToken
-                    val password = settingsPrefs.getChatPassword(chat.chatId)
-                        .takeIf { it.isNotEmpty() }
-                        ?: @Suppress("DEPRECATION") chat.chatPassword
-                    val api = TransportFactory.forChat(applicationContext, chat.chatId, token, password, settingsPrefs.myUserId)
-                    // Личность обязательно кладём в КАЖДЫЙ пуш профиля. pushMyProfile делает
-                    // ПОЛНУЮ замену моего слота, поэтому без idk/isig смена имени/аватара из
-                    // настроек ронял бы мою верификацию (щит мигал бы у собеседников до
-                    // следующего пуша из ChatActivity), а теперь ещё и подпись содержимого
-                    // (contentSig, п.4 ADR). Домен identitySig = chat.chatId (тот же, что у
-                    // ChatActivity.computeIdentitySig / VerifiedBadge). Приватник получаем один
-                    // раз, используем для isig, затем передаём в pushMyProfile — там он затрётся.
-                    val priv = settingsPrefs.getOrCreateIdentity().first
-                    val isig = try {
-                        CryptoHelper.signWithIdentity(priv, VerifiedBadge.identitySigData(chat.chatId))
-                    } catch (_: Exception) { null }
-                    val withIdentity = profile.copy(
-                        identityPubKey = settingsPrefs.myIdentityPubKey,
-                        identitySig = isig,
-                        // Рукопожатие: pushMyProfile делает ПОЛНУЮ замену моего слота, поэтому
-                        // без этих полей сохранение настроек стирало бы подтверждение — и у
-                        // собеседника forward secrecy откатывался бы на парольное шифрование
-                        // после каждой смены имени/аватара. Ключ партнёра берём из Room.
-                        ephAck = ProfileHandshake.ackFor(chat.partnerEphemeralPubKeyB64, chat.chatId),
-                        pv = ProfileHandshake.PROTOCOL_VERSION
-                    )
-                    // ⚠️ ФИКС надёжности: это ЕДИНСТВЕННЫЙ путь, которым новое имя/аватар
-                    // разъезжаются по всем чатам, и он был полностью безмолвным — одна попытка,
-                    // результат не проверялся, исключение глоталось. Не собрался кворум реле —
-                    // и собеседники в этом чате видят старое имя/аву, пока я не открою чат
-                    // (а presence-пуш их не поправит: он только восполняет ПУСТЫЕ поля).
-                    // Теперь провал уходит в персистентную очередь и добивается в фоне.
-                    if (!ProfileSync.pushMyProfile(api, password, withIdentity, priv)) {
-                        PublishScheduler.markMyProfileDirty(appContext, chat.chatId)
-                    }
-                } catch (_: Exception) {
-                    PublishScheduler.markMyProfileDirty(appContext, chat.chatId)
+            val gate = Semaphore(PROFILE_BROADCAST_PARALLELISM)
+            coroutineScope {
+                for (chat in db.chatDao().getAll()) launch {
+                    gate.withPermit { pushProfileToChat(appContext, settingsPrefs, profile, chat) }
                 }
             }
+        }
+    }
+
+    /** Одна публикация профиля в один чат. Вынесено из [broadcastProfileUpdate], чтобы тело
+     *  цикла не тонуло в двух уровнях вложенности параллельного запуска. */
+    private suspend fun pushProfileToChat(
+        appContext: android.content.Context,
+        settingsPrefs: Prefs,
+        profile: Profile,
+        chat: com.atrum.chat.data.Chat
+    ) {
+        try {
+            val token = settingsPrefs.getChatToken(chat.chatId)
+                .takeIf { it.isNotEmpty() }
+                ?: @Suppress("DEPRECATION") chat.transportToken
+            val password = settingsPrefs.getChatPassword(chat.chatId)
+                .takeIf { it.isNotEmpty() }
+                ?: @Suppress("DEPRECATION") chat.chatPassword
+            val api = TransportFactory.forChat(appContext, chat.chatId, token, password, settingsPrefs.myUserId)
+            // Личность обязательно кладём в КАЖДЫЙ пуш профиля. pushMyProfile делает
+            // ПОЛНУЮ замену моего слота, поэтому без idk/isig смена имени/аватара из
+            // настроек ронял бы мою верификацию (щит мигал бы у собеседников до
+            // следующего пуша из ChatActivity), а теперь ещё и подпись содержимого
+            // (contentSig, п.4 ADR). Домен identitySig = chat.chatId (тот же, что у
+            // ChatActivity.computeIdentitySig / VerifiedBadge). Приватник получаем один
+            // раз, используем для isig, затем передаём в pushMyProfile — там он затрётся.
+            val priv = settingsPrefs.getOrCreateIdentity().first
+            val isig = try {
+                CryptoHelper.signWithIdentity(priv, VerifiedBadge.identitySigData(chat.chatId))
+            } catch (_: Exception) { null }
+            val withIdentity = profile.copy(
+                identityPubKey = settingsPrefs.myIdentityPubKey,
+                identitySig = isig,
+                // Рукопожатие: pushMyProfile делает ПОЛНУЮ замену моего слота, поэтому
+                // без этих полей сохранение настроек стирало бы подтверждение — и у
+                // собеседника forward secrecy откатывался бы на парольное шифрование
+                // после каждой смены имени/аватара. Ключ партнёра берём из Room.
+                ephAck = ProfileHandshake.ackFor(chat.partnerEphemeralPubKeyB64, chat.chatId),
+                pv = ProfileHandshake.PROTOCOL_VERSION
+            )
+            // ⚠️ ФИКС надёжности: это ЕДИНСТВЕННЫЙ путь, которым новое имя/аватар
+            // разъезжаются по всем чатам, и он был полностью безмолвным — одна попытка,
+            // результат не проверялся, исключение глоталось. Не собрался кворум реле —
+            // и собеседники в этом чате видят старое имя/аву, пока я не открою чат
+            // (а presence-пуш их не поправит: он только восполняет ПУСТЫЕ поля).
+            // Теперь провал уходит в персистентную очередь и добивается в фоне.
+            if (!ProfileSync.pushMyProfile(api, password, withIdentity, priv)) {
+                PublishScheduler.markMyProfileDirty(appContext, chat.chatId)
+            }
+        } catch (_: Exception) {
+            PublishScheduler.markMyProfileDirty(appContext, chat.chatId)
         }
     }
 
@@ -793,6 +845,13 @@ class SettingsActivity : SecureActivity() {
     }
 
     companion object {
+        /**
+         * Сколько чатов одновременно получают новый профиль (см. broadcastProfileUpdate).
+         * Четыре — компромисс: последовательная рассылка была слишком медленной, а «все разом»
+         * упирается в те же сокеты к реле и в расшифровку слотов, и выигрыш съедается обратно.
+         */
+        private const val PROFILE_BROADCAST_PARALLELISM = 4
+
         /**
          * Попыток опубликовать «надгробие» профиля (deleted=true) при сбросе аккаунта.
          * Второго шанса нет: сразу после этого стираются секреты чата и вся база, поэтому

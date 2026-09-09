@@ -806,7 +806,7 @@ class UserStatsActivity : AppCompatActivity() {
                 if (msg.isReply) {
                     quoteBlock.visibility = View.VISIBLE
                     quoteSender.text = msg.quotedSender
-                    quoteText.text = msg.quotedText
+                    quoteText.text = cleanMsgText(msg.quotedText.orEmpty())
                 } else {
                     quoteBlock.visibility = View.GONE
                 }
@@ -841,7 +841,7 @@ class UserStatsActivity : AppCompatActivity() {
                 flPhoto.visibility = View.VISIBLE
                 if (msg.text.isNotBlank()) {
                     text.visibility = View.VISIBLE
-                    text.text = msg.text
+                    text.text = cleanMsgText(msg.text)
                 }
                 val refs = msg.imageFileNames?.takeIf { it.isNotEmpty() }
                     ?: msg.imageFileName?.let { listOf(it) }
@@ -937,11 +937,17 @@ class UserStatsActivity : AppCompatActivity() {
             }
         }
 
+        /** Убирает служебные метки упоминаний (Message.mentionMarker) из текста перед показом:
+         *  без этого в списке сообщений участника (та же беда, что чинили в мут-диалоге —
+         *  «технический бред» после тега) виден невидимый разделитель + сырой userId. */
+        private fun cleanMsgText(text: String): String =
+            Message.renderMentions(text) { uid -> ProfileSync.getGlobalKnown(uid)?.mentionHandle() }
+
         private fun previewText(ctx: android.content.Context, msg: Message): String = when {
             msg.isVoice -> ctx.getString(R.string.msg_preview_voice)
             msg.isSticker -> ctx.getString(R.string.msg_preview_sticker)
             msg.isMultiImage || msg.isImage -> ctx.getString(R.string.msg_preview_photo)
-            msg.text.isNotBlank() -> msg.text
+            msg.text.isNotBlank() -> cleanMsgText(msg.text)
             else -> ""
         }
     }

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Кнопка отправки/голоса в glass-режиме (вариант Г "Контур без заливки") —
+     тот же принцип, что и у пилюли: тонкое кольцо-обводка вместо плотной заливки
+     @color/accent, чтобы не спорить с самой пилюлью за внимание. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="oval">
+            <solid android:color="#33C77DFF" />
+            <stroke android:width="1.5dp" android:color="#E6C77DFF" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="@android:color/transparent" />
+            <stroke android:width="1.5dp" android:color="#BFC77DFF" />
+        </shape>
+    </item>
+</selector>

@@ -37,6 +37,9 @@ import kotlinx.coroutines.withContext
  */
 class ImageViewActivity : SecureActivity() {
 
+    // Полноэкранный просмотр фото/голосовых из чата — тоже часть переписки, скриншоты запрещены всегда.
+    override val chatContentScreen: Boolean = true
+
     private lateinit var binding: ActivityImageViewBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {

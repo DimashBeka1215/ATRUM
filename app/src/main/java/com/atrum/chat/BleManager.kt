@@ -77,6 +77,10 @@ object BleManager {
         fun onHello(name: String, tag: String, avatar: String) {}
         /** Автор прислал приглашение: секреты чата + свой профиль (получает джойнер). */
         fun onInvite(channelId: String, password: String, name: String, tag: String, avatar: String) {}
+        /** Собеседник заменил строку чата (редактирование сообщения). */
+        fun onEdit(oldLine: String, newLine: String) {}
+        /** Собеседник удалил строку чата. */
+        fun onDelete(line: String) {}
         fun onError(reason: String) {}
     }
 
@@ -98,6 +102,12 @@ object BleManager {
     @Volatile private var mtu: Int = 20                                     // полезная нагрузка на запись
     private val rxBuffer = StringBuilder()
     private val seen = ConcurrentHashMap<String, Long>()
+
+    // ── Надёжная доставка кадров (ACK + дедуп по содержимому) ────────────────────
+    /** id ожидаемого кадра → защёлка, которую отпускает пришедший ACK. */
+    private val pendingAcks = ConcurrentHashMap<String, CountDownLatch>()
+    /** id уже обработанных входящих кадров → время получения (дедуп повторов при ретрае). */
+    private val processedIds = ConcurrentHashMap<String, Long>()
 
     /** Защёлка ожидания подтверждения отправки чанка (write/notify). */
     @Volatile private var sendLatch: CountDownLatch? = null
@@ -418,9 +428,27 @@ object BleManager {
         }
     }
 
+    /**
+     * Кадры с индексом ('M'/'H'/'I'/'E'/'D') несут id ВТОРЫМ полем: "<type><SEP><id><SEP><rest…>".
+     * 'A' (ack) — отдельный формат: "A<SEP><id>", без rest. См. [sendReliable]/[frameId].
+     */
     private fun dispatchFrame(frame: String) {
+        if (frame.isEmpty()) return
         val type = frame[0]
-        val rest = if (frame.length > 2 && frame[1] == SEP) frame.substring(2) else ""
+        if (type == 'A') {
+            val id = if (frame.length > 2 && frame[1] == SEP) frame.substring(2) else return
+            pendingAcks.remove(id)?.countDown()
+            return
+        }
+        val parts = frame.split(SEP, limit = 3)
+        if (parts.size < 3) return // битый/старый кадр без id — игнорируем, а не падаем
+        val id = parts[1]
+        val rest = parts[2]
+        // ACK шлём ВСЕГДА, даже на повтор — вдруг наш предыдущий ACK потерялся, а отправитель
+        // из-за этого ещё раз ретраит уже доставленный кадр.
+        sendAck(id)
+        pruneProcessedIds(System.currentTimeMillis())
+        if (processedIds.putIfAbsent(id, System.currentTimeMillis()) != null) return // дубликат — не применяем повторно
         when (type) {
             'M' -> listener?.onMessage(rest)
             'H' -> {
@@ -434,18 +462,94 @@ object BleManager {
                     p.getOrElse(3) { "" }, p.getOrElse(4) { "" }
                 )
             }
+            'E' -> {
+                val p = rest.split(SEP, limit = 2)
+                listener?.onEdit(p.getOrElse(0) { "" }, p.getOrElse(1) { "" })
+            }
+            'D' -> listener?.onDelete(rest)
         }
+    }
+
+    /** Чистим старые id, чтобы карта дедупа не росла бесконечно за долгий чат. */
+    private fun pruneProcessedIds(now: Long) {
+        if (processedIds.size < 256) return
+        val it = processedIds.entries.iterator()
+        while (it.hasNext()) { if (now - it.next().value > 120_000) it.remove() }
     }
 
     // ── Отправка кадров ───────────────────────────────────────────────────────────
 
-    fun sendText(line: String): Boolean = sendFrame("M" + SEP + line)
+    /**
+     * id кадра — хеш от (типа + содержимого), а НЕ случайный. Это значит, что повторная
+     * отправка ТОГО ЖЕ действия (будь то внутренний ретрай здесь или внешний ретрай уровнем
+     * выше — MessageSendManager/PatchQueue) всегда даёт тот же id → получатель распознаёт её
+     * как дубликат (см. [dispatchFrame]) и не применяет повторно, даже если исходный ACK был
+     * потерян и отправитель не узнал об успехе. Проверено симуляцией (потеря данных/ACK,
+     * ретраи на разных уровнях) перед портированием сюда.
+     */
+    private fun frameId(type: Char, payloadRest: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest((type + payloadRest).toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }.substring(0, 16)
+    }
+
+    /**
+     * ⚠️ НЕ звать sendFrame() отсюда синхронно: [dispatchFrame] выполняется прямо в потоке
+     * GATT-колбэка (onCharacteristicWriteRequest на peripheral / onCharacteristicChanged на
+     * central), а sendFrame внутри блокирующе ждёт (sendLatch.await) СВОЙ ЖЕ обратный колбэк
+     * подтверждения (onNotificationSent / onCharacteristicWrite) — Android доставляет методы
+     * ОДНОГО callback-объекта серийно на одном потоке, так что ожидание изнутри текущего
+     * колбэка означает гарантированный deadlock (ждём событие, которое не может прийти, пока
+     * мы сами не вернёмся). Поэтому ACK шлём на отдельном потоке — он не должен быть надёжным
+     * сам по себе (см. dispatchFrame: потеря ACK лечится повторной отправкой при ретрае).
+     */
+    private fun sendAck(id: String) {
+        Thread { runCatching { sendFrame("A" + SEP + id) } }.start()
+    }
+
+    /** Сколько раз повторяем отправку, если ACK не пришёл вовремя, и сколько ждём каждый раз. */
+    private const val ACK_TIMEOUT_MS = 1200L
+    private const val ACK_RETRIES = 1
+
+    /**
+     * Отправляет кадр и ждёт подтверждения получения собеседником (ACK), с ретраями.
+     * Возвращает true, только если ACK реально пришёл — в отличие от [sendFrame], который
+     * лишь подтверждает, что байты ушли из ЭТОГО телефона в локальный BLE-стек (BT_AUDIT.md
+     * 1.4: раньше это выдавалось за «доставлено», хотя собеседник мог ничего не получить).
+     */
+    private fun sendReliable(type: Char, payloadRest: String): Boolean {
+        if (!connected) return false
+        val id = frameId(type, payloadRest)
+        val frame = "$type$SEP$id$SEP$payloadRest"
+        repeat(ACK_RETRIES + 1) {
+            val latch = CountDownLatch(1)
+            pendingAcks[id] = latch
+            val submitted = sendFrame(frame)
+            if (submitted) {
+                val acked = runCatching { latch.await(ACK_TIMEOUT_MS, TimeUnit.MILLISECONDS) }.getOrDefault(false)
+                pendingAcks.remove(id)
+                if (acked) return true
+            } else {
+                pendingAcks.remove(id)
+            }
+        }
+        return false
+    }
+
+    fun sendText(line: String): Boolean = sendReliable('M', line)
 
     fun sendHello(name: String, tag: String, avatar: String): Boolean =
-        sendFrame("H" + SEP + name + SEP + tag + SEP + avatar)
+        sendReliable('H', name + SEP + tag + SEP + avatar)
 
     fun sendInvite(channelId: String, password: String, name: String, tag: String, avatar: String): Boolean =
-        sendFrame("I" + SEP + channelId + SEP + password + SEP + name + SEP + tag + SEP + avatar)
+        sendReliable('I', channelId + SEP + password + SEP + name + SEP + tag + SEP + avatar)
+
+    /** Редактирование сообщения (BT_AUDIT.md 1.3): раньше уходило как 'M' и превращалось у
+     *  собеседника в дубликат-новое-сообщение вместо замены. */
+    fun sendEdit(oldLine: String, newLine: String): Boolean = sendReliable('E', oldLine + SEP + newLine)
+
+    /** Удаление сообщения (BT_AUDIT.md 1.3): раньше не отправлялось собеседнику вообще. */
+    fun sendDelete(line: String): Boolean = sendReliable('D', line)
 
     @SuppressLint("MissingPermission")
     private fun sendFrame(frame: String): Boolean {
@@ -543,5 +647,9 @@ object BleManager {
         sendLatch?.countDown()
         sendLatch = null
         listener = null
+        // Ack/дедуп-состояние принадлежит ЭТОМУ соединению — не переносим в следующее.
+        pendingAcks.values.forEach { it.countDown() }
+        pendingAcks.clear()
+        processedIds.clear()
     }
 }

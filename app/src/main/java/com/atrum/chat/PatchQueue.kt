@@ -166,16 +166,23 @@ class PatchQueue(
         }
 
         // 3. Edit (replaceLine)
+        // ⚠️ onFailure обязателен (§16): без него исчерпание всех попыток проходило МОЛЧА —
+        // onResult не вызывался ни с true, ни с false, поэтому UI не откатывал правку и не
+        // показывал ошибку, а сообщение оставалось «в ожидании» до перезахода в чат.
         for (action in replaces) {
-            executeWithRetry {
+            executeWithRetry(
+                onFailure = { action.onResult(false) }
+            ) {
                 val ok = transport.replaceLine(action.oldLine, action.newLine)
                 withContext(Dispatchers.Main) { action.onResult(ok) }
             }
         }
 
-        // 4. Delete (deleteLine)
+        // 4. Delete (deleteLine) — тот же контракт: провал должен ДОЙТИ до вызывающего.
         for (action in deletes) {
-            executeWithRetry {
+            executeWithRetry(
+                onFailure = { action.onResult(false) }
+            ) {
                 val ok = transport.deleteLine(action.line)
                 withContext(Dispatchers.Main) { action.onResult(ok) }
             }

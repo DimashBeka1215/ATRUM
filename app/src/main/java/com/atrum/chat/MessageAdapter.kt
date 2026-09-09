@@ -195,6 +195,39 @@ class MessageAdapter(
         msg.senderUserId?.let { namesByUserId[it] }?.takeIf { it.isNotBlank() } ?: msg.sender
 
     /**
+     * Обратный индекс «имя, зашитое в сообщение → userId автора». Строится по загруженной
+     * переписке при каждом [submit].
+     *
+     * ⚠️ Нужен ТОЛЬКО ради цитат (см. [quotedNameFor]). В самой цитате протокол везёт лишь
+     * СТРОКУ с ником и кусок текста (Message.quotedSender/quotedText) — userId цитируемого там
+     * нет и никогда не было. Поэтому свежее имя подставить напрямую нечем, и после смены ника
+     * все ответы на человека продолжали показывать его прежнее имя, хотя над самим сообщением
+     * уже стояло новое. Автора цитаты находим по его же сообщениям в этой переписке: имя, под
+     * которым он тогда писал, лежит в них рядом с userId.
+     *
+     * Совпадение имён у двух людей ломает не результат, а только точность подстановки: победит
+     * последний, и в худшем случае цитата покажет имя, которое и так уже было показано. Хуже
+     * прежнего поведения (всегда старое имя) это не делает.
+     */
+    private var frozenNameToUserId: Map<String, String> = emptyMap()
+
+    private fun rebuildFrozenNameIndex() {
+        val idx = HashMap<String, String>()
+        for (m in messages) {
+            val uid = m.senderUserId ?: continue
+            if (m.sender.isNotBlank()) idx[m.sender] = uid
+        }
+        frozenNameToUserId = idx
+    }
+
+    /** Имя автора цитаты: свежее, если получилось опознать его по переписке, иначе — как было. */
+    private fun quotedNameFor(msg: Message): String? {
+        val frozen = msg.quotedSender ?: return null
+        val uid = frozenNameToUserId[frozen] ?: return frozen
+        return namesByUserId[uid]?.takeIf { it.isNotBlank() } ?: frozen
+    }
+
+    /**
      * Обновляет ники отправителей. Перебиндивает ТОЧЕЧНО только строки того, кто реально сменил
      * имя (тот же приём, что и [updateAvatars]): полный ребайнд списка на каждом тике опроса
      * давал бы мерцание (§14).
@@ -209,9 +242,40 @@ class MessageAdapter(
         if (changedUsers.isEmpty()) return
         val eff = effectiveList()
         for (i in eff.indices) {
-            val uid = eff[i].senderUserId ?: continue
-            if (uid in changedUsers) notifyItemChanged(i, PAYLOAD_AVATAR)
+            val m = eff[i]
+            // Строка самого автора — очевидный случай, он и обрабатывался раньше.
+            val authorTouched = m.senderUserId?.let { it in changedUsers } == true
+            // Но имя человека стоит ещё и в ЦИТАТАХ на него, а цитаты живут на строках ДРУГИХ
+            // авторов: без этой второй проверки ответы на него остались бы со старым ником до
+            // ближайшего полного ребайнда списка.
+            val quotedUid = m.quotedSender?.let { frozenNameToUserId[it] }
+            val quoteTouched = quotedUid != null && quotedUid in changedUsers
+            when {
+                // Автор — лёгкий путь: PAYLOAD_AVATAR перебиндивает аву+ник и не трогает
+                // остальное (никакого мерцания фото, §14).
+                authorTouched -> notifyItemChanged(i, PAYLOAD_AVATAR)
+                // Цитата — только полный ребайнд: частичный путь по PAYLOAD_AVATAR блок
+                // цитаты вообще не перерисовывает (см. bindAvatarOnly), и подстановка бы
+                // не применилась. Таких строк единицы, полный ребайнд их не заметен.
+                quoteTouched -> notifyItemChanged(i)
+            }
         }
+    }
+
+    /**
+     * Актуальные ХЭНДЛЫ (тег, а не имя) по userId — для подстановки в @упоминания
+     * (см. Message.renderMentions, Profile.mentionHandle). ⚠️ НЕ переиспользует
+     * [namesByUserId]: та карта хранит ИМЯ (для подписи над пузырьком), а упоминание
+     * изначально вставляется по ТЕГУ (см. ChatActivity.insertMention) — если у человека
+     * тег отличается от имени, подстановка по имени обрубает/меняет упоминание
+     * (репорт: подчёркивание в теге «съедалось», оставалась только часть до имени).
+     */
+    private var mentionHandlesByUserId: Map<String, String> = emptyMap()
+
+    /** Обновляет хэндлы для @упоминаний. Полный ребайнд не нужен — новое значение
+     *  подхватится при следующей отрисовке строки (как и раньше для [namesByUserId]). */
+    fun updateMentionHandles(newMap: Map<String, String>) {
+        mentionHandlesByUserId = newMap
     }
 
     /** Верифицирован ли отправитель сообщения (галочка у ника). Считается во ВНЕШНЕМ классе
@@ -316,15 +380,26 @@ class MessageAdapter(
             return sp
         }
 
-        // ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА (не для релиза): падаем с полным логом причины при
-        // первом же "пустом" фото/коллаже (bitmap == null после загрузки+расшифровки).
-        // Нужно понять, почему у собеседника фото приходит пустым. Срабатывает ОДИН раз
-        // за сессию приложения (иначе краш-луп на каждый ребайнд/скролл сделает чат
-        // неюзабельным) — краш-экран (CrashHandler/CrashActivity) покажет точную причину
-        // из ImageLoader.diagnoseMedia(): не найден на реле / не расшифровался (fmt=…) /
-        // манифест без чанков и т.д. УДАЛИТЬ этот блок и все обращения к нему после
-        // диагностики (см. TODO_REMOVE_EMPTY_MEDIA_CRASH).
-        private val emptyMediaCrashFired = java.util.concurrent.atomic.AtomicBoolean(false)
+        // ⚠️ БЫЛА ВРЕМЕННАЯ ДИАГНОСТИКА, КОТОРАЯ РОНЯЛА ПРИЛОЖЕНИЕ (TODO_REMOVE_EMPTY_MEDIA_CRASH).
+        // Здесь стоял намеренный throw при первом же «пустом» фото: краш-экран показывал
+        // причину из ImageLoader.diagnoseMedia(). Диагностика своё отработала — причина
+        // получена (часть чанков физически отсутствует на отвечающих реле, см. отчёт
+        // «чанки=5 длины=[48000, 48000, -1, 48000, -1]»), а вот падение уехало в РЕЛИЗ:
+        // у пользователя не загрузилось фото — приложение закрылось. Недопустимо.
+        //
+        // Теперь ровно то же самое пишется в лог, а пользователь видит серый плейсхолдер;
+        // полная диагностика по-прежнему доступна ПО ТАПУ (см. diagnoseAndCopy) — то есть
+        // осознанно, а не как обязательный краш. Флаг оставлен, чтобы тяжёлый
+        // diagnoseMedia() (он реально качает все чанки) не запускался на каждый ребайнд.
+        private val emptyMediaDiagLogged = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        /**
+         * Паузы отложенных попыток дозагрузить пустое медиа (см. retryMediaLater). Растущие:
+         * первая закрывает типичный случай «чанки ещё расходятся по реле», последняя —
+         * временную недоступность части узлов. Больше трёх не делаем: если и через полминуты
+         * не собралось, дело не в задержке распространения, и долбить реле бессмысленно.
+         */
+        private val MEDIA_RETRY_DELAYS_MS = longArrayOf(4_000L, 10_000L, 25_000L)
 
         /** Сколько сообщений показываем при открытии чата (нижнее «окно»). */
         private const val INITIAL_WINDOW = 40
@@ -397,6 +472,7 @@ class MessageAdapter(
         if (isProgressOnlyDelta(messages, list)) {
             val oldEff = effectiveList()
             messages = list
+            rebuildFrozenNameIndex()
             val newEff = effectiveList()
             val n = minOf(oldEff.size, newEff.size)
             for (i in 0 until n) {
@@ -413,6 +489,7 @@ class MessageAdapter(
         // «сползала» бы вниз при каждом новом сообщении.
         if (delta > 0) windowSize += delta
         messages = list
+        rebuildFrozenNameIndex()
         windowSize = windowSize.coerceIn(minOf(INITIAL_WINDOW, list.size), list.size.coerceAtLeast(0))
         notifyDataSetChanged()
     }
@@ -518,7 +595,9 @@ class MessageAdapter(
             isGroupChat       = isGroupChat,
             isVerifiedSender  = isVerifiedSender(msg),
             authState         = authStateFor?.invoke(msg) ?: MsgAuth.UNSIGNED,
-            senderName        = senderNameFor(msg)
+            senderName        = senderNameFor(msg),
+            quotedName        = quotedNameFor(msg),
+            mentionNames      = mentionHandlesByUserId
         )
     }
 
@@ -845,7 +924,15 @@ class MessageAdapter(
             authState: MsgAuth = MsgAuth.UNSIGNED,
             /** Актуальный ник отправителя (см. MessageAdapter.senderNameFor). По умолчанию —
              *  зашитый в сообщение, чтобы вызовы без профиля работали как раньше. */
-            senderName: String = msg.sender
+            senderName: String = msg.sender,
+            /** Актуальное имя автора ЦИТАТЫ (см. MessageAdapter.quotedNameFor). null/по умолчанию —
+             *  показываем то, что зашито в саму цитату (поведение как раньше). */
+            quotedName: String? = msg.quotedSender,
+            /** Актуальные ХЭНДЛЫ (тег, если есть, иначе имя — Profile.mentionHandle) по userId,
+             *  для подстановки в @упоминания (см. renderMentions). НЕ то же самое, что [senderName]:
+             *  тег и имя — разные поля профиля. Пусто → показываем то, что было написано при
+             *  отправке (поведение как раньше). */
+            mentionNames: Map<String, String> = emptyMap()
         ) {
             if (msg.isSystem) {
                 bindSystem(msg)
@@ -946,7 +1033,12 @@ class MessageAdapter(
                 // Разметка ссылок берётся из общего кэша — без regex (Linkify) на каждый
                 // bind. Долгий тап по пузырьку (контекстное меню) сохраняется через
                 // BubbleLinkMovementMethod, который ставится только когда есть ссылки.
-                val li = MessageAdapter.linkInfo(msg.text)
+                // Упоминания: пара «@имя + метка с userId» заменяется на «@» + АКТУАЛЬНОЕ имя
+                // (см. Message.renderMentions). Делаем это ДО разметки ссылок — тогда кэш
+                // linkInfo ключуется по уже подставленному тексту и сам инвалидируется при
+                // смене ника упомянутого, без отдельного сброса.
+                val shownText = Message.renderMentions(msg.text) { mentionNames[it] }
+                val li = MessageAdapter.linkInfo(shownText)
                 // Подсветка @упоминаний в группе (поверх возможных ссылок в li.display).
                 textView.text = if (isGroupChat)
                     highlightMentions(li.display, ContextCompat.getColor(itemView.context, R.color.accent_light))
@@ -965,7 +1057,9 @@ class MessageAdapter(
 
             if (msg.isReply && quoteBlock != null) {
                 quoteBlock.visibility = View.VISIBLE
-                quoteSender?.text = msg.quotedSender
+                // Не msg.quotedSender: в цитате застыло имя на момент отправки, и после
+                // смены ника вся прежняя переписка продолжала звать человека по-старому.
+                quoteSender?.text = quotedName ?: msg.quotedSender
                 quoteText?.text = msg.quotedText
                 quoteBlock.setOnClickListener { onQuoteClick(msg) }
             } else {
@@ -1170,25 +1264,100 @@ class MessageAdapter(
                         // Клик обрабатывается единым listener'ом в bind(): при пустом фото
                         // показывает причину (diagnoseAndCopy) и копирует её в буфер.
                         image.setBackgroundColor(ContextCompat.getColor(itemView.context, R.color.surface_elevated))
-                        crashOnEmptyMediaOnce(fileName)   // ВРЕМЕННАЯ ДИАГНОСТИКА, см. companion
+                        logEmptyMediaOnce(fileName)   // диагностика в лог, без падения
+                        retryMediaLater(fileName, image) { bmp ->
+                            image.setBackgroundColor(Color.TRANSPARENT)
+                            image.setImageBitmap(bmp)
+                        }
                     }
                 }
             }
         }
 
         /**
-         * ⚠️ ВРЕМЕННАЯ ДИАГНОСТИКА (не для релиза). Один раз за сессию: гонит полную
-         * диагностику через ImageLoader.diagnoseMedia() и роняет приложение с этой
-         * диагностикой в стектрейсе — CrashActivity покажет точную причину пустого фото.
-         * Ограничено emptyMediaCrashFired, чтобы НЕ зациклить краш на каждый ребайнд/скролл.
+         * Отложенный повтор загрузки СТИКЕРА — тот же принцип, что и [retryMediaLater] у фото,
+         * но у стикера своя беда: при неудаче вью не оставлял серый плейсхолдер, а прятался
+         * целиком, и сообщение выглядело пустым местом.
+         *
+         * [stillValid] проверяет, что холдер всё ещё показывает этот же стикер (ячейку могли
+         * переиспользовать под другое сообщение). [again] перезапускает обычную привязку —
+         * так повтор проходит ровно тот же путь, что и первая попытка, без дублирования логики.
          */
-        private fun crashOnEmptyMediaOnce(ref: String) {
-            if (!emptyMediaCrashFired.compareAndSet(false, true)) return
+        private fun scheduleStickerRetry(
+            ref: String,
+            attempt: Int,
+            stillValid: () -> Boolean,
+            again: () -> Unit
+        ) {
+            if (attempt >= MEDIA_RETRY_DELAYS_MS.size) return
             val loader = getImageLoader() ?: return
             val scope = loadScope ?: return
             scope.launch {
-                val diag = withContext(Dispatchers.IO) { loader.diagnoseMedia(ref) }
-                throw RuntimeException("ATRUM_EMPTY_MEDIA_DEBUG ref=$ref diag=$diag")
+                kotlinx.coroutines.delay(MEDIA_RETRY_DELAYS_MS[attempt])
+                if (!stillValid()) return@launch
+                loader.forget(ref)   // снимаем отметку «не загрузилось», иначе повтор не пойдёт в сеть
+                again()
+            }
+        }
+
+        /**
+         * САМОВОССТАНОВЛЕНИЕ ПУСТОГО МЕДИА — без участия пользователя и без перезахода.
+         *
+         * ⚠️ Репорт: «фото от собеседника пустые, помогает перезаход». Механика была такая.
+         * ImageLoader держит НЕГАТИВНЫЙ кэш: не загрузилось — минуту не пробуем снова (иначе
+         * битое фото перезагружалось бы на каждый ребайнд и устраивало GC-шторм). Кэш этот
+         * живёт в самом загрузчике, а загрузчик создаётся ЗАНОВО на каждый ChatActivity.
+         * Отсюда и «помогает перезаход»: выход и вход — единственное, что стирало отметку о
+         * неудаче.
+         *
+         * А неудача при первой попытке — норма, а не поломка: чанки только что опубликованного
+         * фото расходятся по реле не мгновенно, и получатель, дёрнувший их сразу по приходу
+         * строки-анонса, вполне может не застать часть из них. Раньше это означало пустой
+         * прямоугольник до перезахода, хотя через несколько секунд данные уже были доступны.
+         *
+         * Теперь ячейка сама делает несколько отложенных попыток, сбрасывая перед каждой
+         * отметку о неудаче ([ImageLoader.forget]). Ограничители: попытки прекращаются, как
+         * только ячейка переиспользована под другое медиа (проверка по tag) — то есть
+         * невидимые сообщения фоном ничего не грузят, — и их всего три, с растущими паузами.
+         */
+        private fun retryMediaLater(
+            ref: String,
+            targetView: android.widget.ImageView? = null,
+            onLoaded: (android.graphics.Bitmap) -> Unit
+        ) {
+            val loader = getImageLoader() ?: return
+            val scope = loadScope ?: return
+            val view = targetView
+            scope.launch {
+                for (delayMs in MEDIA_RETRY_DELAYS_MS) {
+                    kotlinx.coroutines.delay(delayMs)
+                    // Ячейку переиспользовали под другое сообщение — повторять незачем.
+                    if (view != null && view.tag != ref) return@launch
+                    loader.forget(ref)
+                    val bmp = loader.loadBitmap(ref) ?: continue
+                    if (view == null || view.tag == ref) onLoaded(bmp)
+                    return@launch
+                }
+            }
+        }
+
+        /**
+         * Один раз за сессию пишет в лог полную причину, почему медиа не отобразилось.
+         *
+         * ⚠️ Раньше эта же функция намеренно РОНЯЛА приложение (см. emptyMediaDiagLogged).
+         * Приложение не имеет права закрываться из-за того, что не загрузилась картинка:
+         * это диагностика для разработчика, а для пользователя — обычный сбой загрузки,
+         * у которого уже есть штатное отображение (серый плейсхолдер + разбор по тапу).
+         */
+        private fun logEmptyMediaOnce(ref: String) {
+            if (!emptyMediaDiagLogged.compareAndSet(false, true)) return
+            val loader = getImageLoader() ?: return
+            val scope = loadScope ?: return
+            scope.launch {
+                val diag = runCatching {
+                    withContext(Dispatchers.IO) { loader.diagnoseMedia(ref) }
+                }.getOrElse { "диагностика не выполнилась: ${it.message?.take(80)}" }
+                android.util.Log.w("AtrumMedia", "Пустое медиа ref=$ref diag=$diag")
             }
         }
 
@@ -1501,7 +1670,7 @@ class MessageAdapter(
             }
         }
 
-        private fun bindSticker(msg: Message, lottie: LottieAnimationView) {
+        private fun bindSticker(msg: Message, lottie: LottieAnimationView, attempt: Int = 0) {
             val fileName = msg.imageFileName ?: return
             // Контент стикера и его кеш — по общей ссылке (новый формат: часть после '|';
             // старый формат: само имя файла). Тип определяем по расширению из имени.
@@ -1550,7 +1719,20 @@ class MessageAdapter(
 
                 val base64 = ImageCache.getBase64(ref)
                     ?: loader.loadBase64(ref)
-                    ?: run { if (lottie.tag == fileName) lottie.visibility = View.GONE; return@launch }
+                    ?: run {
+                        // ⚠️ Раньше здесь стикер просто ПРЯТАЛСЯ навсегда: одна попытка, и всё
+                        // (репорт: «стикеры в беседах не отображаются»). Первая попытка падает
+                        // штатно — контент только что опубликован и ещё расходится по реле, —
+                        // а негативный кэш загрузчика после этого минуту не пускает в сеть.
+                        // Оживить мог только перезаход (новый ChatActivity = новый загрузчик).
+                        if (lottie.tag == fileName) {
+                            lottie.visibility = View.GONE
+                            scheduleStickerRetry(ref, attempt, { lottie.tag == fileName }) {
+                                bindSticker(msg, lottie, attempt + 1)
+                            }
+                        }
+                        return@launch
+                    }
 
                 if (lottie.tag != fileName) return@launch
 
@@ -1638,7 +1820,7 @@ class MessageAdapter(
          * Привязывает .webm видео-стикер к WebmStickerView: материализует файл из base64
          * в кеш и запускает циклическое воспроизведение. Первый кадр — заглушка/фоллбэк.
          */
-        private fun bindWebmSticker(msg: Message, webm: WebmStickerView) {
+        private fun bindWebmSticker(msg: Message, webm: WebmStickerView, attempt: Int = 0) {
             webm.animate = !BatteryUtils.freezeStickers(itemView.context)
             val fileName = msg.imageFileName ?: return
             // Контент/кадры — по общей ссылке (новый формат: после '|'; старый: имя файла),
@@ -1663,7 +1845,16 @@ class MessageAdapter(
                 val loader = getImageLoader() ?: return@launch
                 val base64 = ImageCache.getBase64(ref)
                     ?: loader.loadBase64(ref)
-                    ?: run { if (webm.tag == ref) webm.visibility = View.GONE; return@launch }
+                    ?: run {
+                        // Та же беда, что и у tgs/webp выше: одна попытка и «спрятать навсегда».
+                        if (webm.tag == ref) {
+                            webm.visibility = View.GONE
+                            scheduleStickerRetry(ref, attempt, { webm.tag == ref }) {
+                                bindWebmSticker(msg, webm, attempt + 1)
+                            }
+                        }
+                        return@launch
+                    }
                 if (webm.tag != ref) return@launch
 
                 val file = withContext(Dispatchers.IO) { materializeWebm(ref, base64) }
@@ -1762,7 +1953,8 @@ class MessageAdapter(
                         when {
                             bitmap == null -> {
                                 cell.showError()
-                                crashOnEmptyMediaOnce(ref)   // ВРЕМЕННАЯ ДИАГНОСТИКА, см. companion
+                                logEmptyMediaOnce(ref)   // диагностика в лог, без падения
+                                retryMediaLater(ref, cell.imageView) { bmp -> cell.showBitmapImmediate(bmp) }
                             }
                             alreadyKnown  -> cell.showBitmapImmediate(bitmap)
                             else          -> {

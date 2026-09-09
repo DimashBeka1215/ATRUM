@@ -133,6 +133,83 @@ object CryptoHelper {
         }
     }
 
+    /**
+     * Шифрование «просто паролем», без привязки к чату (формат V5: Argon2id со случайной
+     * солью + AES-GCM). Нужен для резервной копии identity-ключа владельца.
+     *
+     * ⚠️ Почему не публичный [encrypt]: тот требует непустой chatId и при установленной
+     * сессии уходит в ЭФЕМЕРНЫЙ ключ forward secrecy. Копия ключа переживает переустановку и
+     * расшифровывается на другом устройстве, где никакой сессии нет, — ей нужен строго
+     * парольный формат. Новой криптографии здесь не появляется: это тот же V5, просто
+     * доступный снаружи (§1 — не дублировать крипто).
+     */
+    fun encryptWithPassword(plaintext: String, password: String): String =
+        encryptV5(plaintext, password)
+
+    /** Обратная к [encryptWithPassword]. null — не тот формат или неверный пароль. */
+    fun decryptWithPassword(ciphertextB64: String, password: String): String? =
+        if (ciphertextB64.startsWith(V5_PREFIX)) decryptV5(ciphertextB64, password) else null
+
+    /**
+     * Байтовый вариант того же: Argon2id(случайная соль) + AES-GCM, результат —
+     * `соль(16) ‖ nonce(12) ‖ шифртекст+тег`, БЕЗ текстового префикса и Base64.
+     *
+     * Нужен для файла резервной копии ключа: он должен снаружи выглядеть случайным мусором,
+     * а строковый [encryptWithPassword] выдаёт узнаваемый `$G5$…`. Криптография та же самая —
+     * те же параметры Argon2id и тот же AES-GCM, отличается только упаковка (§1).
+     */
+    fun sealWithPassword(plain: ByteArray, password: String): ByteArray {
+        val salt = ByteArray(SALT_LEN).also { secureRandom.nextBytes(it) }
+        val nonce = ByteArray(GCM_NONCE_LEN).also { secureRandom.nextBytes(it) }
+        val key = deriveArgon2KeyWithSalt(password, salt, ARGON2_PARALLEL_V4)
+        try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
+            val ct = cipher.doFinal(plain)
+            val out = ByteArray(SALT_LEN + GCM_NONCE_LEN + ct.size)
+            System.arraycopy(salt, 0, out, 0, SALT_LEN)
+            System.arraycopy(nonce, 0, out, SALT_LEN, GCM_NONCE_LEN)
+            System.arraycopy(ct, 0, out, SALT_LEN + GCM_NONCE_LEN, ct.size)
+            return out
+        } finally {
+            key.fill(0)
+        }
+    }
+
+    /**
+     * Обратная к [sealWithPassword]. null — неверный пароль, испорченные байты или не наш
+     * формат: всё это неотличимо и должно быть неотличимо, потому что решает GCM-тег.
+     */
+    fun openWithPassword(blob: ByteArray, password: String): ByteArray? {
+        if (blob.size < SALT_LEN + GCM_NONCE_LEN + GCM_TAG_BITS / 8) return null
+        val salt = blob.copyOfRange(0, SALT_LEN)
+        val nonce = blob.copyOfRange(SALT_LEN, SALT_LEN + GCM_NONCE_LEN)
+        val ct = blob.copyOfRange(SALT_LEN + GCM_NONCE_LEN, blob.size)
+        val key = deriveArgon2KeyWithSalt(password, salt, ARGON2_PARALLEL_V4)
+        return try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
+            cipher.doFinal(ct)
+        } catch (_: Exception) {
+            null
+        } finally {
+            key.fill(0)
+        }
+    }
+
+    /**
+     * Публичный Ed25519-ключ, соответствующий приватному [privKeyBytes] (32 байта seed).
+     * Нужен при восстановлении личности из копии: в ней хранится приватный ключ, а публичный
+     * обязан быть выведен из него, а не взят из копии на веру.
+     * @return Base64 NO_WRAP, тот же формат, что у generateIdentityKeyPair, или null.
+     */
+    fun identityPublicFromPrivate(privKeyBytes: ByteArray): String? = try {
+        val pub = Ed25519PrivateKeyParameters(privKeyBytes, 0).generatePublicKey().encoded
+        Base64.encodeToString(pub, Base64.NO_WRAP)
+    } catch (_: Exception) {
+        null
+    }
+
     private fun deriveArgon2KeyWithSalt(password: String, salt: ByteArray, parallelism: Int): ByteArray {
         val params = Argon2Parameters.Builder(Argon2Parameters.ARGON2_id)
             .withSalt(salt)

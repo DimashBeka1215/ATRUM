@@ -51,7 +51,13 @@ object MembersSync {
         /** msgId'ы сообщений-оснований мута (см. ChatParticipant.mutedEvidenceIds). Пусто — не указаны. */
         val mutedEvidenceIds: List<String> = emptyList(),
         /** Битовая маска прав админа (см. AdminPermissions). 0 — обычный участник. */
-        val permissions: Int = 0
+        val permissions: Int = 0,
+        /**
+         * Метка ПОСЛЕДНЕГО решения о модерации этого участника (мс) — см.
+         * ChatParticipant.modTs и [mergeSlots]. 0 — метки нет (старый клиент или запись,
+         * сделанная до этой версии): такие решения сливаются ровно как раньше.
+         */
+        val modTs: Long = 0L
     )
 
     /** Список msgId → строка для Room (ChatParticipant.mutedEvidenceIds). Пустой список → null. */
@@ -108,7 +114,9 @@ object MembersSync {
                     mutedUntilMs = o.optLong("mutedUntil", 0L).takeIf { it > 0L },
                     mutedReason = o.optString("mutedReason", "").takeIf { it.isNotBlank() },
                     mutedEvidenceIds = evidenceIds,
-                    permissions = o.optInt("perm", 0)
+                    permissions = o.optInt("perm", 0),
+                    // Нет поля — старый клиент/старая запись: 0, сливается по-прежнему (§17).
+                    modTs = o.optLong("modTs", 0L)
                 )
             )
         }
@@ -166,6 +174,8 @@ object MembersSync {
                                 if (!p.mutedReason.isNullOrBlank()) put("mutedReason", p.mutedReason)
                                 if (p.mutedEvidenceIds.isNotEmpty()) put("mutedEvidence", JSONArray(p.mutedEvidenceIds))
                                 if (p.permissions != 0) put("perm", p.permissions)
+                                // Метка решения о модерации — аддитивно, старые клиенты её игнорируют.
+                                if (p.modTs > 0L) put("modTs", p.modTs)
                             }
                         )
                     }
@@ -197,21 +207,40 @@ object MembersSync {
 
         val mergedParticipants = primary.participants.map { p ->
             if (p.userId == primaryAdmin) return@map p // верховенство — главного не трогаем
-            var banned = p.banned
-            var mutedUntil = p.mutedUntilMs
-            var mutedReason = p.mutedReason
-            var mutedEvidence = p.mutedEvidenceIds
-            for (d in moderators) {
-                val dp = d.participants.firstOrNull { it.userId == p.userId } ?: continue
-                if (dp.banned) banned = true
-                val dUntil = dp.mutedUntilMs
-                if (dUntil != null && dUntil > (mutedUntil ?: 0L)) {
-                    mutedUntil = dUntil
-                    mutedReason = dp.mutedReason
-                    mutedEvidence = dp.mutedEvidenceIds
+            // ⚠️ ПОБЕЖДАЕТ ПОСЛЕДНЕЕ РЕШЕНИЕ (§16, доказано песочницей sb_unban.js).
+            // Раньше здесь было «бан = ИЛИ по слотам, мут = МАКСИМУМ срока». Но каждый
+            // уполномоченный публикует ПОЛНЫЙ снимок своей Room, а Room у всех — итог этого
+            // же слияния: бан немедленно «всасывался» во все слоты, и снять его не мог никто
+            // — ни делегат, ни главный. Разбан жил ровно один тик и возвращался обратно
+            // (то же и с досрочным размутом).
+            //
+            // Теперь у решения есть метка времени ([Entry.modTs]), и в слиянии участвуют
+            // только записи с САМОЙ СВЕЖЕЙ меткой. Совместимость (§17): если меток нет
+            // вообще (старые клиенты — все нули), «самые свежие» = все, и они сливаются
+            // ровно прежним ИЛИ/МАКСИМУМОМ, байт в байт. Так же разрешается и ничья.
+            val candidates = ArrayList<Entry>(moderators.size + 1)
+            candidates.add(p)
+            for (d in moderators) d.participants.firstOrNull { it.userId == p.userId }?.let { candidates.add(it) }
+            val freshest = candidates.maxOf { it.modTs }
+            val winners = candidates.filter { it.modTs == freshest }
+
+            var banned = winners[0].banned
+            var mutedUntil = winners[0].mutedUntilMs
+            var mutedReason = winners[0].mutedReason
+            var mutedEvidence = winners[0].mutedEvidenceIds
+            for (w in winners.drop(1)) {
+                if (w.banned) banned = true
+                val wUntil = w.mutedUntilMs
+                if (wUntil != null && wUntil > (mutedUntil ?: 0L)) {
+                    mutedUntil = wUntil
+                    mutedReason = w.mutedReason
+                    mutedEvidence = w.mutedEvidenceIds
                 }
             }
-            p.copy(banned = banned, mutedUntilMs = mutedUntil, mutedReason = mutedReason, mutedEvidenceIds = mutedEvidence)
+            p.copy(
+                banned = banned, mutedUntilMs = mutedUntil, mutedReason = mutedReason,
+                mutedEvidenceIds = mutedEvidence, modTs = freshest
+            )
         }
 
         // Закрепления: объединение (сперва пины главного, затем добавленные PIN-делегатами),
@@ -388,13 +417,43 @@ object MembersSync {
         val rootIdk: String,
         val revoked: Boolean,
         val ts: Long,
-        val sig: String = ""
+        val sig: String = "",
+        /**
+         * Кому переходит владение беседой вместе с отзывом. Пусто — как раньше: владельца не
+         * остаётся вовсе.
+         *
+         * ⚠️ ЗАЧЕМ ЭТО ПОЛЕ (репорт: «бан и мут не работают на прошлых создателей»). Отзыв
+         * обнулял adminUserId, и беседа оставалась БЕЗ владельца. А members.txt — файл, в
+         * котором и живут баны с мутами, — принимается участниками только от владельца.
+         * Получалось, что отозвать создателя можно, а модерировать его после этого нельзя
+         * никому: бан ложился в локальную базу и никуда не ехал.
+         *
+         * Теперь отзыв сразу называет нового владельца. Подставить сюда себя посторонний не
+         * может: поле ВХОДИТ В ПОДПИСЬ (см. [revokeSigData]), а подписать сертификат способен
+         * только корневой ключ из [VerifiedBadge.VERIFIED], вкомпилированный в APK.
+         */
+        val newAdminUserId: String = ""
     )
 
-    /** Домен-разделённые данные отзыва/возврата (флаг [revoked] ВХОДИТ в подпись). */
-    fun revokeSigData(r: OwnerRevoke): ByteArray =
-        ("atrum_owner_revoke_v1|${r.chatId}|${r.targetUserId}|${r.targetIdk}|${r.rootIdk}|" +
-            "${if (r.revoked) 1 else 0}|${r.ts}").toByteArray(Charsets.UTF_8)
+    /**
+     * Домен-разделённые данные отзыва/возврата (флаг [revoked] ВХОДИТ в подпись).
+     *
+     * ⚠️ [OwnerRevoke.newAdminUserId] дописывается в конец ТОЛЬКО когда оно непустое. Это не
+     * косметика, а обратная совместимость (§17): сертификаты, выпущенные до появления поля,
+     * дают ровно ту же строку, что и раньше, и продолжают проверяться.
+     *
+     * ⛔ Обратное неверно и это осознанный размен: клиент СТАРОЙ версии, встретив сертификат с
+     * непустым newAdminUserId, посчитает подпись несошедшейся и отзыв проигнорирует. Иначе
+     * пришлось бы оставить поле вне подписи — а тогда любой участник переписал бы его на себя
+     * и забрал беседу. Лучше отзыв, который не доедет до необновлённых, чем отзыв, которым
+     * можно захватить чужую беседу.
+     */
+    fun revokeSigData(r: OwnerRevoke): ByteArray {
+        val base = "atrum_owner_revoke_v1|${r.chatId}|${r.targetUserId}|${r.targetIdk}|${r.rootIdk}|" +
+            "${if (r.revoked) 1 else 0}|${r.ts}"
+        val full = if (r.newAdminUserId.isBlank()) base else "$base|na=${r.newAdminUserId}"
+        return full.toByteArray(Charsets.UTF_8)
+    }
 
     /** Подписывает отзыв/возврат приватным root-ключом (ключ обязан быть в VERIFIED). */
     fun signOwnerRevoke(rootPriv: ByteArray, r: OwnerRevoke): OwnerRevoke =
@@ -544,7 +603,14 @@ object MembersSync {
                     Contribution(perm, parsedSlot)
                 }
             val merged = mergeSlots(primaryParsed, contributions)
-            val sig = mergeStateSignature(merged)
+            // Локальный гейт «уже применено». К подписи состояния добавляем метки решений:
+            // повторное решение с ТЕМ ЖЕ исходом (например, бан поверх бана) состояние не
+            // меняет, но метку двигает — без неё она не доехала бы до Room, и более старый
+            // разбан мог бы победить более новый бан. mergeStateSignature НЕ трогаем: её
+            // байты входят в identity-подпись админского слота (verifiedAdminSigData), и
+            // любое изменение формата рассинхронизировало бы проверку со старыми сборками (§17).
+            val sig = mergeStateSignature(merged) + "|mts:" +
+                merged.participants.sortedBy { it.userId }.joinToString(",") { it.modTs.toString() }
             val primaryNewer = primaryParsed.version > chat.membersVersion
             // Применяем, если сменился ростер главного ИЛИ изменилось слитое состояние
             // (мут/бан делегата не двигает версию главного). Идемпотентно: одинаковая
@@ -558,14 +624,23 @@ object MembersSync {
         val now = System.currentTimeMillis()
         participantDao.upsertAll(
             parsed.participants.map { e ->
+                // ⚠️ Своё решение НОВЕЕ пришедшего — не затираем его (§16). Такое бывает
+                // штатно: я только что забанил/разбанил, а слитая картина этого тика ещё
+                // построена по слотам БЕЗ моего (он публикуется следом). Состояние и метка
+                // применяются ТОЛЬКО парой — иначе в Room осела бы чужая (старая) картина
+                // под моей свежей меткой, и я разослал бы её как «самое новое решение».
+                val old = existing[e.userId]
+                val keepLocal = old != null && old.modTs > e.modTs
                 ChatParticipant(
                     ownerId = chat.id,
                     userId = e.userId,
-                    banned = e.banned,
+                    banned = if (keepLocal) old!!.banned else e.banned,
                     joinedAtMs = existing[e.userId]?.joinedAtMs ?: now,
-                    mutedUntilMs = e.mutedUntilMs,
-                    mutedReason = e.mutedReason,
-                    mutedEvidenceIds = evidenceIdsToStore(e.mutedEvidenceIds),
+                    mutedUntilMs = if (keepLocal) old!!.mutedUntilMs else e.mutedUntilMs,
+                    mutedReason = if (keepLocal) old!!.mutedReason else e.mutedReason,
+                    mutedEvidenceIds =
+                        if (keepLocal) old!!.mutedEvidenceIds else evidenceIdsToStore(e.mutedEvidenceIds),
+                    modTs = if (keepLocal) old!!.modTs else e.modTs,
                     permissions = e.permissions,
                     // ⭐ Фаза 3: СОХРАНЯЕМ закреплённый identity-ключ участника (TOFU из профиля /
                     // авторитетный из инвайта). Раньше upsertAll (REPLACE) обнулял его на КАЖДОМ
@@ -623,7 +698,25 @@ object MembersSync {
         // анти-откатом по ts). Коалесцируем против СВЕЖЕГО значения из БД, а не из
         // снимка, — Room-ава больше не откатывается. Обратная совместимость: если старый
         // админ всё же прислал аву в members.txt (parsed != null) — применяем её.
-        if (parsed.groupName != null || parsed.groupAvatarBase64 != null || parsed.groupDescription != null) {
+        // ⚠️ АНТИ-ОТКАТ ИМЕНИ БЕСЕДЫ. Имя, описание и (у старых клиентов) ава едут ДВУМЯ
+        // независимыми путями: groupprofile.txt и members.txt. У первого есть защита от
+        // отката по ts (GroupProfileSync.applyIncoming: применяется только строго более
+        // новый профиль), у второго её не было вовсе — он писал имя безусловно.
+        //
+        // Из-за этого более старый, но подлинный members.txt (пришёл с отставшего реле, или
+        // просто не переиздавался после переименования через groupprofile.txt) откатывал уже
+        // применённое новое имя. Заметить это заранее мешает то, что имя НЕ входит в
+        // mergeStateSignature: сам по себе такой файл «изменением» не считается, но стоит
+        // применению запуститься по другой причине — мут, бан, смена роли — и имя откатывалось
+        // заодно. Снаружи это выглядит как «переименовал беседу, у всех вернулось старое».
+        //
+        // Сверяем с той же меткой, что и groupprofile.txt. Совместимость: если профиль беседы
+        // через groupprofile.txt ещё ни разу не применялся, метка равна нулю и поведение
+        // прежнее (старые админы, публикующие имя только в members.txt, работают как раньше).
+        val appliedProfileTs = appContext?.let { Prefs(it).getGroupProfileTs(chat.chatId) } ?: 0L
+        if ((parsed.groupName != null || parsed.groupAvatarBase64 != null || parsed.groupDescription != null) &&
+            parsed.ts >= appliedProfileTs
+        ) {
             val freshChat = chatDao.getById(chat.id)
             chatDao.updateGroupProfile(
                 id = chat.id,

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Тема-невидимка для OwnerCloudActivity: экран нужен только как владелец окон и результата
+  входа в Google, сам он ничего не рисует. Родитель — Theme.AtrumChat (Material), потому что
+  AppCompatActivity отказывается работать с android:Theme.Translucent.
+-->
+<resources>
+    <style name="Theme.AtrumChat.Invisible" parent="Theme.AtrumChat">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+</resources>

@@ -91,6 +91,13 @@ class TransferOfferActivity : AppCompatActivity() {
                     transport.saveOwnerCerts(CryptoHelper.encryptGroupMessage(newPlain, password, chat.chatId))
                     // Применяем локально — я становлюсь создателем сразу (§1.5).
                     OwnerSync.applyOwnerChain(chat, newPlain, db.chatDao(), db.chatParticipantDao())
+                    // ⚠️ И СРАЗУ публикуем СВОЙ members.txt (§16). С этого момента беседа ждёт
+                    // ростер, подписанный ключом НОВОГО владельца: файл прежнего перестаёт
+                    // проходить проверку подписи у всех (гейт — password-pubkey владельца), а мой
+                    // ещё не опубликован. Без этой отметки беседа оставалась бы вообще без
+                    // members.txt — то есть без ролей, банов, мутов и закрепов — до ближайшего
+                    // моего действия модерации, которого может и не случиться.
+                    PublishScheduler.markMembersDirty(applicationContext, chat.chatId)
                     true
                 }.getOrDefault(false)
             }

@@ -53,22 +53,44 @@
             android:paddingVertical="10dp"
             android:elevation="0dp">
 
+            <!-- СТРЕЛКА НАЗАД — самостоятельная кнопка СНАРУЖИ бейджа, симметрично трём
+                 точкам справа. Внутри бейджа она стояла бы «вклеенной», и шапка выходила
+                 асимметричной: справа кнопка сама по себе, слева — приклеена к имени. -->
             <ImageButton
                 android:id="@+id/btn_back"
                 android:layout_width="42dp"
                 android:layout_height="42dp"
+                android:layout_marginEnd="8dp"
                 android:src="@drawable/ic_arrow_back"
                 android:background="@drawable/bg_icon_button"
                 android:contentDescription="@string/cd_back"
                 android:padding="9dp"
                 app:tint="@color/text_primary"/>
 
+            <!-- Левая распорка. Вместе с правой центрирует бейдж между стрелкой и точками:
+                 свободное место делится поровну, а не копится справа. Если имя длинное,
+                 обе распорки сжимаются до нуля и бейдж просто занимает всё доступное. -->
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1"/>
+
+            <!-- БЕЙДЖ: аватар + имя. В glass-режиме именно ЭТА группа получает стеклянную
+                 капсулу и жмётся ПО СОДЕРЖИМОМУ — отсюда короткий бейдж, а не полоса во всю
+                 ширину. Стрелка и три точки живут снаружи, по краям.
+                 В classic фон по-прежнему рисует сам chat_header, бейдж прозрачен. -->
+            <LinearLayout
+                android:id="@+id/header_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
             <FrameLayout
                 android:id="@+id/v_avatar_container"
                 android:layout_width="42dp"
                 android:layout_height="42dp"
-                android:layout_marginStart="2dp"
-                android:layout_marginEnd="12dp"
+                android:layout_marginEnd="10dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:clickable="true"
                 android:focusable="true">
@@ -105,10 +127,12 @@
                     android:visibility="gone"/>
             </FrameLayout>
 
+            <!-- Ширина по содержимому: именно этот weight=1 раньше и растягивал капсулу
+                 от края до края. Теперь длину бейджа задаёт сам текст (maxWidth у имени
+                 ниже страхует от бесконечно длинного никнейма). -->
             <LinearLayout
-                android:layout_width="0dp"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
                 android:orientation="vertical">
 
                 <LinearLayout
@@ -121,7 +145,8 @@
                         android:id="@+id/tv_display_name"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:maxWidth="220dp"
+                        android:includeFontPadding="false"
+                        android:maxWidth="160dp"
                         android:textColor="@color/text_primary"
                         android:textSize="17sp"
                         android:fontFamily="sans-serif-medium"
@@ -141,12 +166,24 @@
                     android:id="@+id/tv_chat_subtitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:includeFontPadding="false"
+                    android:maxWidth="160dp"
+                    android:singleLine="true"
+                    android:ellipsize="end"
                     android:text="@string/chat_subtitle_encrypted"
                     android:textColor="@color/text_tertiary"
                     android:textSize="13sp"
                     android:fontFamily="sans-serif"
                     android:layout_marginTop="1dp"/>
             </LinearLayout>
+            </LinearLayout>
+            <!-- /header_badge -->
+
+            <!-- Правая распорка — пара к левой (см. выше), держит бейдж по центру -->
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1"/>
 
             <ProgressBar
                 android:id="@+id/progress"
@@ -160,7 +197,7 @@
                 android:id="@+id/btn_more"
                 android:layout_width="42dp"
                 android:layout_height="42dp"
-                android:layout_marginStart="4dp"
+                android:layout_marginStart="12dp"
                 android:src="@drawable/ic_more_vert"
                 android:background="@drawable/bg_icon_button"
                 android:contentDescription="@string/cd_settings"
@@ -926,6 +963,11 @@
             android:gravity="center_vertical">
 
             <!-- Pill container: attach + EditText + send -->
+            <!-- Обёртка для пилюли + подсветки-реакции на печать (glass, вариант Г) -->
+            <FrameLayout
+                android:id="@+id/input_pill_frame"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
             <LinearLayout
                 android:id="@+id/input_pill"
                 android:layout_width="match_parent"
@@ -1068,6 +1110,21 @@
                     android:visibility="gone"
                     app:tint="@color/white"/>
             </LinearLayout>
+
+                <!-- Тонкая линия-реакция на печать под текстом (только glass, вариант Г).
+                     Видимость/альфа управляются в ChatActivity (showComposeGlow/hideComposeGlow). -->
+                <View
+                    android:id="@+id/view_input_underline"
+                    android:layout_width="match_parent"
+                    android:layout_height="1.5dp"
+                    android:layout_gravity="bottom"
+                    android:layout_marginStart="18dp"
+                    android:layout_marginEnd="54dp"
+                    android:layout_marginBottom="7dp"
+                    android:background="@drawable/bg_compose_underline"
+                    android:alpha="0"
+                    android:visibility="gone"/>
+            </FrameLayout>
         </LinearLayout>
 
         <!-- Selection bar -->

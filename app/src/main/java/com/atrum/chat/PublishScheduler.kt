@@ -190,7 +190,10 @@ object PublishScheduler {
         val entries = participants.map {
             MembersSync.Entry(
                 it.userId, it.banned, it.mutedUntilMs, it.mutedReason,
-                MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions
+                MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions,
+                // Метка решения едет вместе с ним — иначе разбан/размут не победит чужой
+                // слот, где старое решение ещё лежит (см. ChatParticipant.modTs).
+                it.modTs
             )
         }
         // Закрепления (Этап 3): публикуем МОИ вклады (myPinnedMsgIds), а не показываемое

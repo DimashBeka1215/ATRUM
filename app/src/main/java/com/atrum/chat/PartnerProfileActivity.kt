@@ -970,12 +970,18 @@ class PartnerProfileActivity : AppCompatActivity() {
             }
             val statusTv = TextView(this).apply {
                 textSize = 11.5f
+                // ⚠️ «Не в сети» больше не пишем (просьба пользователя). Присутствие в этой
+                // системе — оценка, а не факт: сигнал идёт через реле и упирается в чужие часы,
+                // поэтому надпись про отсутствие человека регулярно оказывалась враньём. Про
+                // ПРИСУТСТВИЕ ошибиться нельзя — оно подтверждается свежим сигналом, — поэтому
+                // положительные статусы остаются, а отсутствие показывается отсутствием строки.
                 val (txt, colorRes) = when {
                     member.banned -> getString(R.string.demo_member_banned) to R.color.error
                     member.online -> getString(R.string.demo_member_online) to R.color.accent
-                    else -> (member.lastSeenText ?: getString(R.string.demo_member_offline)) to R.color.text_tertiary
+                    else -> (member.lastSeenText ?: "") to R.color.text_tertiary
                 }
                 text = txt
+                visibility = if (txt.isBlank()) View.GONE else View.VISIBLE
                 setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, colorRes))
                 setPadding(0, dp(2), 0, 0)
             }
@@ -1286,7 +1292,7 @@ class PartnerProfileActivity : AppCompatActivity() {
             renderGroupDescription(updated)
             try {
                 val participants = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
-                    .map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions) }
+                    .map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions, it.modTs) }
                 publishMembersAsAdmin(
                     chat, database,
                     participants = participants,
@@ -1510,7 +1516,7 @@ class PartnerProfileActivity : AppCompatActivity() {
                         ?: globalFallback?.name?.takeIf { it.isNotBlank() }
                         ?: member.userId.take(8)
                 }
-                val isOnline = isMe || (profile != null && profile.onlineTs > 0L && now - profile.onlineTs < ONLINE_EXPIRY_MS_LOCAL)
+                val isOnline = isMe || (profile != null && Presence.isOnline(chat.chatId, member.userId, profile.onlineTs))
                 val avatarSrc = profile?.avatarBase64 ?: globalFallback?.avatarBase64 ?: (if (isMe) prefs.myAvatarBase64 else null)
                 append(member.userId).append(':').append(member.banned).append(':')
                 append(displayName).append(':').append(isOnline).append(':')
@@ -1573,7 +1579,7 @@ class PartnerProfileActivity : AppCompatActivity() {
             // же profiles.txt/сети, что и для остальных — но раз я прямо сейчас смотрю
             // этот экран, я точно онлайн, ждать собственный round-trip через сеть
             // бессмысленно и даёт заведомо неверную картину.
-            val isOnline = isMe || (profile != null && profile.onlineTs > 0L && now - profile.onlineTs < ONLINE_EXPIRY_MS_LOCAL)
+            val isOnline = isMe || (profile != null && Presence.isOnline(chat.chatId, member.userId, profile.onlineTs))
 
             // Верифицированный разработчик (PERSONAL_BUILD.md §Часть 3): неприкосновенен —
             // ни бан, ни мут к нему не применяются, кнопки модерации на его ряду скрыты у
@@ -1662,14 +1668,18 @@ class PartnerProfileActivity : AppCompatActivity() {
             val isMuted = !effBanned && !memberVerified && member.mutedUntilMs != null && member.mutedUntilMs > now
             val statusTv = TextView(this).apply {
                 textSize = 11.5f
+                // См. комментарий выше: строку «не в сети» убрали, отсутствие сигнала теперь
+                // показывается отсутствием строки, а не утверждением, за которое нельзя ручаться.
+                // Бан/мут/непроверенное содержимое остаются — это факты, а не оценки.
                 val (txt, colorRes) = when {
                     effBanned -> getString(R.string.demo_member_banned) to R.color.error
                     isMuted -> getString(R.string.demo_member_muted_fmt, formatMuteUntil(member.mutedUntilMs!!)) to R.color.warning
                     contentForged -> getString(R.string.member_content_unverified) to R.color.warning
                     isOnline -> getString(R.string.demo_member_online) to R.color.accent
-                    else -> getString(R.string.demo_member_offline) to R.color.text_tertiary
+                    else -> "" to R.color.text_tertiary
                 }
                 text = txt
+                visibility = if (txt.isBlank()) View.GONE else View.VISIBLE
                 setTextColor(ContextCompat.getColor(this@PartnerProfileActivity, colorRes))
                 setPadding(0, dp(2), 0, 0)
             }
@@ -1870,7 +1880,7 @@ class PartnerProfileActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
             withContext(Dispatchers.IO) {
-                database.chatParticipantDao().unban(chat.id, member.userId)
+                database.chatParticipantDao().unban(chat.id, member.userId, System.currentTimeMillis())
                 // История модерации: разбан.
                 database.muteHistoryDao().insert(
                     com.atrum.chat.data.MuteHistoryEntry(
@@ -1887,7 +1897,7 @@ class PartnerProfileActivity : AppCompatActivity() {
             renderGroupMembersRows(fresh, emptyMap(), chat)
 
             try {
-                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions) }
+                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions, it.modTs) }
                 publishMembersAsAdmin(
                     chat, database,
                     participants = entries,
@@ -1930,14 +1940,14 @@ class PartnerProfileActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
             withContext(Dispatchers.IO) {
-                database.chatParticipantDao().unmute(chat.id, member.userId)
+                database.chatParticipantDao().unmute(chat.id, member.userId, System.currentTimeMillis())
                 database.muteHistoryDao().markLatestUnmutedEarly(chat.id, member.userId, System.currentTimeMillis())
             }
             val fresh = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
             renderGroupMembersRows(fresh, emptyMap(), chat)
 
             try {
-                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions) }
+                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions, it.modTs) }
                 publishMembersAsAdmin(
                     chat, database,
                     participants = entries,
@@ -2125,6 +2135,17 @@ class PartnerProfileActivity : AppCompatActivity() {
         // btn_mute_confirm ниже, он ничем не гейтится). Сами сообщения не дублируются —
         // сохраняется только msgId (см. ChatParticipant.mutedEvidenceIds), заглушённый
         // клиент найдёт их локально по этому же msgId в своей копии chat.txt.
+        // ⚠️ Превью в списке оснований для мута ОБЯЗАНО идти через renderMentions, а не
+        // показывать msg.text как есть: сырой текст сообщения несёт невидимые метки упоминаний
+        // (Message.mentionMarker) — разделители-символы невидимы, а сам userId внутри них
+        // обычный текст, поэтому админ видел «технический бред» вида
+        // «@Sebastian_Michaeliscbe0f4c5-291f-430...» (репорт: «сделай так, чтобы он был виден
+        // исключительно системе... не нужен ни администратору, ни другим пользователям»).
+        // renderMentions и без найденного профиля полностью убирает служебные символы —
+        // отдельный stripMentionMarkers не нужен (см. Message.renderMentions).
+        fun mutePreviewText(text: String): String =
+            Message.renderMentions(text) { uid -> ProfileSync.getGlobalKnown(uid)?.mentionHandle() }
+
         fun addEvidenceRow(msg: Message) {
             val row = layoutInflater.inflate(R.layout.item_mute_evidence_row, evidenceList, false)
             val ivKind = row.findViewById<ImageView>(R.id.iv_evidence_kind)
@@ -2141,11 +2162,11 @@ class PartnerProfileActivity : AppCompatActivity() {
                 msg.isImage -> {
                     ivKind.setImageResource(R.drawable.ic_image_outline)
                     ivKind.visibility = View.VISIBLE
-                    tvPreview.text = msg.text.takeIf { it.isNotBlank() } ?: getString(R.string.msg_preview_photo)
+                    tvPreview.text = mutePreviewText(msg.text).takeIf { it.isNotBlank() } ?: getString(R.string.msg_preview_photo)
                 }
                 else -> {
                     ivKind.visibility = View.GONE
-                    tvPreview.text = msg.text
+                    tvPreview.text = mutePreviewText(msg.text)
                 }
             }
             row.setOnClickListener {
@@ -2180,8 +2201,8 @@ class PartnerProfileActivity : AppCompatActivity() {
 
             fun preview(m: Message): String = when {
                 m.isVoice -> getString(R.string.msg_preview_voice)
-                m.isImage -> m.text.takeIf { it.isNotBlank() } ?: getString(R.string.msg_preview_photo)
-                else -> m.text
+                m.isImage -> mutePreviewText(m.text).takeIf { it.isNotBlank() } ?: getString(R.string.msg_preview_photo)
+                else -> mutePreviewText(m.text)
             }
 
             tvLabel.text = getString(R.string.mute_evidence_thread_with_fmt, originalMsg.sender)
@@ -2270,7 +2291,7 @@ class PartnerProfileActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
             withContext(Dispatchers.IO) {
-                database.chatParticipantDao().mute(chat.id, member.userId, untilMs, reason, MembersSync.evidenceIdsToStore(evidenceMsgIds))
+                database.chatParticipantDao().mute(chat.id, member.userId, untilMs, reason, MembersSync.evidenceIdsToStore(evidenceMsgIds), System.currentTimeMillis())
                 database.muteHistoryDao().insert(
                     com.atrum.chat.data.MuteHistoryEntry(
                         ownerId = chat.id,
@@ -2286,7 +2307,7 @@ class PartnerProfileActivity : AppCompatActivity() {
             renderGroupMembersRows(fresh, emptyMap(), chat)
 
             try {
-                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions) }
+                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions, it.modTs) }
                 publishMembersAsAdmin(
                     chat, database,
                     participants = entries,
@@ -2302,8 +2323,11 @@ class PartnerProfileActivity : AppCompatActivity() {
         }
     }
 
-    /** Presence-таймаут для online-статуса в списке участников (тот же порядок, что и в ChatActivity). */
-    private val ONLINE_EXPIRY_MS_LOCAL = 20_000L
+    // Собственной копии presence-таймаута здесь больше нет: она была 20 с против 12 с в
+    // ChatActivity, и один и тот же человек мог одновременно быть «в сети» в списке участников
+    // и «не в сети» в шапке чата. Решение об онлайне принимает Presence — единственное место,
+    // где это правило вообще записано (см. его докстринг: чужой штамп нельзя сравнивать с
+    // моими часами).
 
     /** Диалог отзыва/возврата создателя (только verified root). Обратимо — предупреждаем мягко. */
     private fun confirmRevoke(
@@ -2344,7 +2368,12 @@ class PartnerProfileActivity : AppCompatActivity() {
                         if (!VerifiedBadge.isKeyVerified(pub)) return@runCatching false
                         MembersSync.signOwnerRevoke(priv, MembersSync.OwnerRevoke(
                             chatId = chat.chatId, targetUserId = member.userId, targetIdk = targetIdk,
-                            rootIdk = pub, revoked = revoke, ts = System.currentTimeMillis()
+                            rootIdk = pub, revoked = revoke, ts = System.currentTimeMillis(),
+                            // Отзывая создателя, забираю владение себе — иначе беседа остаётся
+                            // без владельца, и модерировать отозванного не может НИКТО (его
+                            // бан просто некому опубликовать, см. OwnerRevoke.newAdminUserId).
+                            // При возврате поле не нужно: владение и так уходит обратно.
+                            newAdminUserId = if (revoke) prefs.myUserId else ""
                         ))
                     } finally { priv.fill(0) }
                     if (cert.sig.isBlank()) return@runCatching false
@@ -2388,7 +2417,7 @@ class PartnerProfileActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val database = com.atrum.chat.data.AppDatabase.get(this@PartnerProfileActivity)
             withContext(Dispatchers.IO) {
-                database.chatParticipantDao().ban(chat.id, member.userId)
+                database.chatParticipantDao().ban(chat.id, member.userId, System.currentTimeMillis())
                 // История модерации (объединена с мутами, по запросу пользователя): бан.
                 database.muteHistoryDao().insert(
                     com.atrum.chat.data.MuteHistoryEntry(
@@ -2405,7 +2434,7 @@ class PartnerProfileActivity : AppCompatActivity() {
             renderGroupMembersRows(fresh, emptyMap(), chat)
 
             try {
-                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions) }
+                val entries = fresh.map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions, it.modTs) }
                 publishMembersAsAdmin(
                     chat, database,
                     participants = entries,
@@ -2450,7 +2479,7 @@ class PartnerProfileActivity : AppCompatActivity() {
             groupChatCached = chat.copy(groupName = newName)
             try {
                 val participants = withContext(Dispatchers.IO) { database.chatParticipantDao().getForChat(chat.id) }
-                    .map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions) }
+                    .map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions, it.modTs) }
                 publishMembersAsAdmin(
                     chat, database,
                     participants = participants,
@@ -2526,7 +2555,7 @@ class PartnerProfileActivity : AppCompatActivity() {
             groupChatCached = chat.copy(groupAvatarBase64 = newAvatarB64)
             try {
                 val participants = database.chatParticipantDao().getForChat(chat.id)
-                    .map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions) }
+                    .map { MembersSync.Entry(it.userId, it.banned, it.mutedUntilMs, it.mutedReason, MembersSync.evidenceIdsFromStore(it.mutedEvidenceIds), it.permissions, it.modTs) }
                 publishMembersAsAdmin(
                     chat, database,
                     participants = participants,

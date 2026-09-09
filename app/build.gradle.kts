@@ -16,6 +16,20 @@ val keystoreProperties = Properties().apply {
 }
 val hasKeystore = keystorePropertiesFile.exists()
 
+// Инструменты владельца (восстановление identity-ключа через Google Drive) включаются строкой
+//   owner.tools=true
+// в keystore.properties — файле, которого нет в репозитории (.gitignore).
+//
+// Зачем гейт: окно «Права владельца не подтверждены» показывается, когда ключ устройства не
+// опознан, — а у ЛЮБОГО, кто соберёт личную сборку из исходников, он и не опознан. Без этого
+// флага постороннему вылезало бы предложение войти в Google непонятно зачем. Прав он так не
+// получил бы (они считаются по ключу из VerifiedBadge и подписи), но окно видел бы.
+//
+// Это гигиена интерфейса, а НЕ граница безопасности: строку может дописать себе кто угодно.
+// Безопасность держится на том, что чужой ключ не входит в список и подпись под него не
+// подделать.
+val ownerTools = hasKeystore && keystoreProperties["owner.tools"]?.toString()?.trim() == "true"
+
 // Сборка нативного модуля из src/main/cpp (требует NDK + CMake).
 val enableNativeModule = true
 
@@ -49,8 +63,12 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 676
-        versionName = "2.0.8"
+        versionCode = 719
+        versionName = "2.0.9"
+
+        // По умолчанию инструментов владельца нет ни в одной сборке — включаются только в
+        // debug и только при owner.tools=true в keystore.properties (см. выше).
+        buildConfigField("boolean", "OWNER_TOOLS", "false")
 
         // ЛИЧНАЯ СБОРКА: по умолчанию ВЫКЛючена (обычный релиз чист). Включается в build-типе
         // debug (см. buildTypes). Личные «фишки для себя» в коде прячутся за
@@ -170,9 +188,26 @@ android {
             buildConfigField("boolean", "PERSONAL", "true")
             // Личная сборка называется «ATRUM DEBUG» (обычная — «ATRUM», см. defaultConfig).
             manifestPlaceholders["appName"] = "ATRUM DEBUG"
+            buildConfigField("boolean", "OWNER_TOOLS", ownerTools.toString())
+            if (!ownerTools) project.logger.lifecycle(
+                "ATRUM: инструменты владельца выключены (нет owner.tools=true в keystore.properties)"
+            )
             // Подписываем тем же release-ключом (если есть keystore.properties) — чтобы это
             // была полноценная сборка на каждый день, а не одноразовая debug-заглушка.
+            //
+            // ⚠️ Молчать про отсутствие keystore.properties нельзя (репорт: «ключ постоянно
+            // слетает»). Без него сборка подписывается ВРЕМЕННЫМ debug-ключом Android Studio,
+            // который свой на каждой машине и живёт до чистки ~/.android. Подпись не совпала →
+            // установить поверх нельзя → удаление → стёрты данные и identity-ключ, а вместе с
+            // ним галочка, права и TOFU-личность у всех собеседников. Поэтому — громкое
+            // предупреждение при конфигурации, а не тихий фолбэк.
             if (hasKeystore) signingConfig = signingConfigs.getByName("release")
+            else project.logger.warn(
+                "\n⚠️  ATRUM: нет keystore.properties — личная сборка будет подписана временным " +
+                "debug-ключом.\n    Поверх прежней установки она не встанет: потребуется удаление, " +
+                "а это стирает identity-ключ\n    (галочка и права пропадут). Положи " +
+                "keystore.properties в корень проекта.\n"
+            )
         }
     }
 
@@ -292,6 +327,14 @@ dependencies {
     // Biometric — системный отпечаток (BiometricPrompt). Биометрия НЕ хранится
     // в приложении: запрос идёт в системную подсистему телефона (на Samsung — Knox/TEE).
     implementation("androidx.biometric:biometric:1.1.0")
+
+    // Вход в Google — ТОЛЬКО личная сборка (восстановление ключа владельца из скрытой папки
+    // Drive). Намеренно debugImplementation, а не implementation: ATRUM работает через Tor и
+    // ставится в том числе на прошивки без сервисов Google — тянуть их в публичный APK ради
+    // удобства одного человека нельзя. Реализация лежит в src/debug/java, в src/release/java —
+    // заглушка с тем же именем, поэтому общий код собирается одинаково в обоих вариантах.
+    // Сама работа с Drive идёт REST-запросами через уже подключённый OkHttp.
+    debugImplementation("com.google.android.gms:play-services-auth:21.2.0")
 
     // IPtProxy — pluggable transports (Lyrebird=obfs4/meek/webtunnel + Snowflake) для
     // обхода блокировки Tor. Нативные бинари под все ABI уже внутри AAR. Используется

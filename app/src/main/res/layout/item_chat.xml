@@ -73,9 +73,24 @@
                 app:layout_constraintHorizontal_chainStyle="packed"
                 app:layout_constraintHorizontal_bias="0"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintEnd_toStartOf="@id/verified_badge_list"
+                app:layout_constraintEnd_toStartOf="@id/iv_bt_badge"
                 app:layout_constraintTop_toTopOf="parent"
                 app:layout_constraintBottom_toBottomOf="parent" />
+
+            <!-- Значок Bluetooth-чата (мокап одобрен пользователем, вариант "рядом с именем") -->
+            <ImageView
+                android:id="@+id/iv_bt_badge"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:layout_marginStart="5dp"
+                android:src="@drawable/ic_bluetooth"
+                android:tint="@color/accent"
+                android:visibility="gone"
+                android:contentDescription="@string/bt_chat_badge_cd"
+                app:layout_constraintStart_toEndOf="@id/tv_partner_name"
+                app:layout_constraintEnd_toStartOf="@id/verified_badge_list"
+                app:layout_constraintTop_toTopOf="@id/tv_partner_name"
+                app:layout_constraintBottom_toBottomOf="@id/tv_partner_name" />
 
             <com.atrum.chat.VerifiedBadgeView
                 android:id="@+id/verified_badge_list"
@@ -84,7 +99,7 @@
                 android:layout_marginStart="5dp"
                 android:visibility="gone"
                 android:contentDescription="@string/verified_badge_cd"
-                app:layout_constraintStart_toEndOf="@id/tv_partner_name"
+                app:layout_constraintStart_toEndOf="@id/iv_bt_badge"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintHorizontal_bias="0"
                 app:layout_constraintTop_toTopOf="@id/tv_partner_name"

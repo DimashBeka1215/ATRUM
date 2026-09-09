@@ -362,6 +362,26 @@
             android:textSize="12sp"
             android:visibility="gone" />
 
+        <!-- Полоса подключения. Тот же виджет и тот же drawable, что в разделе «Стикеры»
+             (activity_sticker_settings.xml → pbDownload): 4dp, скругление и градиент лежат
+             в bg_progress_bar, ничего нового не рисуется. Заменила счётчик кругов «3/8»,
+             который раньше дописывался прямо в текст статуса.
+             indeterminateTint нужен, потому что у неопределённого режима свой системный
+             drawable — bg_progress_bar на него не распространяется, и без тинта полоса
+             была бы дефолтно-синей посреди фиолетового экрана. -->
+        <ProgressBar
+            android:id="@+id/pb_join"
+            style="@android:style/Widget.ProgressBar.Horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="4dp"
+            android:layout_marginTop="10dp"
+            android:layout_marginHorizontal="24dp"
+            android:progressDrawable="@drawable/bg_progress_bar"
+            android:indeterminateTint="@color/accent"
+            android:max="100"
+            android:progress="0"
+            android:visibility="gone" />
+
         <!-- Gap до главной кнопки -->
         <Space
             android:layout_width="match_parent"

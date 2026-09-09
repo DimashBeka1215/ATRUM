@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Одиночная стеклянная кнопка ВНЕ капсулы — три точки у правого края шапки в режиме
+     «атмосферное стекло».
+
+     Отличие от bg_glass_icon_button: та кнопка живёт ВНУТРИ капсулы и потому намеренно
+     прозрачна (стекло на стекле запрещено). Эта же стоит на голых обоях сама по себе,
+     значит она — самостоятельная стеклянная поверхность и нуждается в собственной
+     подложке, заливке и контуре, иначе иконка висит в воздухе и теряется на светлом фото.
+
+     Форма — oval: кнопка 42dp, то есть радиус 21dp, ровно половина. Живые слои материала
+     (кромка, блик, свечение от касания) добавляет AtmosphericGlassOverlay сверху.
+
+     Цвета — токены @color/glass_* (§4/§5). -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="oval">
+            <solid android:color="@color/glass_tint"/>
+            <stroke android:width="1dp" android:color="@color/glass_rim_light"/>
+        </shape>
+    </item>
+    <item>
+        <layer-list>
+            <item>
+                <shape android:shape="oval">
+                    <solid android:color="@color/glass_tint"/>
+                </shape>
+            </item>
+            <item>
+                <shape android:shape="oval">
+                    <solid android:color="@color/glass_fill"/>
+                    <stroke android:width="1dp" android:color="@color/glass_stroke"/>
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+</selector>

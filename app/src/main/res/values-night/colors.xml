@@ -46,6 +46,17 @@
     <color name="chat_input_pill">#4D000000</color>       <!-- 30% чёрный -->       <!-- пилюля поля ввода -->
     <color name="chat_msg_other_wp">#CC141414</color>     <!-- чужой пузырёк с обоями -->
 
+    <!-- ═══ Atmospheric Glass (режим «атмосферное стекло») ═══
+         Дублируют значения из values/colors.xml намеренно — стекло всегда поверх обоев,
+         подложка не зависит от темы. Держим оба файла в синхроне (см. комментарий там же). -->
+    <color name="glass_fill">#1AFFFFFF</color>
+    <color name="glass_tint">#33000000</color>
+    <color name="glass_stroke">#29FFFFFF</color>
+    <color name="glass_rim_light">#66FFFFFF</color>
+    <color name="glass_rim_dark">#26000000</color>
+    <color name="glass_specular">#1FFFFFFF</color>
+    <color name="glass_illumination">#8CC77DFF</color>
+
     <!-- Стикеры -->
     <color name="sticker_onboarding_overlay">#CC000000</color>
 

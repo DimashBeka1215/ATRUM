@@ -25,6 +25,9 @@ class App : Application() {
             UpdateRequiredActivity.launch(this)
             return
         }
+        // Отозванные identity-ключи поднимаем ДО первой отрисовки: иначе отозванный
+        // ключ на первом кадре ещё считался бы действующим (см. RevokedKeys).
+        RevokedKeys.init(this)
         ImageCache.init(this)
         ChatSnapshotCache.init(this)
         com.atrum.chat.transport.NostrMessageStore.init(this)

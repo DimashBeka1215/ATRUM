@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Иконочная кнопка внутри стеклянной капсулы (назад / три точки / скрепка) в
+     режиме «атмосферное стекло».
+
+     Аналог Apple «clear glass» для вторичных кнопок: в покое кнопка прозрачна и не
+     спорит с капсулой (стекло на стекле запрещено документацией), при нажатии даёт
+     лёгкую заливку. Основной отклик на касание — не эта заливка, а свечение изнутри
+     из точки пальца (AtmosphericGlassOverlay.illuminate), поэтому здесь намеренно скромно.
+
+     Форма — oval: по concentricity радиус вложенной кнопки внутри капсулы r=26dp с
+     отступом 5dp равен 21dp, что ровно половина кнопки 42dp, то есть круг.
+
+     Цвета — токены @color/glass_* (§4/§5). -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="oval">
+            <solid android:color="@color/glass_fill"/>
+        </shape>
+    </item>
+    <item android:state_focused="true">
+        <shape android:shape="oval">
+            <solid android:color="@color/glass_fill"/>
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="@android:color/transparent"/>
+        </shape>
+    </item>
+</selector>

@@ -24,17 +24,63 @@ object MentionUtil {
 
     private val MENTION = Pattern.compile("@([\\p{L}0-9_]+)")
 
-    /** Упомянут ли Я: содержит ли [text] «@<tag>» или «@<name>» (без учёта регистра). */
+    /**
+     * Упомянут ли Я — ОСНОВНОЙ путь: по метке с моим userId (см. Message.mentionMarker).
+     *
+     * Точный и неломающийся: не зависит ни от тега, ни от имени, ни от их уникальности.
+     * Тёзка больше не перехватывает чужое упоминание, смена ника ничего не рвёт.
+     */
+    fun mentionsMeById(text: String, myUserId: String?): Boolean {
+        if (myUserId.isNullOrBlank() || text.isEmpty()) return false
+        return Message.mentionedUserIds(text).any { it == myUserId }
+    }
+
+    /**
+     * Упомянут ли Я любым из способов: сначала точный (по userId), затем — запасной
+     * текстовый для сообщений, отправленных ДО перехода на метки. Старые сообщения задним
+     * числом не переписать, поэтому текстовый путь остаётся навсегда как совместимость (§17).
+     */
+    fun mentionsMeAny(text: String, myUserId: String?, myTag: String?, myName: String?): Boolean =
+        mentionsMeById(text, myUserId) || mentionsMe(text, myTag, myName)
+
+    /**
+     * Упомянут ли Я: содержит ли [text] «@<tag>», «@<name>» или «@<имя с пробелами>»
+     * (без учёта регистра).
+     *
+     * ⚠️ ФИКС МНОГОСЛОВНЫХ ИМЁН. Раньше распознавались только односложные токены
+     * (регулярка [MENTION] обрывается на пробеле), а имена с пробелом вдобавок ЯВНО
+     * выбрасывались из списка — условие `' ' !in it`. При этом отправитель через
+     * автодополнение (ChatActivity.insertMention) вставляет «@» + тег ИЛИ, если тега нет,
+     * «@» + ИМЯ ЦЕЛИКОМ. То есть для участника без тега с именем вроде «Sebastian 2»
+     * получалось: отправитель выбирает человека из списка, приложение вставляет
+     * «@Sebastian 2», а получатель не засчитывает это упоминание НИКОГДА — ни бейджа,
+     * ни уведомления. Молча и стопроцентно.
+     *
+     * Хуже того, токен «@Sebastian» из такой вставки мог совпасть с ДРУГИМ участником,
+     * у которого это тег или односложное имя, — упоминание уходило не тому.
+     *
+     * Теперь многословное имя ищется как есть — подстрокой «@<полное имя>». Формат
+     * сообщения не меняется (упоминание всегда было обычным текстом), поэтому правка
+     * односторонняя и обратно совместимая: получатель на новой версии начинает засчитывать
+     * то, что отправители вставляли и раньше, на старой — ведёт себя как прежде (§17).
+     */
     fun mentionsMe(text: String, myTag: String?, myName: String?): Boolean {
         if (text.isEmpty() || text.indexOf('@') < 0) return false
         val handles = buildList {
             myTag?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it.lowercase()) }
             myName?.trim()?.takeIf { it.isNotEmpty() && ' ' !in it }?.let { add(it.lowercase()) }
         }
-        if (handles.isEmpty()) return false
-        val m = MENTION.matcher(text)
-        while (m.find()) {
-            if ((m.group(1) ?: "").lowercase() in handles) return true
+        if (handles.isNotEmpty()) {
+            val m = MENTION.matcher(text)
+            while (m.find()) {
+                if ((m.group(1) ?: "").lowercase() in handles) return true
+            }
+        }
+        // Многословное имя без тега — единственный способ его упомянуть, поэтому сверяем
+        // подстрокой, ровно в том виде, в каком его вставляет автодополнение.
+        val fullName = myName?.trim()
+        if (!fullName.isNullOrEmpty() && ' ' in fullName && text.contains("@" + fullName, ignoreCase = true)) {
+            return true
         }
         return false
     }

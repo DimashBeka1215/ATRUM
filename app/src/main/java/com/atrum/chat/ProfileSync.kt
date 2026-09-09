@@ -135,6 +135,10 @@ object ProfileSync {
                 // (ротация выключена, поэтому свежий непустой ключ всегда побеждает через ?:).
                 identityPubKey  = profileBase.identityPubKey  ?: cur.identityPubKey  ?: p.identityPubKey,
                 identitySig     = profileBase.identitySig     ?: cur.identitySig     ?: p.identitySig,
+                // Отзыв «липкий» и необратимый: раз увиденный, он не должен теряться из-за
+                // частичного чтения — иначе отозванный ключ на тик снова считался бы живым.
+                revocationSig   = profileBase.revocationSig   ?: cur.revocationSig   ?: p.revocationSig,
+                revokedKey      = profileBase.revokedKey      ?: cur.revokedKey      ?: p.revokedKey,
                 ephemeralPubKey = profileBase.ephemeralPubKey ?: cur.ephemeralPubKey ?: p.ephemeralPubKey,
                 ephemeralSig    = profileBase.ephemeralSig    ?: cur.ephemeralSig    ?: p.ephemeralSig
             )
@@ -341,6 +345,37 @@ object ProfileSync {
                 // выше) — presence-поля берём ИЗ НЕГО как есть, без подмешивания другого слота.
                 best[uid] = base.copy(
                     lastReadIndex = maxOf(cur.lastReadIndex, p.lastReadIndex),
+                    // ⚠️ ИСКЛЮЧЕНИЕ ИЗ ПРАВИЛА ВЫШЕ, только для onlineTs (репорт: «статус в сети
+                    // не точен от слова совсем»). typingTs/recordingTs действительно обязаны
+                    // резко падать в ноль и потому берутся из base — но onlineTs к ним приравняли
+                    // ошибочно, и это стоило точности присутствия:
+                    //
+                    //   base выбирается по updatedAt, а presence-пуш updatedAt НЕ двигает (тут же
+                    //   выше про это и написано). Значит при равном updatedAt побеждает копия из
+                    //   слота, который просто оказался раньше в списке, — и это регулярно МОЙ
+                    //   слот с устаревшим эхом чужого presence. Свежий heartbeat партнёра,
+                    //   лежащий в его собственном слоте, при этом отбрасывался, и человек
+                    //   показывался офлайн, будучи онлайн.
+                    //
+                    // Для onlineTs берём максимум по слотам: штамп только растёт, пока человек в
+                    // сети, поэтому максимум — это и есть самый свежий heartbeat, кем бы он ни
+                    // был переопубликован. Обратная ошибка (эхо продержит «в сети» дольше, чем
+                    // надо) ограничена таймаутом присутствия и лечится сама — в отличие от
+                    // прежней, которая не лечилась ничем. Регрессию к нулю здесь намеренно не
+                    // сохраняем: погасание и так делается по таймауту (см. Presence).
+                    onlineTs = maxOf(base.onlineTs, maxOf(cur.onlineTs, p.onlineTs)),
+                    // typingTs/recordingTs — по той же причине и на тех же основаниях (репорт:
+                    // «статус печатает не отображается»). Прежний довод «печать обязана уметь
+                    // регрессировать к нулю» верен по сути, но реализовать его выбором base
+                    // нельзя: base определяется по updatedAt, а presence его не двигает, поэтому
+                    // выигрывал не тот, кто свежее, а тот, кто раньше в списке слотов. На
+                    // практике это регулярно моё собственное эхо с нулём — и надпись «печатает»
+                    // не загоралась вовсе. Гашение перенесено туда, где для него есть надёжные
+                    // часы: Presence.isTyping держит надпись по МОЕМУ монотонному таймеру от
+                    // последнего сдвига штампа и гасит её через TYPING_WINDOW_MS после реальной
+                    // остановки. Здесь же берём максимум — то есть самый свежий сигнал.
+                    typingTs = maxOf(base.typingTs, maxOf(cur.typingTs, p.typingTs)),
+                    recordingTs = maxOf(base.recordingTs, maxOf(cur.recordingTs, p.recordingTs)),
                     // Аватар/имя «липкие» — см. unionWithKnown: копия без авы/имени не
                     // должна перетирать уже известную (иначе ава пропадает у оффлайн-участника).
                     avatarBase64  = base.avatarBase64 ?: cur.avatarBase64 ?: p.avatarBase64,
@@ -405,6 +440,16 @@ object ProfileSync {
             } else myProfile
         } finally {
             identityPriv?.fill(0)
+        }.let { prof ->
+            // ⭐ Отзыв СВОЕГО ключа подмешивается здесь, а не в каждом месте сборки профиля.
+            // Профиль строится в пяти разных местах (чат, настройки, вход в беседу, отметка
+            // «прочитано», фоновый добивальщик) — прикладывать отзыв в каждом значило бы
+            // однажды забыть, и тогда он просто не доехал бы до части бесед. Здесь же —
+            // единственный путь публикации, мимо него профиль наружу не уходит.
+            val mine = RevokedKeys.myRevocation()
+            if (mine != null && prof.revocationSig == null)
+                prof.copy(revocationSig = mine.second, revokedKey = mine.first)
+            else prof
         }
         val existing = unionWithKnown(api.chatId, pullProfiles(api, password))
 

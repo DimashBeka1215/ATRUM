@@ -23,6 +23,21 @@ object PersonalFeatures {
     /** true только в личной (debug) сборке — см. buildConfigField PERSONAL в build.gradle.kts. */
     val enabled: Boolean get() = BuildConfig.PERSONAL
 
+    /**
+     * Инструменты владельца — восстановление identity-ключа через Google Drive.
+     *
+     * Отдельный флаг, а не [enabled], по практической причине: личную сборку может собрать кто
+     * угодно из исходников, и у него ключ устройства тоже «не опознан». Без гейта постороннему
+     * вылезало бы окно «Права владельца не подтверждены, войдите в Google» — прав он бы так не
+     * получил, но окно видел бы. Включается строкой `owner.tools=true` в keystore.properties,
+     * которого в репозитории нет и не будет.
+     *
+     * ⚠️ Это гигиена интерфейса, а НЕ граница безопасности: дописать себе строку может любой.
+     * Безопасность держится на другом — чужой ключ не входит в VerifiedBadge.VERIFIED, а
+     * подпись под чужой ключ не подделать.
+     */
+    val ownerTools: Boolean get() = BuildConfig.PERSONAL && BuildConfig.OWNER_TOOLS
+
     // ── Сюда добавляются личные фишки. Пример-заглушка (в release не выполняется): ──
     //
     // fun greetOnStart(context: android.content.Context) {

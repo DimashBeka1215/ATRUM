@@ -129,6 +129,109 @@ data class Message(
         private val ETX: Char = Char(0x03)
         private val DC1: Char = Char(0x11)
 
+        /**
+         * Разделитель МЕТКИ УПОМИНАНИЯ (Shift Out, 0x0E). Свободен: остальные управляющие
+         * символы формата заняты (US/RS — обёртки метки времени и userId отправителя,
+         * SOH/STX/ETX/DC1 — каналы цитаты, картинок, коллажа и голосового).
+         *
+         * Упоминание на проводе выглядит так: «@Имя» + SO + userId + SO. Видимая часть
+         * остаётся обычным текстом, а рядом с ней едет неподделываемая привязка к человеку.
+         * Отрисовка подменяет всю пару на «@» + АКТУАЛЬНОЕ имя из профиля, поэтому
+         * переименование участника задним числом чинит все старые упоминания.
+         *
+         * Почему метка ПОСЛЕ имени, а не вместо него: так сообщение остаётся осмысленным для
+         * клиента, который про метку не знает (он покажет «@Имя» и пару служебных символов),
+         * и не требуется хитрая машинерия EditText, где видимый текст отличается от
+         * хранимого — в поле ввода просто лежит «@Имя» с невидимым символом.
+         */
+        private val SO: Char = Char(0x0E)
+
+        /** Регулярка пары «видимое @имя + метка с userId». Группа 1 — userId. */
+        private val MENTION_TAGGED = Regex("@[^" + SO + "]*" + SO + "([^" + SO + "]+)" + SO)
+
+        /**
+         * Метка упоминания для вставки в текст сообщения СРАЗУ ПОСЛЕ видимого «@имя».
+         * Единственная точка, где эта метка создаётся (см. ChatActivity.insertMention).
+         */
+        fun mentionMarker(userId: String): String = "" + SO + userId + SO
+
+        /** userId всех упомянутых в [text] — по меткам. Старый текстовый формат сюда не входит. */
+        fun mentionedUserIds(text: String): List<String> =
+            MENTION_TAGGED.findAll(text).map { it.groupValues[1] }.filter { it.isNotBlank() }.toList()
+
+        /**
+         * Подставляет в [text] АКТУАЛЬНЫЕ имена упомянутых: пара «@старое имя + метка»
+         * заменяется на «@» + [nameByUid]. Если имя неизвестно (профиль ещё не доехал),
+         * оставляем то, что было написано при отправке, — лучше устаревшее имя, чем «@».
+         */
+        fun renderMentions(text: String, nameByUid: (String) -> String?): String {
+            if (text.indexOf(SO) < 0) return text
+            return MENTION_TAGGED.replace(text) { m ->
+                val uid = m.groupValues[1]
+                val fresh = nameByUid(uid)?.takeIf { it.isNotBlank() }
+                if (fresh != null) "@" + fresh
+                else m.value.substringBefore(SO)   // видимая часть как была, без служебных символов
+            }
+        }
+
+        /**
+         * Текст без служебных символов меток — для превью в списке чатов, уведомлений и
+         * поиска, где подставлять имена не из чего.
+         */
+        /**
+         * Привешивает метки к упоминаниям ПЕРЕД отправкой (§16).
+         *
+         * ⚠️ Зачем отдельным шагом. Раньше метка вставлялась прямо в поле ввода — и хотя её
+         * разделители невидимы, САМ userId остаётся обычным текстом: в строке ввода после
+         * «@тега» тянулся сырой uuid. Теперь в поле лежит ровно «@тег», а метка приклеивается
+         * здесь, в момент отправки, по паре «видимый хэндл → userId», запомненной при выборе
+         * человека из подсказки.
+         *
+         * Длинные хэндлы обрабатываются первыми — иначе «@Аня» перехватила бы «@Аня Петрова».
+         */
+        fun attachMentionMarkers(text: String, idByHandle: Map<String, String>): String {
+            if (text.isEmpty() || idByHandle.isEmpty()) return text
+            var out = text
+            for ((handle, uid) in idByHandle.entries.sortedByDescending { it.key.length }) {
+                if (handle.isBlank() || uid.isBlank()) continue
+                val needle = "@$handle"
+                val marker = mentionMarker(uid)
+                val sb = StringBuilder(out.length + marker.length)
+                var i = 0
+                while (i <= out.length) {
+                    val at = out.indexOf(needle, i)
+                    if (at < 0) { sb.append(out, i, out.length); break }
+                    val end = at + needle.length
+                    sb.append(out, i, end)
+                    // Идемпотентность: если метка уже стоит — второй раз не вешаем.
+                    if (end >= out.length || out[end] != SO) sb.append(marker)
+                    i = end
+                }
+                out = sb.toString()
+            }
+            return out
+        }
+
+        /**
+         * Обратная операция к [attachMentionMarkers]: достаёт из размеченного текста пары
+         * «видимый хэндл (без @) → userId». Нужна при РЕДАКТИРОВАНИИ — в диалоге правки
+         * показывается чистый текст, а на сохранении метки навешиваются заново.
+         */
+        fun mentionHandleMap(text: String): Map<String, String> {
+            if (text.indexOf(SO) < 0) return emptyMap()
+            val out = LinkedHashMap<String, String>()
+            for (m in MENTION_TAGGED.findAll(text)) {
+                val handle = m.value.substringBefore(SO).removePrefix("@")
+                val uid = m.groupValues[1]
+                if (handle.isNotBlank() && uid.isNotBlank()) out[handle] = uid
+            }
+            return out
+        }
+
+        fun stripMentionMarkers(text: String): String =
+            if (text.indexOf(SO) < 0) text
+            else MENTION_TAGGED.replace(text) { m -> m.value.substringBefore(SO) }
+
         /** Префикс имени файла-картинки в основном контенте. */
         private const val IMG_FILENAME_PREFIX = "img_"
         /** Префикс анимированного стикера (.tgs) в основном контенте. */

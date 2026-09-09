@@ -277,6 +277,10 @@ class JoinChatActivity : SecureActivity() {
     }
 
     private suspend fun runConnect(invite: InviteCodec.Decoded) {
+        // Новая попытка входа — новая полоса. Без сброса повтор после ошибки начинался бы с
+        // достигнутого в прошлый раз процента (полоса не отматывается назад, см. progressReached),
+        // и человек увидел бы «уже почти готово» на первом же шаге.
+        progressReached = 0
         try {
             // 0. BT-чат по приглашению не присоединяется — он локальный (только рядом по BLE).
             if (invite.transportToken == BluetoothTransport.BT_TOKEN) {
@@ -284,18 +288,18 @@ class JoinChatActivity : SecureActivity() {
                 return
             }
             // 1. Дубликат
-            setProgress(getString(R.string.join_status_checking))
+            setProgress(getString(R.string.join_status_checking), P_CHECK)
             val existing = withContext(Dispatchers.IO) {
                 db.chatDao().getAll().find { it.chatId == invite.channelId }
             }
             if (existing != null) {
-                setProgress(getString(R.string.join_status_already))
+                setProgress(getString(R.string.join_status_already), 100)
                 openChat(existing.id)
                 return
             }
 
             // 2. Подключение к транспорту: DHT (token=="dht") или legacy Gist.
-            setProgress(getString(R.string.join_status_connecting))
+            setProgress(getString(R.string.join_status_connecting))   // неопределённая: Tor
             val isTor = invite.transportToken != NostrTransport.NOSTR_DIRECT_TOKEN
             // Ленивый старт Tor, если путь чата — через Tor.
             if (isTor) {
@@ -347,7 +351,7 @@ class JoinChatActivity : SecureActivity() {
                     )
                 }
 
-                setProgress(getString(R.string.join_status_verifying))
+                setProgress(getString(R.string.join_status_verifying), P_VERIFY)
                 var allData: AllChannelData? = null
                 var membersParsed: MembersSync.MembersFile? = null
                 var groupProfileParsed: GroupProfileSync.GroupProfile? = null
@@ -420,7 +424,8 @@ class JoinChatActivity : SecureActivity() {
                         membersParsed?.groupName?.isNotBlank() == true ||
                         membersParsed?.groupAvatarBase64?.isNotBlank() == true
                     if (groupInfoReady || attempt == JOIN_PROFILE_MAX_ATTEMPTS - 1) break
-                    setProgress(getString(R.string.join_status_loading_profile))
+                    setProgress(getString(R.string.join_status_loading_profile),
+                        stageProgress(P_VERIFY, P_PEER, attempt, JOIN_PROFILE_MAX_ATTEMPTS))
                     delay(JOIN_PROFILE_RETRY_DELAY_MS)
                 }
 
@@ -446,7 +451,7 @@ class JoinChatActivity : SecureActivity() {
                     }
                 }
 
-                setProgress(getString(R.string.join_status_saving))
+                setProgress(getString(R.string.join_status_saving), P_SAVE)
                 @Suppress("DEPRECATION")
                 val groupChat = Chat(
                     chatId = invite.channelId,
@@ -592,7 +597,7 @@ class JoinChatActivity : SecureActivity() {
                 // слот реально лежит на реле, и только потом открываем чат. Взаимность здесь
                 // требовать не с кого (в беседе нет одного собеседника), поэтому условие
                 // готовности одностороннее — но настоящее, а не «отправили и надеемся».
-                setProgress(getString(R.string.join_status_profile))
+                setProgress(getString(R.string.join_status_profile), P_PEER)
                 val liveSlots = awaitMySlotLive(
                     transport, invite.chatPassword, invite.channelId, myGroupProfile
                 )
@@ -625,9 +630,19 @@ class JoinChatActivity : SecureActivity() {
                         }
                     }
                 } else if (liveSlots == null) {
-                    // Не подтвердилось за отведённые круги — человека дольше не держим:
-                    // беседа уже создана, а публикацию добьёт персистентная очередь, которая
-                    // переживёт и закрытие экрана, и перезапуск приложения.
+                    // Готовность не подтвердилась за отведённые круги — входим всё равно.
+                    //
+                    // ⚠️ Здесь стояла плашка «Ещё не всё синхронизировалось» с выбором войти или
+                    // подождать. Убрана намеренно: выбора у человека по сути нет. Публикация уже
+                    // поставлена в персистентную очередь, которая переживает и закрытие экрана, и
+                    // перезапуск приложения, — то есть данные доедут в обоих случаях, и «подождать»
+                    // отличается от «войти» только тем, что человек ждёт снаружи чата вместо того,
+                    // чтобы ждать внутри. Вопрос, на который любой ответ ведёт к одному результату,
+                    // — это не выбор, а помеха.
+                    //
+                    // Само ожидание готовности при этом остаётся: мы по-прежнему пытаемся войти
+                    // только после того, как ростер подтвердил вход (см. awaitMySlotLive), просто
+                    // не превращаем неудачу этой попытки в вопрос.
                     PublishScheduler.markMyProfileDirty(applicationContext, invite.channelId)
                     if (isTor) TorSyncWatchdog.reportDeviation(
                         applicationContext, invite.channelId, "JoinChatActivity.awaitMySlotLive (беседа)",
@@ -642,7 +657,7 @@ class JoinChatActivity : SecureActivity() {
 
             // 3. Проверка "чат уже занят" — фетчим profiles.txt, если там 2+ профиля
             // и моего userId среди них нет, отказываем (чат рассчитан на двоих).
-            setProgress(getString(R.string.join_status_verifying))
+            setProgress(getString(R.string.join_status_verifying), P_VERIFY)
             var profilesMap: Map<String, Profile> = emptyMap()
             var partnerProfileFound: Profile? = null
             // Подтвердился ли взаимный обмен профилями (см. awaitProfileExchange). Нужен ниже,
@@ -676,7 +691,8 @@ class JoinChatActivity : SecureActivity() {
                 val ready = partnerProfileFound != null &&
                     partnerProfileFound!!.name.isNotBlank()
                 if (ready || attempt == JOIN_PROFILE_MAX_ATTEMPTS - 1) break
-                setProgress(getString(R.string.join_status_loading_profile))
+                setProgress(getString(R.string.join_status_loading_profile),
+                    stageProgress(P_VERIFY, P_PEER, attempt, JOIN_PROFILE_MAX_ATTEMPTS))
                 delay(JOIN_PROFILE_RETRY_DELAY_MS)
             }
             val alreadyInChat = profilesMap.containsKey(myUserId)
@@ -714,7 +730,7 @@ class JoinChatActivity : SecureActivity() {
                 // подтверждается ниже и по-прежнему обязателен, просто он больше не прячет от
                 // пользователя то, что и так известно. Показ — это информация, а не обещание;
                 // карточка обновится свежими данными, как только обмен подтвердится.
-                setProgress(getString(R.string.join_status_profile))
+                setProgress(getString(R.string.join_status_profile), P_PEER)
                 withContext(Dispatchers.Main) {
                     showFoundInfo(
                         name = partnerProfileFound!!.name,
@@ -749,15 +765,24 @@ class JoinChatActivity : SecureActivity() {
                     }
                     partnerProfileFound = shown
                 }
-                // Не подтвердилось — идём дальше молча: собеседник мог свернуть приложение.
-                // Чат создаётся, публикацию добьёт догон ниже (publishJoinProfileBurst) и
-                // персистентная очередь, а его ответная публикация придёт при первом же входе.
+                // Обмен не подтвердился — идём дальше. Ответной публикации собеседника нет и,
+                // пока он не откроет приложение, взяться ей неоткуда: подтверждать некому.
+                //
+                // ⚠️ Здесь (и в ветке «профиля собеседника нет вовсе») стояла плашка с выбором
+                // «войти всё равно / подождать». Убрана: мой профиль уже опубликован, собеседник
+                // прочитает его при первом же своём заходе, а догон (publishJoinProfileBurst
+                // ниже) и персистентная очередь доводят публикацию независимо от того, открыт
+                // этот экран или нет. Ждать снаружи чата было ровно так же бесполезно, как ждать
+                // внутри, — вопрос ничего не решал и только задерживал вход.
+                //
+                // exchangeConfirmed продолжает работать ниже: от него зависит, нужен ли догон
+                // публикации (см. publishJoinProfileBurst).
             }
 
             // 4. Локальная запись чата.
             //    partnerJoined=true сразу — раз мы джойнимся, в чате уже двое (я + создатель).
             //    Если найден partner profile в profilesMap — берём его имя/аватар.
-            setProgress(getString(R.string.join_status_saving))
+            setProgress(getString(R.string.join_status_saving), P_SAVE)
             val partnerProfile = profilesMap.values.firstOrNull { it.userId != myUserId }
             @Suppress("DEPRECATION")
             val chat = Chat(
@@ -848,23 +873,6 @@ class JoinChatActivity : SecureActivity() {
     }
 
     /**
-     * «Догон» публикации своего профиля после входа. Пере-публикуем свой слот profiles.txt
-     * [JOIN_PUBLISH_BURST_ROUNDS] раз на AppScope (переживает finish() join-экрана): по мере
-     * прогрева соединения слот расходится по большему числу реле, и все участники зачисляют
-     * вошедшего быстро (GroupRosterSync) — даже если он не открыл чат или коннект через Tor
-     * поднимается медленно. Это «впиши себя громко», но через уже доверенный механизм —
-     * СВОЙ подписанный профиль (userId↔pubkey неподделываемо), без «приказа обновиться»,
-     * который был бы новой поверхностью подделки/накрутки. Первая публикация — сразу.
-     *
-     * ⚡ Ускорение (запрос пользователя: «зачисляется правильно, но долго»): [pushMyProfile] —
-     * read-modify-write (сначала читает profiles.txt со всех реле, потом пишет), т.е. КАЖДЫЙ
-     * раунд сам по себе платит полный сетевой раунд-трип. [warmUp] заранее поднимает сокеты к
-     * реле ЭТОГО чата (идемпотентно, no-op если уже тёплые) — первая попытка (самая важная, идёт
-     * СРАЗУ) не платит ещё и за установку соединения поверх Tor-задержки. Пауза между раундами
-     * сокращена: раз каждый раунд и так занимает реальное сетевое время, незачем ждать
-     * ДОПОЛНИТЕЛЬНО поверх него — раунды идут почти встык, а не размазаны на ~9с простоя.
-     */
-    /**
      * Ждёт, пока МОЙ слот profiles.txt не станет читаемым с реле, и возвращает слоты ТОГО
      * САМОГО чтения, которое это подтвердило. Односторонняя проверка готовности — для бесед,
      * где взаимность требовать не с кого.
@@ -888,6 +896,21 @@ class JoinChatActivity : SecureActivity() {
      * первая короткая, потому что типичная задержка распространения — сотни миллисекунд, и
      * ждать секунду там незачем.
      *
+     * ⚠️ УСЛОВИЕ УСИЛЕНО (репорт: «в беседу пускает слишком рано»). Раньше выход происходил,
+     * как только с реле читался МОЙ слот, — то есть человек попадал в беседу раньше, чем она
+     * успевала его «понять»: состав и счётчик участников у него самого были неполными, а
+     * ростер применялся уже после открытия. Теперь ждём того, что человек и ожидает увидеть:
+     *
+     *   1) мой слот реально лежит на реле и несёт АКТУАЛЬНЫЕ имя/аватар;
+     *   2) чтение того же канала показывает ростер, где я активен и я не один —
+     *      то есть список пополнен и счётчик участников изменился.
+     *
+     * Только после этого вызывающий применяет ростер и открывает чат, и писать можно сразу.
+     *
+     * ⚠️ Честная граница: «у ВСЕХ» с этого устройства не наблюдаемо — чужие телефоны обновят
+     * счётчик, когда прочитают канал. Максимум, который вообще проверяем: мой слот доказанно
+     * лежит на реле, а это и есть предусловие того, что его прочитают остальные.
+     *
      * @return слоты подтверждающего чтения, либо null, если за отведённые круги слот так и не
      *         прочитался. Для транспорта без подписи событий (локальный/Bluetooth) отличить
      *         свой слот от чужого нечем — там засчитывается успешная запись (§17).
@@ -904,6 +927,12 @@ class JoinChatActivity : SecureActivity() {
         val myPubkey = transport.myWirePubkey
         var published = false
         for (attempt in 0 until JOIN_SELF_LIVE_ATTEMPTS) {
+            // Полоса ползёт по кругам: молчащий индикатор неотличим от зависания
+            // (репорт «этап делимся профилем зациклился»).
+            setProgress(
+                getString(R.string.join_status_profile),
+                stageProgress(P_PEER, P_READY, attempt, JOIN_SELF_LIVE_ATTEMPTS)
+            )
             if (!published) {
                 published = withContext(Dispatchers.IO) {
                     runCatching {
@@ -926,7 +955,21 @@ class JoinChatActivity : SecureActivity() {
                 }
                 // Сверяем СОДЕРЖИМОЕ, а не факт наличия слота: слот мог остаться от прошлого
                 // захода с другим ником или аватаром, и участники увидели бы устаревшего меня.
-                if (ProfileExchange.slotCarriesMyProfile(parsed, myUserId, myName, myAvatar)) return slots
+                if (ProfileExchange.slotCarriesMyProfile(parsed, myUserId, myName, myAvatar)) {
+                    // Мой слот на месте. Теперь — состав: собираем ростер из ВСЕХ слотов этого
+                    // же чтения и убеждаемся, что я в нём активен и я не один. Это и означает
+                    // «список пополнен, счётчик изменился»: чужие клиенты посчитают ровно этот
+                    // же союз слотов, когда прочитают канал.
+                    val roster = HashSet<String>()
+                    for (slot in slots) {
+                        val map = withContext(Dispatchers.IO) {
+                            runCatching { ProfileSync.parseProfiles(slot.content, password, chatId) }
+                                .getOrDefault(emptyMap())
+                        }
+                        for ((uid, prof) in map) if (!prof.left && !prof.deleted) roster.add(uid)
+                    }
+                    if (roster.contains(myUserId) && roster.size >= MIN_GROUP_ROSTER_ON_JOIN) return slots
+                }
             }
             if (attempt < JOIN_SELF_LIVE_ATTEMPTS - 1) {
                 delay(JOIN_SELF_LIVE_BACKOFF_MS[minOf(attempt, JOIN_SELF_LIVE_BACKOFF_MS.size - 1)])
@@ -979,6 +1022,12 @@ class JoinChatActivity : SecureActivity() {
         val myPubkey = transport.myWirePubkey
         var mineLive = false
         for (attempt in 0 until JOIN_EXCHANGE_ATTEMPTS) {
+            // То же, что в awaitMySlotLive: без движения застывший текст «делимся профилем»
+            // неотличим от зависания — ровно этот репорт и был.
+            setProgress(
+                getString(R.string.join_status_profile),
+                stageProgress(P_PEER, P_READY, attempt, JOIN_EXCHANGE_ATTEMPTS)
+            )
             // Пока мой слот не подтверждён чтением — публикуемся заново. Публикация в Nostr
             // требует кворума реле и падает заметно чаще чтения, поэтому настойчивость нужна
             // именно здесь, а не в ожидании ответа (см. NostrTransport.publishToAnyRelay).
@@ -1029,6 +1078,23 @@ class JoinChatActivity : SecureActivity() {
         return null
     }
 
+    /**
+     * «Догон» публикации своего профиля после входа. Пере-публикуем свой слот profiles.txt
+     * [JOIN_PUBLISH_BURST_ROUNDS] раз на AppScope (переживает finish() join-экрана): по мере
+     * прогрева соединения слот расходится по большему числу реле, и все участники зачисляют
+     * вошедшего быстро (GroupRosterSync) — даже если он не открыл чат или коннект через Tor
+     * поднимается медленно. Это «впиши себя громко», но через уже доверенный механизм —
+     * СВОЙ подписанный профиль (userId↔pubkey неподделываемо), без «приказа обновиться»,
+     * который был бы новой поверхностью подделки/накрутки. Первая публикация — сразу.
+     *
+     * ⚡ Ускорение (запрос пользователя: «зачисляется правильно, но долго»): [pushMyProfile] —
+     * read-modify-write (сначала читает profiles.txt со всех реле, потом пишет), т.е. КАЖДЫЙ
+     * раунд сам по себе платит полный сетевой раунд-трип. [warmUp] заранее поднимает сокеты к
+     * реле ЭТОГО чата (идемпотентно, no-op если уже тёплые) — первая попытка (самая важная, идёт
+     * СРАЗУ) не платит ещё и за установку соединения поверх Tor-задержки. Пауза между раундами
+     * сокращена: раз каждый раунд и так занимает реальное сетевое время, незачем ждать
+     * ДОПОЛНИТЕЛЬНО поверх него — раунды идут почти встык, а не размазаны на ~9с простоя.
+     */
     private fun publishJoinProfileBurst(
         chatIdForLog: String,
         isTor: Boolean,
@@ -1061,17 +1127,68 @@ class JoinChatActivity : SecureActivity() {
 
     // ═══ UI states ═══
 
-    private fun setProgress(text: String) {
+    /**
+     * Достигнутый процент полосы. Нужен, чтобы она НЕ ОТМАТЫВАЛАСЬ назад: этапы входа идут не
+     * строго по возрастанию (после ожидания профиля мы возвращаемся к «сохраняем», а групповая
+     * и личная ветки нумеруют круги независимо), и без этой защиты полоса дёргалась бы влево —
+     * ровно то ощущение сбоя, ради устранения которого счётчик кругов и появился.
+     */
+    private var progressReached = 0
+
+    /**
+     * Статус подключения + полоса.
+     *
+     * ⚠️ ПОЛОСА ВМЕСТО СЧЁТЧИКА «3/8» (просьба пользователя). Счётчик решал верную задачу —
+     * показать, что ожидание живо, — но решал её отчётом о внутренней механике: числа значили
+     * круги повторной публикации, о которых человеку знать незачем, и на разных этапах
+     * знаменатель менялся. Полоса говорит то же самое на языке пользователя.
+     *
+     * @param percent доля ВСЕГО входа, а не текущего этапа: иначе полоса обнулялась бы на
+     *   каждом переходе. null — этап, у которого число шагов заранее не известно (подъём Tor,
+     *   ожидание ответа реле): там показывается неопределённая полоса, потому что рисовать
+     *   проценты, которых никто не считал, — враньё.
+     */
+    private fun setProgress(text: String, percent: Int? = null) {
         state = UiState.LOADING
         binding.tvStatus.text = text
         binding.tvStatus.setTextColor(getColor(R.color.text_secondary))
         binding.tvStatus.visibility = View.VISIBLE
+        binding.pbJoin.visibility = View.VISIBLE
+        if (percent == null) {
+            binding.pbJoin.isIndeterminate = true
+        } else {
+            val target = maxOf(percent.coerceIn(0, 100), progressReached)
+            progressReached = target
+            if (binding.pbJoin.isIndeterminate) {
+                // Переход из неопределённого режима: анимировать не от чего, ставим сразу.
+                binding.pbJoin.isIndeterminate = false
+                binding.pbJoin.progress = target
+            } else {
+                binding.pbJoin.setProgress(target, true)
+            }
+        }
         setInteractive(false)
         binding.btnConnect.text = getString(R.string.join_btn_connecting)
     }
 
+    /**
+     * Доля всего входа для круга [attempt] (0-based) из [attempts] внутри этапа [from]..[to].
+     * Благодаря этому полоса ползёт и ВНУТРИ длинного ожидания, а не стоит и потом прыгает.
+     */
+    private fun stageProgress(from: Int, to: Int, attempt: Int, attempts: Int): Int =
+        from + (to - from) * (attempt + 1) / attempts.coerceAtLeast(1)
+
+    /** Прячет полосу и сбрасывает достигнутое — вход окончен (ошибкой или отменой). */
+    private fun hideProgressBar() {
+        progressReached = 0
+        binding.pbJoin.isIndeterminate = false
+        binding.pbJoin.progress = 0
+        binding.pbJoin.visibility = View.GONE
+    }
+
     private fun showError(text: String) {
         state = UiState.ERROR
+        hideProgressBar()
         binding.tvStatus.text = text
         binding.tvStatus.setTextColor(getColor(R.color.error))
         binding.tvStatus.visibility = View.VISIBLE
@@ -1097,6 +1214,7 @@ class JoinChatActivity : SecureActivity() {
 
     private fun clearStatus() {
         state = UiState.IDLE
+        hideProgressBar()
         binding.tvStatus.visibility = View.GONE
     }
 
@@ -1303,13 +1421,43 @@ class JoinChatActivity : SecureActivity() {
          * ожидание было плохо, в докстринге awaitProfileExchange.
          */
         /**
-         * Сколько кругов «опубликоваться и перечитать свой слот» ждать при входе в БЕСЕДУ
-         * (см. awaitMySlotLive). Меньше, чем у 1:1: там ждут ещё и ответной публикации
-         * собеседника, а здесь подтверждение зависит только от моей записи и приходит,
-         * как правило, с первого круга. Не подтвердилось за четыре — не держим человека
-         * на экране, беседа открывается, а публикацию добивает персистентная очередь.
+         * Границы этапов на общей полосе входа (см. setProgress/stageProgress). Проценты, а не
+         * доли: полоса одна на весь вход, поэтому этапы делят её между собой и каждый знает
+         * только свой отрезок. Числа подобраны по реальной длительности: ожидание профиля —
+         * самая долгая часть, ей отдана почти половина шкалы, а проверки в начале проскакивают
+         * за доли секунды и занимают узкую полоску.
+         *
+         * До ста не доводим НИГДЕ, кроме уже открытого чата: полная полоса рядом с ещё
+         * работающим экраном читается как «готово, но висит».
          */
-        const val JOIN_SELF_LIVE_ATTEMPTS = 4
+        const val P_CHECK  = 4    // дубликат чата
+        const val P_VERIFY = 26   // чат не занят / читаем members.txt
+        const val P_PEER   = 48   // профиль собеседника или беседы получен
+        const val P_READY  = 92   // готовность подтверждена (ростер / взаимный обмен)
+        const val P_SAVE   = 96   // локальная запись чата
+
+        /**
+         * Сколько активных участников должно быть видно в ростере, чтобы считать беседу
+         * готовой ко входу (см. awaitMySlotLive). Два — это «я и хотя бы ещё один»: ровно
+         * так проверяется, что список ПОПОЛНИЛСЯ мной, а не что я вижу один лишь свой слот.
+         * Меньше нельзя (единственный слот — это состояние «беседа меня ещё не поняла»),
+         * больше нельзя тоже: в беседе из двух человек порог 3 не выполнится никогда.
+         */
+        const val MIN_GROUP_ROSTER_ON_JOIN = 2
+
+        /**
+         * Сколько кругов «опубликоваться и перечитать канал» ждать при входе в БЕСЕДУ
+         * (см. awaitMySlotLive).
+         *
+         * ⚠️ Было 4 — под старое, слабое условие («мой слот прочитался»), которое сходилось
+         * с первого круга. Теперь ждём большего: ростер должен показать меня активным И не
+         * одиноким, а это зависит уже не только от моей записи, но и от того, как быстро
+         * чтение соберёт чужие слоты с реле. Четырёх кругов (≈3с) на это не хватало, и человек
+         * получал вопрос «войти всё равно?» там, где достаточно было подождать ещё секунду.
+         * Восемь кругов с растущими паузами — это ≈10с ожидания в худшем случае; дольше
+         * держать бессмысленно, дальше честнее спросить.
+         */
+        const val JOIN_SELF_LIVE_ATTEMPTS = 8
         /**
          * Растущие паузы между кругами подтверждения (см. awaitMySlotLive). Первая короткая:
          * типичная задержка распространения только что опубликованного слота по реле —

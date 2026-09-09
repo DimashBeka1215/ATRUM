@@ -268,19 +268,111 @@ class Prefs(private val context: Context) {
         val privB64 = prefs.getString(KEY_IDENTITY_PRIV, null)
         val pub = prefs.getString(KEY_IDENTITY_PUB, null)
         if (privB64 != null && pub != null) {
+            // Основное хранилище живо — заодно чиним резерв, если его ещё/уже нет.
+            mirrorIdentityToBackup(privB64, pub)
             return android.util.Base64.decode(privB64, android.util.Base64.NO_WRAP) to pub
         }
+
+        // ⚠️ ДО генерации нового ключа обязательно смотрим в резерв. Именно здесь раньше
+        // терялась личность: стоило основному файлу пересоздаться (см. openEncrypted), как
+        // пользователь молча получал НОВЫЙ ключ — с ним пропадают галочка, права и TOFU у всех
+        // собеседников, а починить это можно только правкой списка в коде и новой сборкой.
+        readIdentityBackup()?.let { (bPriv, bPub) ->
+            prefs.edit()
+                .putString(KEY_IDENTITY_PRIV, bPriv)
+                .putString(KEY_IDENTITY_PUB, bPub)
+                .apply()
+            return android.util.Base64.decode(bPriv, android.util.Base64.NO_WRAP) to bPub
+        }
+
         val (priv, pubKey) = CryptoHelper.generateIdentityKeyPair()
+        val newPrivB64 = android.util.Base64.encodeToString(priv, android.util.Base64.NO_WRAP)
         prefs.edit()
-            .putString(KEY_IDENTITY_PRIV, android.util.Base64.encodeToString(priv, android.util.Base64.NO_WRAP))
+            .putString(KEY_IDENTITY_PRIV, newPrivB64)
             .putString(KEY_IDENTITY_PUB, pubKey)
             .apply()
+        mirrorIdentityToBackup(newPrivB64, pubKey)
         return priv to pubKey
+    }
+
+    /**
+     * Заменяет identity-ключ устройства на переданный (восстановление из резервной копии
+     * владельца). Пишет в ОБА хранилища, чтобы восстановленный ключ пережил тот же класс
+     * сбоев, что и обычный. [privB64]/[pubB64] — сырой Ed25519 в Base64 NO_WRAP, ровно в том
+     * формате, что отдаёт CryptoHelper.generateIdentityKeyPair.
+     */
+    fun replaceIdentity(privB64: String, pubB64: String) {
+        prefs.edit()
+            .putString(KEY_IDENTITY_PRIV, privB64)
+            .putString(KEY_IDENTITY_PUB, pubB64)
+            .apply()
+        mirrorIdentityToBackup(privB64, pubB64)
+    }
+
+    /** Резервное хранилище identity-ключа (см. [IDENTITY_BACKUP_FILE]); null — недоступно. */
+    private val identityBackupPrefs: SharedPreferences? by lazy {
+        openEncrypted(context, IDENTITY_BACKUP_FILE, IDENTITY_BACKUP_ALIAS, wipeOnCorruption = false)
+    }
+
+    /** Пишет ключ в резерв, если там пусто или лежит другое значение. Молча, best-effort. */
+    private fun mirrorIdentityToBackup(privB64: String, pubB64: String) {
+        val bp = identityBackupPrefs ?: return
+        if (bp.getString(KEY_IDENTITY_PRIV, null) == privB64) return
+        runCatching {
+            bp.edit()
+                .putString(KEY_IDENTITY_PRIV, privB64)
+                .putString(KEY_IDENTITY_PUB, pubB64)
+                .apply()
+        }
+    }
+
+    /** Пара (priv, pub) из резерва или null, если резерва нет/он неполон. */
+    private fun readIdentityBackup(): Pair<String, String>? {
+        val bp = identityBackupPrefs ?: return null
+        val p = bp.getString(KEY_IDENTITY_PRIV, null) ?: return null
+        val u = bp.getString(KEY_IDENTITY_PUB, null) ?: return null
+        return if (p.isNotBlank() && u.isNotBlank()) p to u else null
     }
 
     /** Публичный identity-ключ этого устройства (base64). */
     val myIdentityPubKey: String
         get() = getOrCreateIdentity().second
+
+    /**
+     * Identity-ключи, отзыв которых мы уже видели и проверили. Только пополняется:
+     * отзыв необратим намеренно (см. [RevokedKeys]).
+     */
+    var revokedIdentityKeys: Set<String>
+        get() = prefs.getStringSet(KEY_REVOKED_KEYS, emptySet()) ?: emptySet()
+        set(v) = prefs.edit().putStringSet(KEY_REVOKED_KEYS, v).apply()
+
+    /**
+     * Подпись отзыва МОЕГО ключа, если я его отозвал. Прикладывается к каждой публикации
+     * профиля, чтобы отзыв доехал до всех бесед сам, без отдельного канала.
+     */
+    var myRevocationSig: String?
+        get() = prefs.getString(KEY_MY_REVOCATION, null)
+        set(v) = prefs.edit().putString(KEY_MY_REVOCATION, v).apply()
+
+    /** Ключ, к которому относится [myRevocationSig]. Хранится отдельно: после отзыва
+     *  собственный identity-ключ уже другой, и по нему подпись не проверить. */
+    var myRevokedKey: String?
+        get() = prefs.getString(KEY_MY_REVOKED_KEY, null)
+        set(v) = prefs.edit().putString(KEY_MY_REVOKED_KEY, v).apply()
+
+    /** Копия ключа владельца уже уехала в облако — больше не предлагаем. */
+    var ownerCloudSaved: Boolean
+        get() = prefs.getBoolean(KEY_OWNER_CLOUD_SAVED, false)
+        set(v) = prefs.edit().putBoolean(KEY_OWNER_CLOUD_SAVED, v).apply()
+
+    /**
+     * Пользователь отказался сохранять копию. Хранится, чтобы не спрашивать каждый запуск.
+     * На путь ВОССТАНОВЛЕНИЯ не влияет: тот отказ живёт только до перезапуска (OwnerCloud),
+     * иначе один случайный тап навсегда закрыл бы единственную дорогу к правам.
+     */
+    var ownerCloudDeclined: Boolean
+        get() = prefs.getBoolean(KEY_OWNER_CLOUD_DECLINED, false)
+        set(v) = prefs.edit().putBoolean(KEY_OWNER_CLOUD_DECLINED, v).apply()
 
     /** TOFU: запомненный identity-ключ партнёра для чата (обнаружение подмены). */
     fun getKnownPartnerIdentity(chatId: String): String? =
@@ -924,9 +1016,13 @@ class Prefs(private val context: Context) {
      * Стиль интерфейса чата: "classic" | "glass".
      * "glass" = Atmospheric Glass UI (прозрачный, требует обоев).
      * "classic" = стандартная тёмная тема.
+     *
+     * Дефолт (когда значение ни разу явно не сохранялось) зависит от типа сборки —
+     * см. [defaultChatUiStyle]. Если пользователь хоть раз явно переключал стиль
+     * (в т.ч. на debug-сборке), сохранённое значение имеет приоритет и не переопределяется.
      */
     var chatUiStyle: String
-        get() = prefs.getString(KEY_CHAT_UI_STYLE, CHAT_UI_CLASSIC) ?: CHAT_UI_CLASSIC
+        get() = prefs.getString(KEY_CHAT_UI_STYLE, defaultChatUiStyle) ?: defaultChatUiStyle
         set(v) = prefs.edit().putString(KEY_CHAT_UI_STYLE, v).apply()
 
     /**
@@ -989,6 +1085,32 @@ class Prefs(private val context: Context) {
         private const val FILE_NAME = "github_chat_secure_prefs_v2"
         /** Резервный файл для userId — plain, не зашифрован. */
         private const val STABLE_FILE = "github_chat_stable_ids"
+
+        /**
+         * ВТОРОЕ хранилище identity-ключа — отдельный файл со СВОИМ мастер-ключом Keystore.
+         *
+         * Зачем (репорт: «ключ постоянно слетает, галочка и права пропадают»): identity-ключ
+         * лежал ровно в одном месте — [FILE_NAME]. Любая ошибка его открытия приводила к
+         * `deleteFile(FILE_NAME)` (см. [createEncryptedPrefs]), то есть к потере ключа: дальше
+         * [getOrCreateIdentity] молча генерировал НОВЫЙ. А ключ — это и галочка, и права, и
+         * TOFU-личность для собеседников, поэтому его потеря видна всем и лечится только
+         * правкой захардкоженного списка в коде.
+         *
+         * Теперь ключ зеркалируется во второй файл с ДРУГИМ алиасом мастер-ключа, и
+         * [getOrCreateIdentity] генерирует новый только если пусты ОБА. Порча одного файла
+         * (частый случай) больше личность не убивает.
+         *
+         * ⚠️ Граница честности: полный сброс Keystore (сброс устройства, смена подписи,
+         * переустановка) убивает оба файла сразу — от этого спасает только резервная копия
+         * ключа, которую делает сам пользователь. Здесь лечится порча/транзиентный сбой.
+         */
+        private const val IDENTITY_BACKUP_FILE  = "atrum_identity_backup_v1"
+        private const val IDENTITY_BACKUP_ALIAS = "atrum_identity_backup_master_key"
+
+        /** Попыток открыть шифрованное хранилище до вывода «файл повреждён». */
+        private const val PREFS_OPEN_ATTEMPTS = 3
+        /** Пауза между попытками — Keystore после старта/обновления ОС бывает занят. */
+        private const val PREFS_OPEN_RETRY_MS = 150L
         private const val KEY_USER_ID = "user_id"
         private const val KEY_NAME = "name"
         private const val KEY_TAG = "tag"
@@ -1019,6 +1141,11 @@ class Prefs(private val context: Context) {
         private const val KEY_PIN_LOCK_UNTIL = "pin_lockout_until"
         private const val KEY_IDENTITY_PRIV = "identity_priv"
         private const val KEY_IDENTITY_PUB = "identity_pub"
+        private const val KEY_OWNER_CLOUD_SAVED = "owner_cloud_saved"
+        private const val KEY_OWNER_CLOUD_DECLINED = "owner_cloud_declined"
+        private const val KEY_REVOKED_KEYS = "revoked_identity_keys"
+        private const val KEY_MY_REVOCATION = "my_revocation_sig"
+        private const val KEY_MY_REVOKED_KEY = "my_revoked_key"
         private const val KEY_DEFAULT_TOKEN = "default_gist_token"
         private const val KEY_NAME_HISTORY = "name_history"
         private const val KEY_EULA_ACCEPTED = "eula_accepted"
@@ -1045,6 +1172,12 @@ class Prefs(private val context: Context) {
         const val CHAT_UI_CLASSIC = "classic"
         const val CHAT_UI_GLASS   = "glass"
 
+        /** Дефолт chatUiStyle, когда значение ещё ни разу не сохранялось: в debug-сборке —
+         *  Atmospheric Glass (удобно сразу видеть новый UI при разработке/тестировании),
+         *  в release — обычная классика, как и раньше. */
+        private val defaultChatUiStyle: String
+            get() = if (BuildConfig.DEBUG) CHAT_UI_GLASS else CHAT_UI_CLASSIC
+
         /**
          * Создаёт EncryptedSharedPreferences. Если файл повреждён (например после
          * сброса KeyStore) — удаляем и пересоздаём вместо тихого downgrade к plaintext.
@@ -1053,32 +1186,66 @@ class Prefs(private val context: Context) {
          * Текущее поведение: wipe + recreate. При повторной ошибке — RuntimeException:
          * приложение должно упасть, а не работать без шифрования.
          */
-        private fun createEncryptedPrefs(context: Context): SharedPreferences {
+        private fun createEncryptedPrefs(context: Context): SharedPreferences =
+            // wipeOnCorruption = true → ветка пересоздания всегда возвращает не-null.
+            openEncrypted(context, FILE_NAME, alias = null, wipeOnCorruption = true)!!
+
+        /**
+         * Открывает EncryptedSharedPreferences [fileName] (мастер-ключ по умолчанию, если
+         * [alias] == null).
+         *
+         * ⚠️ ПОЧЕМУ НЕ «упало → удалить»: прежняя версия при ЛЮБОМ исключении сразу делала
+         * `deleteFile` и пересоздавала файл. Но исключение здесь означает две принципиально
+         * разные вещи: файл действительно повреждён — или Keystore недоступен ВРЕМЕННО
+         * (первые мгновения после старта, после обновления ОС, при занятом StrongBox). Во
+         * втором случае удаление стирало полностью исправные секреты, включая identity-ключ.
+         * Теперь сначала [PREFS_OPEN_ATTEMPTS] попыток с паузой, и лишь потом — пересоздание.
+         *
+         * Пересоздание разрешено только при [wipeOnCorruption]: для резервного хранилища
+         * identity-ключа оно запрещено — там лучше вернуть null (резерва нет), чем стереть
+         * последнюю копию ключа.
+         */
+        private fun openEncrypted(
+            context: Context,
+            fileName: String,
+            alias: String?,
+            wipeOnCorruption: Boolean
+        ): SharedPreferences? {
             fun build(): SharedPreferences {
-                val masterKey = MasterKey.Builder(context)
+                val masterKey = (if (alias == null) MasterKey.Builder(context)
+                                 else MasterKey.Builder(context, alias))
                     .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                     .build()
                 return EncryptedSharedPreferences.create(
                     context,
-                    FILE_NAME,
+                    fileName,
                     masterKey,
                     EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
                 )
             }
 
+            repeat(PREFS_OPEN_ATTEMPTS) { attempt ->
+                try {
+                    return build()
+                } catch (_: Exception) {
+                    if (attempt < PREFS_OPEN_ATTEMPTS - 1) {
+                        try { Thread.sleep(PREFS_OPEN_RETRY_MS) } catch (_: InterruptedException) {}
+                    }
+                }
+            }
+
+            if (!wipeOnCorruption) return null
+
+            // Ретраи исчерпаны — считаем файл повреждённым. Пересоздаём: без этого приложение
+            // не запустится вовсе. identity-ключ при этом не теряется безвозвратно — он
+            // зеркалируется в [IDENTITY_BACKUP_FILE] и восстанавливается в getOrCreateIdentity.
             return try {
+                context.deleteFile(fileName)
                 build()
             } catch (_: Exception) {
-                // Файл повреждён или KeyStore недоступен — чистим и пробуем ещё раз.
-                // Данные теряются, но это безопаснее, чем хранить секреты без шифрования.
-                try {
-                    context.deleteFile(FILE_NAME)
-                    build()
-                } catch (_: Exception) {
-                    // Последний шанс — незашифрованные SharedPreferences (не должно доходить).
-                    context.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
-                }
+                // Последний шанс — незашифрованные SharedPreferences (не должно доходить).
+                context.getSharedPreferences(fileName, Context.MODE_PRIVATE)
             }
         }
     }

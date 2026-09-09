@@ -10,7 +10,9 @@ import androidx.appcompat.app.AppCompatActivity
 /**
  * Базовый класс для защищённых экранов приложения.
  *
- *  - FLAG_SECURE: запрет скриншотов и превью в списке недавних приложений.
+ *  - FLAG_SECURE: запрет скриншотов и превью в списке недавних приложений — но ТОЛЬКО на
+ *    экранах самой переписки ([chatContentScreen]), остальные экраны скриншотить можно
+ *    (по запросу пользователя: «разреши скрины везде кроме самих переписок»).
  *  - Повторная блокировка: при возврате из фона, если приложение было заблокировано
  *    (AppLock.locked) и задан PIN — показываем LockActivity заново.
  */
@@ -19,11 +21,20 @@ abstract class SecureActivity : AppCompatActivity() {
     /** Должен ли этот экран повторно блокироваться. LockActivity переопределяет в false. */
     protected open val lockProtected: Boolean = true
 
+    /**
+     * Экран показывает контент самой переписки (сообщения чата, полноэкранный просмотр
+     * фото/голосовых из чата, галерея медиа чата) — скриншоты здесь запрещены ВСЕГДА, если
+     * тестер явно не снял блокировку в настройках. Остальные экраны (списки чатов, профиль,
+     * настройки и т.п.) по умолчанию скриншотить можно. Переопределяется в ChatActivity,
+     * ImageViewActivity, MediaListActivity.
+     */
+    protected open val chatContentScreen: Boolean = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Защита от скриншотов и превью в «Недавних» — включена по умолчанию,
-        // если тестер не разрешил обратное в настройках.
-        if (!Prefs(this).isScreenshotsAllowed) {
+        // Скриншоты запрещены только на экранах самой переписки — везде остальное разрешено.
+        // Тестер может снять блокировку и с переписки в настройках (напр. для промо-скриншотов).
+        if (chatContentScreen && !Prefs(this).isScreenshotsAllowed) {
             window.setFlags(
                 WindowManager.LayoutParams.FLAG_SECURE,
                 WindowManager.LayoutParams.FLAG_SECURE

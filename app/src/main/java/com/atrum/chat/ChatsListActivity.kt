@@ -41,7 +41,10 @@ class ChatsListActivity : SecureActivity() {
     private val adapter = ChatsAdapter(
         onClick = { chat -> openChat(chat) },
         onLongClick = { chat -> showChatMenu(chat) },
-        onMentionsClick = { chat -> openMentions(chat) }
+        onMentionsClick = { chat -> openMentions(chat) },
+        isBluetoothChat = { chat ->
+            prefs.getChatToken(chat.chatId) == com.atrum.chat.transport.BluetoothTransport.BT_TOKEN
+        }
     )
 
     /** Экран упоминаний беседы — вход по тапу на бейдж «@N» (мокап одобрен). */
@@ -204,6 +207,10 @@ class ChatsListActivity : SecureActivity() {
     override fun onResume() {
         super.onResume()
         RootWarning.maybeShow(this)
+        // Ключ владельца: предложить достать копию из облака (ключ не опознан) либо положить
+        // её туда (ключ опознан, а копии ещё нет). В публичной сборке это заглушка из
+        // src/release — она ничего не делает и не тянет за собой ни строчки Google-кода.
+        OwnerCloud.maybePrompt(this)
         maybeShowCoach()
         triggerRelayRefresh()
         // Заранее поднимаем Tor и прогреваем соединения с реле, ПОКА пользователь в списке:
@@ -828,6 +835,40 @@ class ChatsListActivity : SecureActivity() {
         // Тяжёлая часть (расшифровка слотов, проверки подписи) не задерживает бейдж выше и,
         // благодаря параллельному обходу чатов, не тормозит другие чаты (§16, ADR-001).
         if (chat.isGroup) {
+            // ── Отзыв/возврат создателя (revoke.txt) ───────────────────────────────
+            //
+            // ⚠️ Репорт: «окно отзыва прав появляется только после перезахода». Причина была в
+            // том, что revoke.txt читал ТОЛЬКО открытый экран беседы. Человек, сидящий в списке
+            // чатов, о потере или возврате прав не узнавал вовсе — ни состав прав у него не
+            // менялся, ни владелец беседы, — пока он сам не откроет чат.
+            //
+            // Строго ПЕРЕД MembersSync: тот отвергает ростер, опубликованный отозванным
+            // создателем (см. applyIncoming), и для этого обязан уже знать про отзыв. В
+            // обратном порядке успел бы примениться ростер того, кого только что отозвали.
+            //
+            // По времени (не на каждом тике): revoke.txt — отдельный сетевой запрос, а не часть
+            // общего loadAll(), и дёргать его в каждом опросе всех бесед незачем — отзыв
+            // случается раз в жизни беседы. Раз в REVOKE_LIST_CHECK_MS достаточно, чтобы
+            // человек узнал о смене прав, не открывая чат.
+            val nowMs = System.currentTimeMillis()
+            val lastRevokeMs = revokeCheckedAtMs[chat.chatId]
+            if (lastRevokeMs == null || nowMs - lastRevokeMs >= REVOKE_LIST_CHECK_MS) {
+                revokeCheckedAtMs[chat.chatId] = nowMs
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val rawBlob = api.loadRevokes().trim()
+                        if (rawBlob.isNotEmpty()) {
+                            val plain = CryptoHelper.decrypt(rawBlob, chatPassword, chat.chatId)
+                            if (plain != null) {
+                                RevokeSync.applyRevokes(
+                                    chat, plain, db.chatDao(), db.chatParticipantDao(), prefs
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             withContext(Dispatchers.IO) {
                 runCatching {
                     GroupProfileSync.applyIncoming(
@@ -1258,7 +1299,23 @@ class ChatsListActivity : SecureActivity() {
         }
     }
 
+    /**
+     * Когда по каждой беседе последний раз читался revoke.txt. Поле экрана, а не глобальное
+     * состояние: при новом заходе в список честно перечитываем — отзыв мог случиться, пока
+     * приложение было закрыто.
+     */
+    private val revokeCheckedAtMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     companion object {
+        /**
+         * Как часто список чатов перечитывает revoke.txt по каждой беседе. Это ОТДЕЛЬНЫЙ сетевой
+         * запрос (в общий loadAll он не входит), а отзыв создателя — событие раз в жизни беседы,
+         * поэтому чаще незачем. Открытая беседа читает его гораздо чаще и по пушу (см.
+         * ChatActivity.syncRevokes) — здесь нужен лишь фон, чтобы человек узнал о смене прав,
+         * не заходя в чат.
+         */
+        private const val REVOKE_LIST_CHECK_MS = 20_000L
+
         /** Степпер срока действия group-инвайта (dialog_invite_pin.xml): 1..24 часа шагом в час. */
         private const val TTL_STEP_DEFAULT = 24
         /** Значение шага, обозначающее "без ограничений" (см. shareInvite). */

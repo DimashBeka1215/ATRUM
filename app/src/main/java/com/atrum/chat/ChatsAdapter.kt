@@ -26,7 +26,14 @@ class ChatsAdapter(
     private val onLongClick: (Chat) -> Unit,
     /** Тап по бейджу «@N» — открыть экран упоминаний беседы (см. MentionsActivity).
      *  null → бейдж некликабельный, поведение как раньше. */
-    private val onMentionsClick: ((Chat) -> Unit)? = null
+    private val onMentionsClick: ((Chat) -> Unit)? = null,
+    /**
+     * Является ли чат Bluetooth-чатом (мокап одобрен, вариант "значок рядом с именем").
+     * Транспорт хранится не в Chat (Room), а в EncryptedSharedPreferences
+     * (Prefs.getChatToken == BluetoothTransport.BT_TOKEN) — поэтому лямбда, а не поле Chat.
+     * Дефолт { false }, чтобы не трогать другие места создания адаптера.
+     */
+    private val isBluetoothChat: (Chat) -> Boolean = { false }
 ) : RecyclerView.Adapter<ChatsAdapter.VH>() {
 
     private val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
@@ -96,7 +103,7 @@ class ChatsAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val chat = chats[position]
-        holder.bind(chat, formatTime(chat.lastTimeMs), searchQuery, onMentionsClick)
+        holder.bind(chat, formatTime(chat.lastTimeMs), searchQuery, onMentionsClick, isBluetoothChat(chat))
         holder.itemView.setOnClickListener { onClick(chat) }
         holder.itemView.setOnLongClickListener {
             onLongClick(chat); true
@@ -127,6 +134,7 @@ class ChatsAdapter(
         private val mentionBadge: TextView = itemView.findViewById(R.id.tv_mention_badge)
         private val pinIcon: View = itemView.findViewById(R.id.iv_pin)
         private val verifiedBadge: VerifiedBadgeView = itemView.findViewById(R.id.verified_badge_list)
+        private val btBadge: ImageView = itemView.findViewById(R.id.iv_bt_badge)
 
         /**
          * ⚠️ [onMentionsClick] приходит ПАРАМЕТРОМ, а не читается из адаптера напрямую:
@@ -137,13 +145,16 @@ class ChatsAdapter(
             chat: Chat,
             formattedTime: String,
             query: String = "",
-            onMentionsClick: ((Chat) -> Unit)? = null
+            onMentionsClick: ((Chat) -> Unit)? = null,
+            isBluetoothChat: Boolean = false
         ) {
             time.text = formattedTime
             pinIcon.visibility = if (chat.isPinned) View.VISIBLE else View.GONE
             // Галочка верификации у ника собеседника (только 1:1; partnerVerified считается
             // криптографически фоновым опросом, см. VerifiedBadge). Групп/избранного не касается.
             verifiedBadge.setVerified(chat.partnerVerified, animate = false)
+            // Значок Bluetooth-чата рядом с именем (мокап одобрен пользователем).
+            btBadge.visibility = if (isBluetoothChat) View.VISIBLE else View.GONE
 
             if (chat.isSystemNotifications) {
                 // Системный чат «Уведомления» (SystemNotifications, мокап одобрен):

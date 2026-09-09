@@ -46,6 +46,20 @@
     <color name="chat_input_pill">#CCFFFFFF</color>       <!-- 80% белый -->
     <color name="chat_msg_other_wp">#D9E5E5EA</color>     <!-- чужой пузырёк с обоями -->
 
+    <!-- ═══ Atmospheric Glass (режим «атмосферное стекло») ═══
+         Значения ОДИНАКОВЫ в values/ и values-night/ намеренно, и это не нарушение §4/§5:
+         стекло существует ТОЛЬКО поверх обоев (см. §0 — glass-режим всегда рисуется на фото),
+         то есть подложка не зависит от темы приложения. Токены заведены ровно затем, чтобы
+         hex не расползался по drawable-файлам и правился в одном месте.
+         Слои материала названы по документации Apple: highlight / shadow / illumination. -->
+    <color name="glass_fill">#1AFFFFFF</color>            <!-- заливка стекла, 10% белого -->
+    <color name="glass_tint">#33000000</color>            <!-- затемняющая подложка капсулы -->
+    <color name="glass_stroke">#29FFFFFF</color>          <!-- контур по краю стекла -->
+    <color name="glass_rim_light">#66FFFFFF</color>       <!-- верхняя кромка: свет (lensing) -->
+    <color name="glass_rim_dark">#26000000</color>        <!-- нижняя кромка: тень (глубина) -->
+    <color name="glass_specular">#1FFFFFFF</color>        <!-- «дышащий» блик (highlight) -->
+    <color name="glass_illumination">#8CC77DFF</color>    <!-- свечение из точки касания -->
+
     <!-- Стикеры -->
     <color name="sticker_onboarding_overlay">#CC000000</color>
 

@@ -28,7 +28,8 @@ data class Profile(
     val lastReadIndex: Int = 0,
     /**
      * Unix-мс последнего нажатия клавиши. Не равно нулю пока пользователь печатает.
-     * Считается «живым» если now - typingTs < TYPING_EXPIRY_MS (8 сек).
+     * ⚠️ Живость решает НЕ сравнение с моими часами, а [Presence.isTyping]: штамп снят часами
+     * отправителя, и при их расхождении надпись либо не загоралась, либо не гасла.
      * Никогда не хранится дольше сессии — при выходе из чата обнуляется.
      */
     val typingTs: Long = 0L,
@@ -37,12 +38,12 @@ data class Profile(
      * Обновляется каждые 5 сек пока приложение на переднем плане.
      * При уходе в фон немедленно обнуляется → собеседник видит «не в сети»
      * уже через один цикл опроса (~1.5 сек).
-     * Считается «живым» если now - onlineTs < ONLINE_EXPIRY_MS (10 сек).
+     * ⚠️ Живость решает [Presence.isOnline], а не сравнение с моими часами — см. там же, почему.
      */
     val onlineTs: Long = 0L,
     /**
      * Unix-мс последнего сигнала «записываю голосовое». Считается «живым», если
-     * now - recordingTs < RECORDING_EXPIRY_MS. Обнуляется по окончании записи.
+     * [Presence.isRecording] (не сравнением с моими часами). Обнуляется по окончании записи.
      */
     val recordingTs: Long = 0L,
     /**
@@ -95,6 +96,24 @@ data class Profile(
      */
     val identitySig: String? = null,
     /**
+     * Base64 Ed25519 подпись ОТЗЫВА собственного identity-ключа (см. [VerifiedBadge.revokeSigData]).
+     *
+     * Появляется, только если владелец ключа его отозвал. Едет в профиле, потому что это
+     * единственный канал, который и так доходит до всех участников бесед, — заводить ради
+     * отзыва отдельный транспорт незачем. Получатель проверяет подпись ТЕМ ЖЕ ключом и гасит
+     * его у себя навсегда (см. [RevokedKeys]). Аддитивно: старые клиенты поле игнорируют (§17).
+     */
+    val revocationSig: String? = null,
+    /**
+     * Base64 публичного ключа, который отзывается [revocationSig].
+     *
+     * ⚠️ ОБЯЗАТЕЛЬНО отдельным полем, а не «тем же, что [identityPubKey]». Владелец, отозвав
+     * ключ, тут же переходит на НОВЫЙ — и профиль дальше публикуется уже с новым
+     * identityPubKey. Если проверять подпись против него, отзыв не сойдётся никогда и не
+     * доедет ни до кого. Поэтому отзыв везёт с собой тот ключ, к которому относится.
+     */
+    val revokedKey: String? = null,
+    /**
      * Base64 identity-ключа партнёра, который ЭТОТ пользователь лично подтвердил
      * (сверил SAS/QR). Партнёр читает поле и, если оно равно его собственному
      * identity-ключу, понимает, что его подтвердили → взаимная проверка.
@@ -130,6 +149,18 @@ data class Profile(
      */
     val pv: Int = 0
 ) {
+    /**
+     * Хэндл для подстановки в @упоминание (см. Message.renderMentions). ⚠️ ОБЯЗАН совпадать
+     * по приоритету с ChatActivity.insertMention («тег, если есть, иначе имя») — иначе
+     * renderMentions при обновлении ника подставляет ИМЯ туда, где изначально был ТЕГ, и
+     * если тег отличается от имени (например тег «Себастьян_Михаелис», а имя — «Себастьян»),
+     * упоминание визуально обрубается до имени, теряя всё, что было в теге после совпавшей
+     * части (репорт: «нижнее подчёркивание не вставляется, тегом считается только первая
+     * половина»). Тег хранится с ведущей собакой («@seba2») — убираем её здесь же.
+     */
+    fun mentionHandle(): String? =
+        tag?.removePrefix("@")?.takeIf { it.isNotBlank() } ?: name.takeIf { it.isNotBlank() }
+
     fun toJsonObject(): JSONObject = JSONObject().apply {
         put("name", name)
         if (tag != null) put("tag", tag)
@@ -145,6 +176,8 @@ data class Profile(
         if (identityPubKey != null) put("idk", identityPubKey)
         if (ephemeralSig != null) put("esig", ephemeralSig)
         if (identitySig != null) put("isig", identitySig)
+        if (revocationSig != null) put("rsig", revocationSig)
+        if (revokedKey != null) put("rvk", revokedKey)
         if (verifiedPartnerIdk != null) put("vpk", verifiedPartnerIdk)
         if (status != null) put("status", status)
         if (contentSig != null) put("csig", contentSig)
@@ -173,6 +206,8 @@ data class Profile(
                 identityPubKey = json.optString("idk", "").takeIf { it.isNotBlank() },
                 ephemeralSig = json.optString("esig", "").takeIf { it.isNotBlank() },
                 identitySig = json.optString("isig", "").takeIf { it.isNotBlank() },
+                revocationSig = json.optString("rsig", "").takeIf { it.isNotBlank() },
+                revokedKey = json.optString("rvk", "").takeIf { it.isNotBlank() },
                 verifiedPartnerIdk = json.optString("vpk", "").takeIf { it.isNotBlank() },
                 status = json.optString("status", null)?.takeIf { it.isNotBlank() },
                 contentSig = json.optString("csig", "").takeIf { it.isNotBlank() },

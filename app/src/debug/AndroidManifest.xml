@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Манифест ТОЛЬКО личной сборки: сливается с основным при build-типе debug.
+  Здесь объявлены экраны владельца — в публичный APK они не попадают, как и зависимость
+  на Play Services (см. debugImplementation в build.gradle.kts).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <activity
+            android:name=".OwnerCloudActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AtrumChat.Invisible" />
+
+        <!--
+          exported=true нужно из-за intent-filter: иначе файловый менеджер не сможет открыть
+          .atr в приложении. Цена — чужое приложение может поднять этот экран. Это терпимо:
+          экран сам по себе ничего не отдаёт, показ ключа выводит только ПУБЛИЧНУЮ половину,
+          а копия и отзыв требуют пароля и подтверждения от человека. Плюс всё это существует
+          только в личной сборке.
+
+          ⚠️ pathPattern работает по расширению В ПУТИ, а многие менеджеры отдают content-URI
+          без имени файла — тогда пункт «Восстановить из файла» внутри приложения остаётся
+          единственным надёжным путём. Это ожидаемо, а не поломка.
+        -->
+        <activity
+            android:name=".OwnerActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:host="*"
+                    android:mimeType="*/*" android:pathPattern=".*\\.atr" />
+                <data android:scheme="file" android:host="*"
+                    android:mimeType="*/*" android:pathPattern=".*\\.atr" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

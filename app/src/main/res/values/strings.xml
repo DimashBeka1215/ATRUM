@@ -933,6 +933,7 @@
     <string name="bt_peer_connecting">%1$s подключается…</string>
     <string name="bt_peer_ready">%1$s готов — можно создавать чат</string>
     <string name="bt_failed">Не удалось подключиться по Bluetooth</string>
+    <string name="bt_invite_failed">Не удалось передать приглашение собеседнику — проверьте связь и попробуйте создать чат снова</string>
     <string name="bt_perm_needed">Нужны разрешения Bluetooth</string>
     <string name="voice_load_failed_fmt">Голосовое не загрузилось: %1$s</string>
     <string name="voice_load_failed">Не удалось загрузить голосовое. Попробуйте ещё раз</string>
@@ -1090,6 +1091,7 @@
     <string name="gallery_add_cd">Добавить ещё</string>
     <string name="gallery_perm_needed">Разрешите доступ к фото, чтобы выбрать изображения</string>
     <string name="verified_badge_cd">Верифицирован</string>
+    <string name="bt_chat_badge_cd">Bluetooth-чат</string>
     <string name="msg_auth_verified_cd">Подлинность подтверждена</string>
     <string name="msg_auth_forged">Возможно подделка — немедленно прекратите переписку</string>
     <string name="identity_copied">Identity-ключ скопирован в буфер</string>

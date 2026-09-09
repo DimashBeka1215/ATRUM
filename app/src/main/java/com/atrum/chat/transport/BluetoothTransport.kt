@@ -2,6 +2,7 @@ package com.atrum.chat.transport
 
 import android.content.Context
 import com.atrum.chat.BleManager
+import kotlinx.coroutines.delay
 import java.io.File
 
 /**
@@ -65,6 +66,24 @@ class BluetoothTransport(
         onNewCb?.invoke()
     }
 
+    /** Собеседник отредактировал сообщение (BT_AUDIT.md 1.3) — заменяем строку у себя. */
+    override fun onEdit(oldLine: String, newLine: String) {
+        val lines = localContent.split("\n").toMutableList()
+        val idx = lines.indexOf(oldLine)
+        if (idx == -1) return // строки уже нет (гонка/уже удалена) — тихо игнорируем
+        lines[idx] = newLine
+        synchronized(this) { localContent = lines.joinToString("\n"); dirty = true; saveToDisk() }
+        onNewCb?.invoke()
+    }
+
+    /** Собеседник удалил сообщение (BT_AUDIT.md 1.3) — убираем строку у себя. */
+    override fun onDelete(line: String) {
+        val lines = localContent.split("\n").toMutableList()
+        if (!lines.remove(line)) return
+        synchronized(this) { localContent = lines.joinToString("\n"); dirty = true; saveToDisk() }
+        onNewCb?.invoke()
+    }
+
     // onConnected/onDisconnected/onInvite — в BT-чате уже соединены, реагировать не нужно.
 
     // ── ChatTransport ────────────────────────────────────────────────────────────
@@ -100,10 +119,29 @@ class BluetoothTransport(
         extraFiles: Map<String, String>,
         onFileProgress: ((fileName: String, current: Int, total: Int) -> Unit)?
     ) {
-        appendLocal(encryptedLine)
         extraFiles.forEach { (name, content) -> saveFile(name, content) }
-        // Отправляем строку собеседнику по живому каналу (если есть).
-        runCatching { BleManager.sendText(encryptedLine) }
+        // Собеседник может быть сейчас вне радиуса BLE — это НЕ ошибка отправки. Ждём
+        // реальной доставки сколько нужно, ретраим при появлении связи, и уходим сразу же
+        // при первой возможности. MessageSendManager.runWorker обрабатывает очередь строго
+        // по одному элементу за раз — следующее сообщение не начнёт отправляться, пока это
+        // не уйдёт, поэтому порядок доставки гарантирован сам по себе.
+        //
+        // ⚠️ Строку пишем в localContent/на диск ТОЛЬКО после подтверждённой доставки, а не
+        // сразу, как было раньше. chatFile() — это и локальный буфер, и "удалённые" данные,
+        // которые видит SyncEngine → ChatStore.reconcile() (сверка pending по контенту
+        // строки). Запись ДО доставки заставляла reconcile() увидеть свою же неотправленную
+        // строку на следующем тике и снять часики раньше времени, независимо от того, дошло
+        // ли сообщение до собеседника (проверено симуляцией на конкурентных
+        // connect/disconnect и отмене, см. CLAUDE.md §18). Пока ждём — часики держит
+        // ChatStore.pendingByRaw (в памяти), диск тут не участвует, сообщение не потеряется
+        // при обычном уходе в фон (lifecycleScope не отменяется), но не переживёт полное
+        // закрытие чата/приложения — это уже отдельная, более крупная задача (персистентная
+        // очередь), если понадобится.
+        while (true) {
+            if (BleManager.connected && BleManager.sendText(encryptedLine)) break
+            delay(RECONNECT_RETRY_MS)
+        }
+        appendLocal(encryptedLine)
     }
 
     override suspend fun saveFile(name: String, content: String) {
@@ -120,16 +158,28 @@ class BluetoothTransport(
         val lines = localContent.split("\n").toMutableList()
         val idx = lines.indexOf(oldLine)
         if (idx == -1) return false
+        // ⚠️ Раньше эта строка уходила собеседнику как ОБЫЧНОЕ сообщение (BleManager.sendText) —
+        // у него правка превращалась в дубликат-новое-сообщение вместо замены (BT_AUDIT.md 1.3).
+        // Теперь — отдельный тип кадра 'E' с ACK; применяем у себя ТОЛЬКО если собеседник
+        // подтвердил получение, иначе PatchQueue (§ вызывающая сторона) увидит false и
+        // ретраит — а oldLine у нас всё ещё на месте, повтор останется валидным.
+        val delivered = BleManager.sendEdit(oldLine, newLine)
+        if (!delivered) return false
         lines[idx] = newLine
         synchronized(this) { localContent = lines.joinToString("\n"); dirty = true; saveToDisk() }
-        runCatching { BleManager.sendText(newLine) }
         return true
     }
 
     override suspend fun deleteLine(line: String): Boolean {
         val lines = localContent.split("\n").toMutableList()
-        val ok = lines.remove(line)
-        if (ok) synchronized(this) { localContent = lines.joinToString("\n"); dirty = true; saveToDisk() }
+        if (line !in lines) return false
+        // Раньше удаление вообще не отправлялось собеседнику (BT_AUDIT.md 1.3) — у него
+        // сообщение оставалось. Теперь — кадр 'D' с ACK, применяем локально только по подтверждению.
+        val delivered = BleManager.sendDelete(line)
+        if (!delivered) return false
+        val lines2 = localContent.split("\n").toMutableList()
+        val ok = lines2.remove(line)
+        if (ok) synchronized(this) { localContent = lines2.joinToString("\n"); dirty = true; saveToDisk() }
         return ok
     }
 
@@ -153,5 +203,8 @@ class BluetoothTransport(
     companion object {
         /** Токен пути в Prefs/приглашении, помечающий чат как Bluetooth-локальный. */
         const val BT_TOKEN = "bluetooth"
+
+        /** Пауза между попытками отправки, пока нет связи/ACK (мс). */
+        private const val RECONNECT_RETRY_MS = 1000L
     }
 }

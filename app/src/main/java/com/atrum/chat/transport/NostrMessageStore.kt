@@ -24,7 +24,22 @@ object NostrMessageStore {
     // сообщения или админ группы, см. deletedMessagesFor/UserStatsActivity). "" для
     // строк, загруженных со старого (до этого поля) формата диска — атрибуция для
     // них просто не показывается, это не баг, а разовый переходный период.
-    private class Entry(val id: String, val createdAt: Long, val content: String, val type: Char, val pubkey: String = "")
+    //
+    // editsHash (только у type='m') — delHash строки, которую ЭТО сообщение ЗАМЕНЯЕТ
+    // (правка сообщения, тег "edit"). Пусто у обычных сообщений. Смысл: правка
+    // становится АТОМАРНОЙ — одно событие и приносит новый текст, и скрывает старый,
+    // поэтому у собеседника не бывает окна, где видны обе версии сразу либо (при сбое
+    // публикации второго события) не видно ни одной. Подтверждается тем же токеном
+    // пароля, что и надгробие (см. verifyCtrl) — чужой не «сотрёт» сообщение, прислав
+    // мусорное событие с тегом edit.
+    private class Entry(
+        val id: String,
+        val createdAt: Long,
+        val content: String,
+        val type: Char,
+        val pubkey: String = "",
+        val editsHash: String = ""
+    )
 
     /** Удалённое сообщение для экрана статистики: исходный контент + когда/кем удалено. */
     data class DeletedMessage(val encryptedContent: String, val deletedAtMs: Long, val deleterPubkey: String)
@@ -83,21 +98,20 @@ object NostrMessageStore {
         val map = mem.getOrPut(channelId) { loadDisk(channelId) }
         var changed = false
         for (ev in events) {
-            if (ev.kind != 1 && ev.kind != 5) continue // kind 5 = deletion
+            // ⚠️ kind:5 (NIP-09) БОЛЬШЕ НЕ ПРИМЕНЯЕМ к локальному стору (§16).
+            // Причины, обе проверены по коду:
+            //  1) Бесполезно: наши собственные kind:5 (NostrEvent.createDeletion) несут
+            //     ТОЛЬКО теги "e" — без ["t", channelId], поэтому под фильтр канала
+            //     (chatFilters: kinds[1,5] + #t) они не попадают и назад не приходят.
+            //     Публикацию не трогаем: реле по-прежнему могут исполнить NIP-09 у себя.
+            //  2) Опасно: реле вправе прислать в подписку ЛЮБОЕ событие, а клиент ответ
+            //     по тегам не перепроверяет. Один kind:5 со списком известных реле id
+            //     НАВСЕГДА вычищал строки из долговечного стора — то есть недоброжелательное
+            //     реле могло стереть локальную историю, не зная пароля чата. Логическое
+            //     удаление и очистка идут через 'd'/'c', а те подтверждены токеном пароля.
+            if (ev.kind != 1) continue
             val tags = ev.tags
             if (tags.any { it.firstOrNull() == "file" }) continue
-
-            if (ev.kind == 5) {
-                val deletedIds = tags.filter { it.firstOrNull() == "e" }.mapNotNull { it.getOrNull(1) }
-                for (id in deletedIds) {
-                    if (map.containsKey(id)) {
-                        android.util.Log.d("NostrMessageStore", "Removed deleted event $id for $channelId")
-                        map.remove(id)
-                        changed = true
-                    }
-                }
-                continue
-            }
 
             val type = when {
                 tags.any { it.firstOrNull() == "clear" } -> 'c'
@@ -110,8 +124,17 @@ object NostrMessageStore {
             // clear/del принимаем только с валидным токеном пароля — защита от
             // подделки очистки/удаления тем, кто знает лишь channelId (напр. реле).
             if ((type == 'c' || type == 'd') && !verifyCtrl(channelId, type, content, ev)) continue
+            // Правка: сообщение может нести ссылку на заменяемую строку (тег "edit").
+            // Токен тот же, что у надгробия ("del|канал|хеш") — отдельного вида токена не
+            // заводим. Если токена нет или он не сошёлся, САМО СООБЩЕНИЕ всё равно
+            // сохраняем, теряется только связь «заменяет старое» — безопасный отказ:
+            // в худшем случае старая версия ещё повисит, но текст не пропадает никогда.
+            val editsHash = if (type == 'm') {
+                tags.firstOrNull { it.firstOrNull() == "edit" }?.getOrNull(1)
+                    ?.takeIf { it.isNotEmpty() && verifyCtrl(channelId, 'd', it, ev) } ?: ""
+            } else ""
             if (!map.containsKey(ev.id)) {
-                map[ev.id] = Entry(ev.id, ev.created_at, content, type, ev.pubkey)
+                map[ev.id] = Entry(ev.id, ev.created_at, content, type, ev.pubkey, editsHash)
                 changed = true
             }
         }
@@ -127,7 +150,17 @@ object NostrMessageStore {
         val map = mem.getOrPut(channelId) { loadDisk(channelId) }
         if (map.isEmpty()) return ""
         val clearCutoff = map.values.filter { it.type == 'c' }.maxOfOrNull { it.createdAt } ?: 0L
-        val delHashes = map.values.filter { it.type == 'd' }.map { it.content }.toSet()
+        // Скрываем строку, если на неё есть надгробие ЛИБО если её заменила правка
+        // (новое сообщение с тегом "edit" — см. Entry.editsHash). Второе и делает правку
+        // атомарной: пришёл новый текст — старый исчез тем же событием.
+        val delHashes = HashSet<String>()
+        for (e in map.values) {
+            if (e.type == 'd') { delHashes.add(e.content); continue }
+            if (e.type != 'm' || e.editsHash.isEmpty()) continue
+            // Самоссылка (испорченное/злонамеренное событие) скрыла бы сообщение само собой —
+            // такую связь игнорируем, иначе текст пропал бы без единого надгробия.
+            if (e.editsHash != delHash(e.content)) delHashes.add(e.editsHash)
+        }
         return map.values
             .filter { it.type == 'm' && it.createdAt >= clearCutoff && delHash(it.content) !in delHashes }
             .sortedWith(compareBy({ it.createdAt }, { it.id }))
@@ -183,15 +216,22 @@ object NostrMessageStore {
     private fun fileName(channelId: String) = "msgs_" + sha256(channelId).take(32) + ".tsv"
 
     /**
-     * Формат TSV: id \t createdAt \t type \t pubkey \t content (5 полей, pubkey добавлен
-     * для атрибуции удаления — см. DeletedMessage). Content — ПОСЛЕДНИМ полем, т.к. это
-     * base64+префикс без \t/\n, безопасно как "хвост" строки.
+     * Формат TSV: id \t createdAt \t type \t pubkey \t editsHash \t content (6 полей).
+     * Content — ПОСЛЕДНИМ полем, т.к. это base64+префикс без \t/\n, безопасно как "хвост".
+     *
+     * История формата (читаются все три, см. loadDisk — §17):
+     *   4 поля — самый старый (без pubkey);
+     *   5 полей — + pubkey (атрибуция удаления, см. DeletedMessage);
+     *   6 полей — + editsHash (правка как одно событие, см. Entry.editsHash).
+     * Различаются однозначно по числу полей, поэтому старые файлы читаются как есть,
+     * без миграции и без потери истории.
      */
     private fun writeFile(f: File, entries: List<Entry>) {
         f.bufferedWriter().use { w ->
             for (e in entries) {
                 w.write(e.id); w.write("\t"); w.write(e.createdAt.toString()); w.write("\t")
                 w.write(e.type.toString()); w.write("\t"); w.write(e.pubkey); w.write("\t")
+                w.write(e.editsHash); w.write("\t")
                 w.write(e.content); w.write("\n")
             }
         }
@@ -205,19 +245,24 @@ object NostrMessageStore {
         runCatching {
             f.bufferedReader().useLines { lines ->
                 for (ln in lines) {
-                    // Новый формат — 5 полей (с pubkey). Старый файл (до этого поля) —
-                    // 4 поля, читаем как раньше с pubkey="" (просто нет атрибуции удаления
-                    // для сообщений, увиденных до апгрейда — не крашимся, не теряем историю).
-                    val p5 = ln.split("\t", limit = 5)
-                    if (p5.size == 5) {
-                        val ca = p5[1].toLongOrNull() ?: continue
-                        out[p5[0]] = Entry(p5[0], ca, p5[4], p5[2].firstOrNull() ?: 'm', p5[3])
-                    } else {
-                        val p4 = ln.split("\t", limit = 4)
-                        if (p4.size < 4) continue
-                        val ca = p4[1].toLongOrNull() ?: continue
-                        out[p4[0]] = Entry(p4[0], ca, p4[3], p4[2].firstOrNull() ?: 'm')
+                    // Три поколения формата (см. writeFile). Пробуем от нового к старому:
+                    // split(limit=6) на файле прошлого поколения вернёт РОВНО 5 частей
+                    // (разделителей меньше), поэтому поколения не путаются, а история,
+                    // записанная любой прошлой версией, читается без миграции (§17).
+                    val p6 = ln.split("\t", limit = 6)
+                    if (p6.size == 6) {
+                        val ca = p6[1].toLongOrNull() ?: continue
+                        out[p6[0]] = Entry(p6[0], ca, p6[5], p6[2].firstOrNull() ?: 'm', p6[3], p6[4])
+                        continue
                     }
+                    if (p6.size == 5) {
+                        val ca = p6[1].toLongOrNull() ?: continue
+                        out[p6[0]] = Entry(p6[0], ca, p6[4], p6[2].firstOrNull() ?: 'm', p6[3])
+                        continue
+                    }
+                    if (p6.size < 4) continue
+                    val ca = p6[1].toLongOrNull() ?: continue
+                    out[p6[0]] = Entry(p6[0], ca, p6[3], p6[2].firstOrNull() ?: 'm')
                 }
             }
         }

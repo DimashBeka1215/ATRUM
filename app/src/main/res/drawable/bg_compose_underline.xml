@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Тонкая световая полоска-реакция под текстом при наборе (glass, вариант Г "Контур без заливки").
+     Видимость/альфа переключаются кодом (showComposeGlow/hideComposeGlow в ChatActivity) —
+     сама плашка декларативно прозрачна по краям, ярче к центру. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:type="linear"
+        android:angle="0"
+        android:startColor="#00C77DFF"
+        android:centerColor="#C7C77DFF"
+        android:endColor="#00C77DFF"/>
+</shape>

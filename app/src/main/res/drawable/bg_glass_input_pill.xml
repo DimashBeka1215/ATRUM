@@ -1,11 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Пилюля поля ввода в режиме «атмосферное стекло».
-     Заливка chat_input_pill — всего 30% чёрного (тёмная тема), на тёмных обоях
-     капсула сливалась с фоном и её границы читались только по содержимому.
-     Обводка 1dp #26FFFFFF (15% белого) очерчивает её на ЛЮБЫХ обоях, не добавляя веса. -->
+<!-- ПАНЕЛЬ ВВОДА — подложка материала Atmospheric Glass (тот же язык, что и у шапки).
+
+     Как и у шапки, здесь только СТАТИЧНАЯ часть: заливка + контур. Кромка-линза,
+     живой блик и свечение от касания приходят из AtmosphericGlassOverlay (AtmosphericGlass.kt).
+
+     ГЕОМЕТРИЯ (concentricity, Apple HIG):
+       высота пилюли = 44dp кнопка + 2×4dp паддинг = 52dp  →  радиус капсулы 26dp
+       (было 32dp — больше половины высоты, Android всё равно зажимал до 26dp;
+        теперь значение честное и совпадает с формулой)
+       кнопка отправки утоплена на 4dp  →  concentric = 26 − 4 = 22dp = половина 44dp,
+       то есть идеальный круг.
+
+     Цвета — токены @color/glass_* (§4/§5). -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="@color/chat_input_pill"/>
-    <corners android:radius="32dp"/>
-    <stroke android:width="1dp" android:color="#26FFFFFF"/>
+    <solid android:color="@color/glass_fill"/>
+    <corners android:radius="26dp"/>
+    <stroke android:width="1dp" android:color="@color/glass_stroke"/>
 </shape>
