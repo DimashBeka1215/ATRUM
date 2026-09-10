@@ -63,7 +63,7 @@ android {
         //
         // Подробнее: см. CLAUDE.md в корне проекта.
         // ══════════════════════════════════════════════════════════════════
-        versionCode = 719
+        versionCode = 723
         versionName = "2.0.9"
 
         // По умолчанию инструментов владельца нет ни в одной сборке — включаются только в
@@ -89,11 +89,23 @@ android {
         // Чистит resources.arsc без потери функций (UI только RU/EN).
         resourceConfigurations += setOf("en", "ru")
 
-        // Только arm64-v8a: покрывает практически все телефоны с ~2017.
-        // Отрезаем x86/x86_64 (эмуляторы) и armeabi-v7a (старые 32-бит) —
-        // их нативные .so (libgojni/libtor и пр.) зря раздували APK на десятки МБ.
-        ndk {
-            abiFilters += "arm64-v8a"
+        // Конкретный список ABI задают флейворы ниже (productFlavors "arm64"/"arm32") —
+        // каждый собирает СВОЙ отдельный лёгкий APK под одну архитектуру, а не один
+        // "толстый" файл с обеими сразу (по просьбе — раньше пробовали class "fat" APK,
+        // оказалось слишком тяжело).
+    }
+
+    flavorDimensions += "abi"
+    productFlavors {
+        create("arm64") {
+            dimension = "abi"
+            // Покрывает практически все телефоны с ~2017.
+            ndk { abiFilters.clear(); abiFilters += "arm64-v8a" }
+        }
+        create("arm32") {
+            dimension = "abi"
+            // 32-бит ARM — старые устройства.
+            ndk { abiFilters.clear(); abiFilters += "armeabi-v7a" }
         }
     }
 
@@ -234,9 +246,17 @@ android {
     }
 
     applicationVariants.all {
+        // Флейвор "arm64" → отдельный лёгкий APK под arm64-v8a, "arm32" → под
+        // armeabi-v7a (32-бит) — см. productFlavors выше. Имя файла — с человекочитаемым
+        // именем ABI, а не техническим именем флейвора.
+        val abiLabel = when (flavorName) {
+            "arm64" -> "arm64-v8a"
+            "arm32" -> "armeabi-v7a"
+            else -> flavorName
+        }
         outputs.all {
             val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
-            output.outputFileName = "AtrumChat-${versionName}.apk"
+            output.outputFileName = "AtrumChat-${versionName}-${abiLabel}.apk"
         }
     }
 }

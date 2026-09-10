@@ -588,8 +588,13 @@
                 android:paddingTop="10dp"
                 android:paddingBottom="6dp"
                 android:clipToPadding="false"
-                android:scrollbars="vertical"
+                android:scrollbars="none"
                 android:alpha="1"/>
+
+            <com.atrum.chat.PulseScrollIndicator
+                android:id="@+id/pulse_scroll_indicator"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"/>
 
             <LinearLayout
                 android:id="@+id/loading_overlay"

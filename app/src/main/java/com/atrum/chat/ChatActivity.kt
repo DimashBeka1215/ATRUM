@@ -1537,6 +1537,7 @@ class ChatActivity : SecureActivity() {
         (binding.rvMessages.itemAnimator as? androidx.recyclerview.widget.SimpleItemAnimator)
             ?.supportsChangeAnimations = false
         binding.rvMessages.adapter = adapter
+        binding.pulseScrollIndicator.attach(binding.rvMessages)
 
         // ── Ленивая подгрузка истории вверх ───────────────────────────────────
         // Лента рендерится «окном» (последние N). При перемотке к верху закадрово
